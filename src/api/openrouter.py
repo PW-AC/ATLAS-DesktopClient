@@ -1491,35 +1491,20 @@ Antwort NUR als JSON:
         # Text extrahieren (erste 2 Seiten)
         text = self._extract_relevant_text(pdf_path, for_triage=True)
         
-        # Gatekeeper: Text < 30 Zeichen = wie kein Text (Whitespace, Steuersymbole)
-        if len(text.strip()) < 30:
-            if text.strip():
-                logger.info(f"Text zu kurz ({len(text.strip())} Zeichen), starte Bild-Pipeline")
-            else:
-                logger.info(f"Kein Text extrahierbar, starte Bild-Pipeline")
-            
-            # Bild-Pipeline: PDF -> 300 DPI PNG -> GPT-4o Vision OCR
+        if not text.strip():
+            # Fallback zu OCR
             try:
-                images = self.pdf_to_images(pdf_path, max_pages=2, dpi=300)
+                images = self.pdf_to_images(pdf_path, max_pages=1)
                 if images:
-                    logger.info(f"Bild-Pipeline: {len(images)} Seite(n) gerendert bei 300 DPI")
-                    text = self.extract_text_from_images(images[:2])
-                    logger.info(f"Vision-OCR Ergebnis: {len(text.strip())} Zeichen")
-                else:
-                    logger.warning(f"Bild-Pipeline: Keine Seiten gerendert aus {pdf_path}")
+                    text = self.extract_text_from_images(images[:1])
             except Exception as e:
-                logger.error(f"Bild-Pipeline fehlgeschlagen: {e}")
+                logger.error(f"OCR fehlgeschlagen: {e}")
                 return {"sparte": "sonstige", "confidence": "low", "document_date_iso": None, 
-                        "vu_name": None, "document_name": "Unlesbar"}
+                        "vu_name": None, "document_name": None}
         
-        # Zweiter Gatekeeper: Wenn auch nach OCR kein brauchbarer Text
-        if len(text.strip()) < 30:
-            logger.warning(
-                f"UNREADABLE: Weder Textextraktion noch Vision-OCR liefert Inhalt "
-                f"({len(text.strip())} Zeichen): {pdf_path}"
-            )
+        if not text.strip():
             return {"sparte": "sonstige", "confidence": "low", "document_date_iso": None, 
-                    "vu_name": None, "document_name": "Unlesbar"}
+                    "vu_name": None, "document_name": None}
         
         # =====================================================
         # STUFE 1: GPT-4o-mini (schnell, guenstig)
