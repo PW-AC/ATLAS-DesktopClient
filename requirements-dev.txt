@@ -1,0 +1,17 @@
+# Dev-Dependencies fuer BiPRO-GDV Tool
+# Installation: pip install -r requirements-dev.txt
+
+# Testing
+pytest>=7.0.0
+
+# Linting
+ruff>=0.1.0
+
+# Type Checking (optional)
+# mypy>=1.0.0
+
+# Security Audit
+# pip-audit>=2.6.0
+
+# Dependency Analysis
+# pipdeptree>=2.0.0

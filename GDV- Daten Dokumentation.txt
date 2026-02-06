@@ -1,0 +1,1238 @@
+GDV- Daten Dokumentation
+
+1. Was sind GDV-Daten – Einordnung
+
+GDV-Daten sind ein Branchenstandard für den Datenaustausch zwischen Versicherungsunternehmen und Vermittlern. Der Standard wird vom Gesamtverband der Deutschen Versicherungswirtschaft (GDV) gepflegt und wird vor allem für den Austausch von:
+
+Bestandsdaten (Verträge, Personen, Deckungen),
+
+Abrechnungs- und Inkassodaten,
+
+Schadeninformationen,
+
+z. T. auch Geschäftsvorfällen
+
+verwendet.
+GDV Online
++2
+SoftProject
++2
+
+Die Daten bilden in der Regel den kompletten Vertragsbestand eines Vermittlers pro Versicherer ab und werden typischerweise monatlich bereitgestellt (erste Werktage des Folgemonats).
+Gothaer Partnerportal
++1
+
+2. Klassischer GDV-Datensatz: Grundprinzip
+2.1 File-Format (Batch / Flatfile)
+
+Der „klassische“ GDV-Datensatz ist:
+
+Eine Textdatei mit fester Satzlänge, keine Trennzeichen.
+
+Jeder Datensatz ist eine Satzart (record type) mit definierter Länge und einer exakt beschriebenen Feldbelegung („Satzbeschreibung“).
+
+Jedes Feld hat:
+
+eine Byte-Adresse (Startposition),
+
+eine Länge (Anzahl Bytes),
+
+einen Datentyp (N = numerisch, AN = alphanumerisch),
+
+eine fachliche Bedeutung.
+GDV Online
++2
+Deurag
++2
+
+Die erste Spalte (Bytes 1–4) enthält immer die Satzart (z. B. 0001, 0100, 0200, 0210, 0220).
+Deurag
++1
+
+2.2 Typische Satzarten
+
+Je nach Sparte / Versicherer gibt es viele Satzarten; der Kern ist aber relativ stabil. Ein häufiges Grundgerüst:
+
+0001 – Vorsatz (Header der Datei: VU-Nummer, Erstellungsdatum, Release-Stand …)
+AOSD
++1
+
+0100 – Adressteil (Versicherungsnehmer / Kunde / Vermittler)
+AOSD
++1
+
+0200 – Allgemeiner Vertragsteil (VU-Nr., Vertragsnummer, Sparte, Laufzeiten, Zahlungsweise, Prämien-Basis)
+GDV Online
++1
+
+0210 – Spartenspezifischer Vertragsteil (z. B. Leben, Kfz, Haftpflicht; Wagnisart, Tarife, versicherte Person etc.)
+AXA Deutschland
++1
+
+0220 – Spartenspezifischer Deckungs-/Detailteil (Deckungsbausteine, Summen, Selbstbehalte, Klauseln etc.)
+AXA Deutschland
++1
+
+Weitere Satzarten, z. B.:
+
+0300 ff. – Personendaten in bestimmten Sparten,
+
+0400 ff. – Inkasso / Beitrags- und Zahlungsinformationen,
+
+0500 ff. – Schadendaten (je nach Implementierung / Release).
+
+Die vollständige Liste der Satzarten kommt immer aus der jeweils gültigen GDV-Release-Doku, z. B. über das GDV-„Branchennetz“ (VU–Vermittler-Standard).
+GDV Online
++1
+
+2.3 Teildatensätze
+
+Viele Satzarten sind in Teildatensätze (1…x) untergliedert, z. B.:
+
+0210 Teildatensatz 1: allgemeine Felder (Satzart, VU-Nr., Vertragsnummer, Wagnisart, Personenzuordnung …)
+
+0210 Teildatensatz 2–n: Zusatzinformationen (z. B. BU-Zusatz, Dynamik, Fondsaufteilung, optionsspezifische Angaben etc.)
+AXA Deutschland
++1
+
+Der Teildatensatz wird über ein Feld Satznummer / Teildatensatznummer identifiziert. Das ist wichtig beim Parsen.
+
+3. Datenstruktur im Detail
+3.1 Schlüssel und Relationen
+
+Technisch betrachtet ist der GDV-Datensatz eine relational-flache Struktur, bei der man die „Relationen“ über Schlüssel selbst herstellen muss. Typische Schlüssel:
+
+VU-Nummer (Versicherungsunternehmen, 4–5-stellig gemäß BaFin-Verzeichnis)
+AXA Deutschland
+
+Vermittlernummer / Agenturnummer
+
+Vertragsnummer (VSNR / Polizzennummer)
+
+Sparte / Spartenschlüssel (z. B. 010 Leben, 020 Kranken, 040 Haftpflicht etc.)
+R+V Maklerportal
++1
+
+Personen-/Kundennummer (VN, versicherte Person, beitragszahlende Person)
+Maklerportal
++1
+
+Strukturell gilt:
+
+Ein Vertrag besteht aus:
+
+1× 0200 (Allgemeiner Vertragsteil),
+
+0–n× 0210 (Spartenspezifika zu einzelnen Wagnissen),
+
+0–n× 0220 (Deckungsdetails, Summen etc.),
+
+optional weiteren Sätzen (0100 Kunden, 0300 Personen, 0400 Beitragsinfos, 0500 Schäden).
+GDV Online
++2
+Gothaer Partnerportal
++2
+
+Die Logik musst du beim Import selbst bilden: Records mit gleicher VU-Nr. + Vertragsnummer + Sparte gehören zusammen.
+
+3.2 Datentypen & Formate
+
+Typische technische Konventionen:
+
+Datentypen
+
+N (numerisch): nur Ziffern, ggf. führende Nullen.
+
+AN (alphanumerisch): Buchstaben, Ziffern, Sonderzeichen; bei Unterlänge rechts oder links mit Blanks aufgefüllt (je nach Feld).
+GDV Online
++1
+
+Datum
+
+fast immer YYYYMMDD (z. B. 20251201), in einem numerischen N8 Feld.
+
+Beträge / Summen
+
+numerisch mit impliziten Dezimalstellen, z. B. 10,2 Stellen → Feldlänge 12, davon 10 Vorkomma, 2 Nachkomma (Beitragssatz 3,3 Stellen etc.). Die Nachkommastellen sind im Feld nicht als Punkt/Komma kodiert; du musst sie selbst positionieren.
+Gothaer Partnerportal
++1
+
+Zeichencodierung
+
+historisch oft ISO-8859-1 oder CP1252. In der Doku ist idR. kein UTF-8 garantiert – wichtig, wenn du Parser in modernen Umgebungen baust.
+
+4. Fachliche Inhalte nach Arbeitsgebiet / Sparte
+
+Versicherer liefern GDV-Daten typischerweise für:
+
+Leben (Kapital, Renten, fondsgebunden, BU, etc.),
+
+Kfz,
+
+Unfall,
+
+Haftpflicht,
+
+Transport,
+
+Kranken,
+
+Sach (Hausrat, Wohngebäude, Gewerbe-Sach),
+
+Rechtsschutz usw.
+R+V Maklerportal
++1
+
+Beispiele:
+
+4.1 Leben (Spartenschlüssel 010)
+
+0210 / 0220 mit Wagnisarten (z. B. 1/3 Lebensversicherung, 2 Rentenversicherung, 4/8 BU) inkl.:
+
+Wagnisart,
+
+versicherte Person,
+
+Versicherungssummen,
+
+Prämien,
+
+Dynamiken,
+
+Rentenfaktoren etc.
+AXA Deutschland
++1
+
+4.2 Sach / Haftpflicht / Unfall (SHU)
+
+Spartenspezifische 0210 / 0220-Sätze z. B.:
+
+Haftpflicht (Sparte 040),
+
+Unfall (030),
+
+Sach (010/020 je nach Haus).
+
+Felder u. a.:
+
+Versicherungsort, Objekte,
+
+Versicherungssummen,
+
+Selbstbehalte,
+
+Risikoarten (Privat-, Betriebs-HV etc.).
+Gothaer Partnerportal
++1
+
+4.3 Kfz
+
+Spartenspezifische Sätze (0220.x Kfz):
+u. a. Fahrzeugdaten (HSN/TSN), Kennzeichen, Saisonkennzeichen, SF-Klassen, Regionalklasse, Typklasse, Deckungsumfang (Haftpflicht, Vollkasko, Teilkasko) etc.
+(Details sind in den Kfz-Satzarten des GDV-Release beschrieben.)
+GDV Online
++1
+
+4.4 Schaden
+
+Viele Gesellschaften liefern Schadendaten zusätzlich oder in separaten Beständen; Satzarten sind je nach Release unterschiedlich. Ziel: Zuordnung von Schadenfällen zu Verträgen, inkl. Schadenhöhen, Reserven, Zahlungen etc.
+R+V Maklerportal
++2
+GDV Online
++2
+
+5. Neues vs. „klassisches“ Format: XML & Konverter
+
+Neben dem klassischen Flatfile gibt es moderne Varianten:
+
+GDV Schadenservice XML: Service-orientierter Datenaustausch für Schadenprozesse, basiert auf XML-Schemas; der GDV stellt dafür eine vollständige technische Dokumentation zur Verfügung.
+GDV Online
+
+GDV-XML-Konverter: Offizielles Tool, das Datensatz-Dateien ↔ XML konvertiert (insbesondere für Schadenservice).
+GDV Online
+
+Technisch interessant:
+
+XML-Variante ist strukturiert / hierarchisch, während das klassische Format flach/fixed-width ist.
+
+Für Integrationen in moderne Architekturen (REST, Message-Bus, JSON) bietet sich oft an:
+
+einmalig klassischen Datensatz → internes JSON-Modell zu mappen,
+
+optional über GDV-Konverter Datensatz ↔ XML zu unterstützen.
+
+6. Praxis: Wie man GDV-Daten technisch verarbeitet
+6.1 Import-Pipeline (konzeptionell)
+
+Dateiannahme
+
+Eingang über SFTP, Portal-Download, BiPRO-Postkorb etc.
+Dialog Versicherung
++2
+Gothaer Partnerportal
++2
+
+Basis-Prüfung
+
+Encoding (Bytes vs. Zeichensatz),
+
+Zeilenlängen (Satzlänge exakt wie spezifiziert),
+
+0001-Vorsatz: Release-Stand, VU-Nr., Erstellungsdatum.
+
+Parsing pro Satz:
+
+Lies die ersten 4 Bytes → satzart = line[0:4].
+
+Hole aus einer Satzdefinitions-Tabelle die Felddefinitionen:
+
+Name, Byte-Adresse, Länge, Typ.
+
+Schneide die Felder aus der Zeile heraus und parse sie in ein internes Objekt.
+
+Mapping / Normalisierung
+
+Konvertiere Datumsfelder in echte Date-Objekte,
+
+konvertiere Beitrags-/Summenfelder mit impliziten Nachkommastellen,
+
+normalisiere Codes (Sparte, Wagnisart, Zahlungsweise etc.).
+
+Vertragslogik
+
+Gruppiere Sätze zu Verträgen anhand (VU-Nr., Vertragsnummer, Sparte).
+
+Hänge 0210/0220 etc. an den zugehörigen 0200.
+
+Persistenz
+
+Speichere in deiner Zielstruktur (z. B. relationales Modell: vertrag, deckung, person, beitrag, schaden).
+
+Qualitätskontrolle
+
+Plausibilitäten (Laufzeit vs. Beginn/Ende, Summen, Sparte ↔ Wagnisart),
+
+Feldbefüllung (siehe „Felder ohne Befüllung“ Dokumentation eines Versicherers).
+Maklerportal
++1
+
+6.2 Beispiel: Satzdefinitionen als Metadaten
+
+In der Praxis bietet es sich an, die GDV-Satzarten in einer Metadaten-Tabelle abzulegen, z. B.:
+
+{
+  "0200": {
+    "length": 256,
+    "fields": [
+      { "name": "satzart", "start": 1, "length": 4, "type": "N" },
+      { "name": "vu_nummer", "start": 5, "length": 5, "type": "AN" },
+      { "name": "vertragsnummer", "start": 10, "length": 17, "type": "AN" },
+      { "name": "sparte", "start": 27, "length": 3, "type": "N" },
+      ...
+    ]
+  }
+}
+
+
+Diese Definition kommt aus der offiziellen GDV-Satzbeschreibung (Byte-Adresse, Länge, Typ).
+GDV Online
++1
+
+Dein Parser läuft dann generisch über diese Metadaten, statt hart codierte substring-Offsets zu haben. Vorteil:
+
+Einfaches Update bei neuen Releaseständen,
+
+Versicherer-Spezialitäten können durch „Overrides“ abgebildet werden.
+
+6.3 Umgang mit Versionsständen / Releases
+
+Die GDV-Spezifikation wird regelmäßig weiterentwickelt (neue Satzarten, neue Versionen der Satzarten, neue Felder).
+GDV Online
++1
+
+Wichtig in der Technik:
+
+Im 0001 Vorsatz steht der Release-Stand (z. B. „Release 2023.x“).
+
+Deine Satzdefinitions-Tabelle sollte versioniert sein:
+
+definition[release]["0200"]["fields"].
+
+Versicherer liefern oft nicht 100 % standardkonform – d. h.:
+
+bestimmte Felder bleiben permanent leer (siehe z. B. SparkassenVersicherung „Felder ohne Befüllung“),
+Maklerportal
+
+eigene Codierungen in Freifeld-Feldern,
+
+manchmal abweichende Vertragsnummernlogik.
+
+Kurz: Standard ist die Basis, nicht die Realität. Damit musst du technisch rechnen.
+
+7. Typische Fallstricke & Limitierungen
+
+Aus Sicht von Makler-Systemen / Integratoren werden häufig genannt:
+
+Uneinheitliche Nutzung des Standards
+– Versicherer nutzen einen Teil der vorgesehenen Felder gar nicht oder unterschiedlich.
+Deutscher Maklerverbund
++1
+
+Keine Dokumente
+– GDV enthält i. d. R. keine Anträge, Versicherungsscheine, Nachträge als PDFs etc., sondern nur strukturierte Datensätze.
+insurgo.de
++1
+
+Verzögerte Aktualität
+– meist nur 1× monatlich aktualisiert → kein near-real-time Bestand.
+Gothaer Partnerportal
++1
+
+Komplexe Interpretation
+– z. B. Wagnisarten, Optionstarife, Fondsaufteilungen, BU-Zusätze → stark spezialisierte Fachlogik pro Sparte nötig.
+AXA Deutschland
++1
+
+Für moderne Anwendungen ist GDV deshalb oft:
+
+gut als historischer / vollständiger Bestands-Abzug,
+
+weniger geeignet als operative API für Echtzeit-Prozesse.
+
+8. Datenschutz / Rechtlicher Rahmen (kurz, technisch relevant)
+
+GDV-Daten enthalten personenbezogene Daten (VN, versicherte Personen, Adressen, Gesundheits-/Berufsdaten, ggf. Schadeninformationen). Für die Verarbeitung in Deutschland ist u. a. der Datenschutzkodex „Code of Conduct“ der Versicherungswirtschaft relevant, den der GDV veröffentlicht hat.
+GDV
++1
+
+Technische Implikationen:
+
+Zugriffe und Verarbeitung müssen DSGVO-konform sein.
+
+Du brauchst ein berechtigtes Interesse / Vertragsbezug (Makler-Mandat, AV-Vertrag etc.).
+
+Logisch: Verschlüsselung, Zugriffskonzepte, Protokollierung.
+
+9. Wie man daraus eine eigene technische Schnittstelle baut
+
+Wenn du auf GDV-Daten „aufspringen“ willst (z. B. als Maklerverwaltungsprogramm oder Integrationsplattform), ist ein realistischer technischer Plan:
+
+GDV-Release-Dokumentation beschaffen
+– Offizielle GDV-Satzbeschreibungen (Satzarten, Byte-Adressen, Datentypen) – ggf. nur mit Lizenz / Mitgliedschaft vollständig verfügbar.
+GDV Online
++1
+
+Metadaten-Modell aufbauen
+
+Tabellen / JSON-Definitionen für jede Satzart + Version.
+
+Generic Parser implementieren
+
+File → Zeilen → Satzart → Felder extrahieren → internes Modell.
+
+Business-Mapping
+
+„GDV-Vertrag“ → internes Vertragsmodell,
+
+Personen, Deckungen, Zahlungen, Schäden.
+
+Qualitäts- & Normalisierungsschicht
+
+Dublettenbereinigung (Personen/Adressen),
+
+Normalisierung von Codes (Zahlungsweise, Sparte etc.),
+
+Fehlerreporting pro Datei / Vertrag.
+
+Export / Weitergabe
+
+z. B. Transform zu CSV („GDV2CSV“) oder JSON, wie es manche Dienstleister anbieten
+
+
+Ich teile es in drei Teile:
+
+JSON-Zielschema für einen Vertrag (mit Personen & Deckungen)
+
+Relationale Zielstruktur (Tabellen/Entities)
+
+Python-ähnlicher Parser (Pseudo-Code), der 0001/0100/0200/0210/0220 liest und in diese Struktur schreibt
+
+1. JSON-Zielschema für Verträge aus GDV-Daten
+
+Ziel: ein sauberes, technologie-neutrales Vertragsmodell, das du später in jede DB / API mappen kannst.
+
+1.1. Top-Level Schema
+{
+  "fileMeta": {
+    "fileId": "uuid",
+    "vuNumber": "12345",
+    "release": "2025.01",
+    "createdAt": "2025-12-01",
+    "rawFilename": "VU12345_Bestand_202511.gdv"
+  },
+  "contracts": [
+    {
+      "contractId": "uuid",              // interne ID
+      "vuNumber": "12345",
+      "contractNumber": "4711-1234567",
+      "lineOfBusiness": "010",          // Sparte
+      "agentNumber": "987654",
+      "state": "ACTIVE",                // z.B. ACTIVE, CANCELLED, RUN_OFF
+
+      "period": {
+        "startDate": "2020-01-01",
+        "endDate": "2040-12-31",
+        "mainDueDate": "2020-01-01",
+        "paymentFrequency": "YEARLY"    // z.B. MONTHLY, YEARLY, QUARTERLY
+      },
+
+      "policyholder": {
+        "customerId": "uuid",           // interne Kunden-ID
+        "gdvCustomerKey": "0012345678", // z.B. Kundennummer aus 0100
+        "type": "PERSON",               // PERSON | COMPANY
+        "salutation": "Herr",
+        "title": "Dr.",
+        "firstName": "Max",
+        "lastName": "Mustermann",
+        "companyName": null,
+        "dateOfBirth": "1985-05-10",
+        "street": "Musterstraße 1",
+        "postalCode": "12345",
+        "city": "Musterstadt",
+        "countryCode": "DE"
+      },
+
+      "persons": [
+        {
+          "personId": "uuid",
+          "role": "INSURED",           // INSURED | BENEFICIARY | CONTRIBUTOR etc.
+          "gdvPersonKey": "P00012345",
+          "type": "PERSON",
+          "firstName": "Anna",
+          "lastName": "Mustermann",
+          "dateOfBirth": "1990-02-03",
+          "occupationCode": "1234",
+          "gender": "F",
+          "rawRefs": {
+            "satzarten": ["0210", "0300"],
+            "keys": {
+              "personennummer": "00012345"
+            }
+          }
+        }
+      ],
+
+      "coverages": [
+        {
+          "coverageId": "uuid",
+          "riskId": "uuid",
+          "sectionType": "MAIN",        // MAIN | RIDER | ADDON
+          "productCode": "TARIF_XY",
+          "riskTypeCode": "BU",         // Wagnisart / Deckungsart
+          "sumInsured": 100000.0,
+          "sumCurrency": "EUR",
+          "premiumGross": 500.00,
+          "premiumNet": 450.00,
+          "premiumCurrency": "EUR",
+          "deductible": 0.0,
+          "benefitType": "RENT",        // CAPITAL | RENT | COMBI etc.
+          "period": {
+            "startDate": "2020-01-01",
+            "endDate": "2040-12-31"
+          },
+          "flags": {
+            "isDynamic": true,
+            "isTaxPrivileged": false
+          },
+          "rawRefs": {
+            "satzart": "0220",
+            "satznummer": 1,
+            "recordId": "line_12345"
+          }
+        }
+      ],
+
+      "payments": [
+        {
+          "paymentId": "uuid",
+          "type": "REGULAR",            // REGULAR | SINGLE | EXTRA
+          "amount": 500.00,
+          "currency": "EUR",
+          "frequency": "YEARLY",
+          "payerRole": "POLICYHOLDER",  // oder CONTRIBUTOR etc.
+          "nextDueDate": "2025-01-01"
+        }
+      ],
+
+      "technical": {
+        "gdvKeys": {
+          "vuNumber": "12345",
+          "agentNumber": "987654",
+          "contractNumber": "4711-1234567",
+          "lineOfBusiness": "010"
+        },
+        "gdvRecords": [
+          {
+            "satzart": "0200",
+            "lineNumber": 42
+          },
+          {
+            "satzart": "0210",
+            "lineNumber": 43
+          },
+          {
+            "satzart": "0220",
+            "lineNumber": 44
+          }
+        ]
+      }
+    }
+  ]
+}
+
+1.2. Hauptideen des JSON-Modells
+
+fileMeta: was kam technisch rein? (VU, Release, Filename …)
+
+contracts[]: je GDV-Vertragskombination (VU + VSNR + Sparte) genau ein Eintrag.
+
+policyholder / persons / coverages / payments klar getrennt.
+
+technical.gdvKeys / gdvRecords: Traceback zu den Original-Sätzen (wichtig für Debugging / Revision).
+
+2. Relationale Zielstruktur
+
+Dazu passend ein minimales relationales Modell:
+
+2.1 Tabellen
+
+FILE_IMPORT
+
+id (PK)
+
+vu_number
+
+release
+
+filename
+
+imported_at
+
+CUSTOMER
+
+id (PK)
+
+vu_number (optional, wenn Du VU-spezifische Kundennr. behältst)
+
+gdv_customer_key
+
+type (PERSON / COMPANY)
+
+salutation
+
+title
+
+first_name
+
+last_name
+
+company_name
+
+date_of_birth
+
+street
+
+postal_code
+
+city
+
+country_code
+
+CONTRACT
+
+id (PK)
+
+file_id (FK → FILE_IMPORT)
+
+vu_number
+
+contract_number
+
+line_of_business (Sparte)
+
+agent_number
+
+state
+
+policyholder_id (FK → CUSTOMER)
+
+period_start
+
+period_end
+
+main_due_date
+
+payment_frequency
+
+PERSON
+
+id (PK)
+
+contract_id (FK → CONTRACT)
+
+gdv_person_key
+
+role (INSURED / BENEFICIARY / CONTRIBUTOR / …)
+
+type (PERSON / COMPANY)
+
+first_name
+
+last_name
+
+date_of_birth
+
+occupation_code
+
+gender
+
+RISK
+
+(optional, kannst du auch weglassen und direkt in COVERAGE abbilden)
+
+id (PK)
+
+contract_id (FK → CONTRACT)
+
+risk_type_code (Wagnisart / Sparte-spezifischer Typ)
+
+description
+
+COVERAGE
+
+id (PK)
+
+contract_id (FK → CONTRACT)
+
+risk_id (FK → RISK, nullable)
+
+section_type (MAIN / RIDER / ADDON)
+
+product_code
+
+risk_type_code (wenn du RISK nicht nutzt)
+
+sum_insured
+
+sum_currency
+
+premium_gross
+
+premium_net
+
+premium_currency
+
+deductible
+
+benefit_type
+
+period_start
+
+period_end
+
+is_dynamic
+
+is_tax_privileged
+
+PAYMENT
+
+id (PK)
+
+contract_id (FK → CONTRACT)
+
+type
+
+amount
+
+currency
+
+frequency
+
+payer_role
+
+next_due_date
+
+GDV_RECORD
+
+id (PK)
+
+file_id (FK → FILE_IMPORT)
+
+line_number
+
+satzart
+
+satznummer (Teildatensatz)
+
+raw_line (TEXT / CLOB)
+
+GDV_RECORD_LINK
+
+id (PK)
+
+record_id (FK → GDV_RECORD)
+
+entity_type (CONTRACT / CUSTOMER / PERSON / COVERAGE / PAYMENT)
+
+entity_id
+
+Damit kannst du:
+
+Raw-GDV immer vollständig aufbewahren.
+
+Jeden Vertrag/Person/Deckung zurück auf die Original-Sätze mappen.
+
+3. Parser-Architektur (Pseudocode / Python-Style)
+
+Wichtig: Bytes/Offsets sind hier Platzhalter – du musst sie mit der echten GDV-Satzbeschreibung füllen.
+
+3.1. Metadaten für Satzarten
+# Beispielhafte Layout-Definitionen (Offsets fiktiv!)
+RECORD_LAYOUTS = {
+    "0001": {
+        "length": 128,
+        "fields": [
+            {"name": "satzart",      "start": 1,  "length": 4,  "type": "N"},
+            {"name": "vu_number",    "start": 5,  "length": 5,  "type": "AN"},
+            {"name": "release",      "start": 10, "length": 4,  "type": "AN"},
+            {"name": "file_date",    "start": 14, "length": 8,  "type": "N"}
+        ]
+    },
+    "0100": {
+        "length": 256,
+        "fields": [
+            {"name": "satzart",          "start": 1,  "length": 4,  "type": "N"},
+            {"name": "gdv_customer_key", "start": 5,  "length": 10, "type": "AN"},
+            {"name": "salutation",       "start": 15, "length": 10, "type": "AN"},
+            {"name": "title",            "start": 25, "length": 10, "type": "AN"},
+            {"name": "first_name",       "start": 35, "length": 30, "type": "AN"},
+            {"name": "last_name",        "start": 65, "length": 30, "type": "AN"},
+            {"name": "street",           "start": 95, "length": 40, "type": "AN"},
+            {"name": "postal_code",      "start": 135,"length": 5,  "type": "AN"},
+            {"name": "city",             "start": 140,"length": 30, "type": "AN"}
+        ]
+    },
+    "0200": {
+        "length": 256,
+        "fields": [
+            {"name": "satzart",        "start": 1,  "length": 4,  "type": "N"},
+            {"name": "vu_number",      "start": 5,  "length": 5,  "type": "AN"},
+            {"name": "contract_number","start": 10, "length": 17, "type": "AN"},
+            {"name": "line_of_business","start":27, "length": 3,  "type": "N"},
+            {"name": "agent_number",   "start": 30, "length": 10, "type": "AN"},
+            {"name": "period_start",   "start": 40, "length": 8,  "type": "N"},
+            {"name": "period_end",     "start": 48, "length": 8,  "type": "N"},
+            {"name": "main_due_date",  "start": 56, "length": 8,  "type": "N"},
+            {"name": "payment_freq",   "start": 64, "length": 1,  "type": "N"}
+        ]
+    },
+    "0210": {
+        "length": 256,
+        "fields": [
+            {"name": "satzart",       "start": 1,  "length": 4,  "type": "N"},
+            {"name": "vu_number",     "start": 5,  "length": 5,  "type": "AN"},
+            {"name": "contract_number","start":10, "length":17,  "type": "AN"},
+            {"name": "line_of_business","start":27,"length":3,   "type": "N"},
+            {"name": "satznummer",    "start": 30, "length": 1,  "type": "N"},
+            {"name": "risk_type_code","start": 31, "length": 3,  "type": "N"},
+            {"name": "person_key",    "start": 34, "length": 10, "type": "AN"}
+        ]
+    },
+    "0220": {
+        "length": 256,
+        "fields": [
+            {"name": "satzart",       "start": 1,  "length": 4,  "type": "N"},
+            {"name": "vu_number",     "start": 5,  "length": 5,  "type": "AN"},
+            {"name": "contract_number","start":10, "length":17,  "type": "AN"},
+            {"name": "line_of_business","start":27,"length":3,   "type": "N"},
+            {"name": "satznummer",    "start": 30, "length": 1,  "type": "N"},
+            {"name": "section_type",  "start": 31, "length": 1,  "type": "N"},
+            {"name": "product_code",  "start": 32, "length": 10, "type": "AN"},
+            {"name": "sum_insured",   "start": 42, "length": 12, "type": "N"}, # mit 2 Dezimalstellen
+            {"name": "premium_gross", "start": 54, "length": 10, "type": "N"}
+        ]
+    }
+}
+
+
+Hinweis: start ist 1-basiert wie oft in GDV-Dokus; im Code musst du das auf 0-basiert umrechnen.
+
+3.2. Helfer zum Parsen einer Zeile
+def parse_field(raw_line: str, start: int, length: int, ftype: str) -> str | int | float | None:
+    # GDV: start 1-basiert -> Python 0-basiert
+    s = start - 1
+    e = s + length
+    raw_value = raw_line[s:e]
+
+    if ftype == "N":
+        raw_value = raw_value.strip()
+        if raw_value == "":
+            return None
+        # kann führende Nullen enthalten
+        return raw_value  # erstmal als string zurückgeben, spätere Konvertierung
+    elif ftype == "AN":
+        return raw_value.rstrip()  # rechts trimmen
+    else:
+        return raw_value
+
+
+def parse_record(raw_line: str) -> dict:
+    satzart = raw_line[0:4]
+    layout = RECORD_LAYOUTS.get(satzart)
+    if not layout:
+        return {"satzart": satzart, "raw_line": raw_line, "unknown": True}
+
+    result = {}
+    for field in layout["fields"]:
+        value = parse_field(raw_line, field["start"], field["length"], field["type"])
+        result[field["name"]] = value
+
+    result["satzart"] = satzart
+    result["raw_line"] = raw_line
+    return result
+
+3.3. Kontext-Objekte beim Einlesen
+
+Wir wollen beim Durchlaufen der Datei:
+
+aktuelle Datei-Metadaten (file_meta)
+
+contracts dict keyed by (vu_number, contract_number, line_of_business)
+
+customers dict keyed by gdv_customer_key
+
+persons je Vertrag
+
+coverages je Vertrag
+
+Pseudocode:
+
+def make_contract_key(vu_number, contract_number, lob):
+    return f"{vu_number}|{contract_number}|{lob}"
+
+
+def parse_gdv_file(file_path: str):
+    file_meta = None
+    contracts = {}  # key -> contract dict
+    customers = {}  # gdv_customer_key -> customer dict
+    gdv_records = []  # Liste aller Rohzeilen, wenn du die mit speichern willst
+
+    with open(file_path, "r", encoding="latin1") as f:
+        for line_number, raw_line in enumerate(f, start=1):
+            raw_line = raw_line.rstrip("\r\n")
+            if not raw_line:
+                continue
+
+            record = parse_record(raw_line)
+            satzart = record.get("satzart")
+            gdv_records.append({
+                "line_number": line_number,
+                "satzart": satzart,
+                "raw_line": raw_line
+            })
+
+            if satzart == "0001":
+                file_meta = parse_0001(record)
+
+            elif satzart == "0100":
+                customer = map_0100_to_customer(record)
+                customers[customer["gdv_customer_key"]] = customer
+
+            elif satzart == "0200":
+                key, contract = map_0200_to_contract(record, file_meta)
+                if key not in contracts:
+                    contracts[key] = contract
+                else:
+                    # falls ZWEITER 0200 für gleichen Vertrag kommt -> mergen oder loggen
+                    merge_contract(contracts[key], contract)
+
+            elif satzart == "0210":
+                key = make_contract_key(record["vu_number"], record["contract_number"], record["line_of_business"])
+                if key not in contracts:
+                    # Falls 0210 vor 0200 kommt -> optional "Stub" anlegen
+                    contracts[key] = make_empty_contract_stub(record, file_meta)
+                add_0210_to_contract(contracts[key], record)
+
+            elif satzart == "0220":
+                key = make_contract_key(record["vu_number"], record["contract_number"], record["line_of_business"])
+                if key not in contracts:
+                    contracts[key] = make_empty_contract_stub(record, file_meta)
+                add_0220_to_contract(contracts[key], record)
+
+            else:
+                # andere Satzarten vorerst ignorieren oder separaten Handler bauen
+                pass
+
+    return {
+        "file_meta": file_meta,
+        "contracts": list(contracts.values()),
+        "customers": list(customers.values()),
+        "gdv_records": gdv_records
+    }
+
+3.4. Mapping-Funktionen (Satz → Domain-Objekt)
+3.4.1. 0001 → file_meta
+from datetime import datetime
+
+def parse_date_yyyymmdd(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    raw = raw.strip()
+    if len(raw) != 8:
+        return None
+    return f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
+
+
+def parse_0001(rec: dict) -> dict:
+    return {
+        "vu_number": rec.get("vu_number"),
+        "release": rec.get("release"),
+        "file_date": parse_date_yyyymmdd(rec.get("file_date"))
+    }
+
+3.4.2. 0100 → CUSTOMER
+def map_0100_to_customer(rec: dict) -> dict:
+    return {
+        "gdv_customer_key": rec.get("gdv_customer_key"),
+        "type": "PERSON",  # Vereinfachung; in Realität Feld aus 0100
+        "salutation": rec.get("salutation"),
+        "title": rec.get("title"),
+        "first_name": rec.get("first_name"),
+        "last_name": rec.get("last_name"),
+        "street": rec.get("street"),
+        "postal_code": rec.get("postal_code"),
+        "city": rec.get("city"),
+        "country_code": "DE",  # default/fallback
+        "rawRefs": {
+            "satzart": "0100"
+        }
+    }
+
+3.4.3. 0200 → CONTRACT-Basis
+def convert_payment_freq(code: str | None) -> str | None:
+    mapping = {
+        "1": "YEARLY",
+        "2": "HALF_YEARLY",
+        "3": "QUARTERLY",
+        "4": "MONTHLY"
+    }
+    if not code:
+        return None
+    return mapping.get(code.strip(), None)
+
+
+def map_0200_to_contract(rec: dict, file_meta: dict | None) -> tuple[str, dict]:
+    vu = rec.get("vu_number")
+    vsnr = rec.get("contract_number")
+    lob = rec.get("line_of_business")
+
+    key = make_contract_key(vu, vsnr, lob)
+    contract = {
+        "contractKey": key,
+        "vuNumber": vu,
+        "contractNumber": vsnr,
+        "lineOfBusiness": lob,
+        "agentNumber": rec.get("agent_number"),
+        "state": "UNKNOWN",
+        "period": {
+            "startDate": parse_date_yyyymmdd(rec.get("period_start")),
+            "endDate": parse_date_yyyymmdd(rec.get("period_end")),
+            "mainDueDate": parse_date_yyyymmdd(rec.get("main_due_date")),
+            "paymentFrequency": convert_payment_freq(rec.get("payment_freq"))
+        },
+        "policyholder": None,   # wird später (z.B. über separate Logik) zugeordnet
+        "persons": [],
+        "coverages": [],
+        "payments": [],
+        "technical": {
+            "gdvKeys": {
+                "vuNumber": vu,
+                "contractNumber": vsnr,
+                "lineOfBusiness": lob
+            },
+            "gdvRecords": []
+        }
+    }
+
+    contract["technical"]["gdvRecords"].append({
+        "satzart": "0200",
+        "satznummer": 1  # in Realität aus Feld
+    })
+
+    return key, contract
+
+3.4.4. 0210 → Personen / Risiko-Anbindung
+
+Je nach Sparte ist 0210 sehr unterschiedlich. Minimalvariante:
+
+Eine Person pro person_key anlegen (falls noch nicht vorhanden)
+
+Person im Vertrag verlinken
+
+Risiko-Typ zum Vertrag/RISK hinzufügen
+
+def add_0210_to_contract(contract: dict, rec: dict):
+    risk_type = rec.get("risk_type_code")
+    person_key = rec.get("person_key")
+
+    # Einfaches Personen-Objekt (in Realität aus 0300 etc. anreichern)
+    if person_key:
+        # prüfen, ob Person mit gdvPersonKey schon existiert
+        existing = next(
+            (p for p in contract["persons"] if p.get("gdvPersonKey") == person_key),
+            None
+        )
+        if not existing:
+            person = {
+                "personId": None,  # DB-ID später
+                "role": "INSURED",
+                "gdvPersonKey": person_key,
+                "type": "PERSON",
+                "firstName": None,
+                "lastName": None,
+                "rawRefs": {
+                    "satzart": "0210"
+                }
+            }
+            contract["persons"].append(person)
+
+    # Risiko-Typ auf Contract-Ebene speichern (oder eigene RISK-Entity)
+    if "risks" not in contract:
+        contract["risks"] = []
+    if risk_type and risk_type not in [r.get("riskTypeCode") for r in contract["risks"]]:
+        contract["risks"].append({
+            "riskId": None,
+            "riskTypeCode": risk_type,
+            "description": None
+        })
+
+    contract["technical"]["gdvRecords"].append({
+        "satzart": "0210",
+        "satznummer": rec.get("satznummer")
+    })
+
+3.4.5. 0220 → COVERAGE
+def parse_amount_with_decimals(raw: str | None, decimals: int = 2) -> float | None:
+    if not raw:
+        return None
+    raw = raw.strip()
+    if raw == "":
+        return None
+    # Beispiel: "000000001234" mit 2 Dezimalstellen -> 12.34
+    value_int = int(raw)
+    return value_int / (10 ** decimals)
+
+
+def convert_section_type(code: str | None) -> str | None:
+    mapping = {
+        "1": "MAIN",
+        "2": "RIDER",
+        "3": "ADDON"
+    }
+    if not code:
+        return None
+    return mapping.get(code.strip(), None)
+
+
+def add_0220_to_contract(contract: dict, rec: dict):
+    section_type = convert_section_type(rec.get("section_type"))
+    product_code = rec.get("product_code")
+    sum_insured = parse_amount_with_decimals(rec.get("sum_insured"), decimals=2)
+    premium_gross = parse_amount_with_decimals(rec.get("premium_gross"), decimals=2)
+
+    coverage = {
+        "coverageId": None,
+        "riskId": None,
+        "sectionType": section_type,
+        "productCode": product_code,
+        "riskTypeCode": rec.get("risk_type_code"),  # falls in 0220 vorhanden
+        "sumInsured": sum_insured,
+        "sumCurrency": "EUR",
+        "premiumGross": premium_gross,
+        "premiumNet": None,
+        "premiumCurrency": "EUR",
+        "deductible": None,
+        "benefitType": None,
+        "period": {
+            "startDate": None,
+            "endDate": None
+        },
+        "flags": {
+            "isDynamic": False,
+            "isTaxPrivileged": False
+        },
+        "rawRefs": {
+            "satzart": "0220",
+            "satznummer": rec.get("satznummer")
+        }
+    }
+
+    contract["coverages"].append(coverage)
+
+    contract["technical"]["gdvRecords"].append({
+        "satzart": "0220",
+        "satznummer": rec.get("satznummer")
+    })
+
+4. Schreiben in die relationale Struktur (grob)
+
+Angenommen, du hast ein DB-Layer mit einfachen Insert-Funktionen:
+
+def save_import_to_db(parsed: dict, db):
+    file_meta = parsed["file_meta"]
+    file_id = db.insert_file_import(file_meta)
+
+    customer_id_map = {}
+    for cust in parsed["customers"]:
+        cust_id = db.upsert_customer(cust)  # ggf. via gdv_customer_key
+        customer_id_map[cust["gdv_customer_key"]] = cust_id
+
+    contract_id_map = {}
+    for contract in parsed["contracts"]:
+        # Policyholder optional über 0100/0200-Link o.ä. zuordnen
+        policyholder_id = None  # Link-Logik je nach Datenbasis
+        contract_id = db.insert_contract(contract, file_id, policyholder_id)
+        contract_id_map[contract["contractNumber"]] = contract_id
+
+        # Personen
+        for person in contract["persons"]:
+            db.insert_person(person, contract_id)
+
+        # Risiken (optional)
+        for risk in contract.get("risks", []):
+            db.insert_risk(risk, contract_id)
+
+        # Deckungen
+        for cov in contract["coverages"]:
+            db.insert_coverage(cov, contract_id)
+
+        # Zahlungen (wenn aus anderen Satzarten abgeleitet)
+        for pay in contract.get("payments", []):
+            db.insert_payment(pay, contract_id)
+
+    # Rohsätze
+    for rec in parsed["gdv_records"]:
+        db.insert_gdv_record(rec, file_id)
+
+
+Die Implementierung von db.insert_* hängt von deinem ORM / SQL-Layer ab, aber die Richtung ist klar:
+
+Parser baut rein im Speicher:
+
+file_meta, customers, contracts (+ nested persons/coverages).
+
+Danach ein dedizierter Schritt, der diese Domain-Objekte in Tabellen schreibt.
+
+
+
+

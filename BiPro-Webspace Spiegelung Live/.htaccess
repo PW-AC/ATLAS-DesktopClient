@@ -1,0 +1,20 @@
+# BiPro API - Haupt .htaccess
+# ================================
+
+# Verzeichnis-Listing deaktivieren
+Options -Indexes
+
+# UTF-8 Encoding
+AddDefaultCharset UTF-8
+
+# config.php NIEMALS direkt aufrufbar
+<Files "config.php">
+    Order Allow,Deny
+    Deny from all
+</Files>
+
+# .htaccess und andere versteckte Dateien blockieren
+<FilesMatch "^\.">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>

@@ -1,0 +1,124 @@
+# =============================================================================
+# Python
+# =============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# =============================================================================
+# IDE / Editor
+# =============================================================================
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm / IntelliJ
+.idea/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Cursor
+.cursor/
+
+# =============================================================================
+# OS
+# =============================================================================
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# =============================================================================
+# Project-specific
+# =============================================================================
+
+# Echte GDV-Dateien mit personenbezogenen Daten
+Echte daten Beispiel/
+
+# Temporäre Test-Ausgaben
+*.tmp
+*.bak
+temp/
+tmp/
+
+# Test-Logs und Debug-Dateien
+test_logs/
+*_debug.py
+test_*.py
+!testdata/test_*.py
+
+# BiPRO temporäre Dateien
+lieferung_*.xml
+bipro_preview_*/
+
+# Logs
+*.log
+logs/
+
+# Sensible Server-Konfiguration (enthaelt DB-Credentials, API-Keys)
+BiPro-Webspace Spiegelung Live/api/config.php
+
+# API-Keys die im Klartext rumliegen
+neuer API KEY/
+
+# PyInstaller Build-Artefakte
+build/
+
+# Projekt-Konzepte und interne Dokumente
+Projekt Ziel/
+
+# =============================================================================
+# Wichtig: NICHT ignorieren
+# =============================================================================
+
+# requirements.txt - NICHT ignorieren (wird für Installation benötigt)
+# testdata/ - NICHT ignorieren (enthält nur Beispieldaten, keine echten Personen)
+# *.gdv in testdata/ - NICHT ignorieren

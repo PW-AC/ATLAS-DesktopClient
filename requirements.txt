@@ -1,0 +1,29 @@
+# BiPRO-GDV Tool - Abhaengigkeiten
+# Python 3.10+ erforderlich
+
+# GUI Framework
+PySide6>=6.6.0
+
+# HTTP Client fuer API-Kommunikation
+requests>=2.31.0
+
+# Kryptographie fuer PFX-Zertifikate (easy Login)
+cryptography>=41.0.0
+
+# PDF-Verarbeitung (KI-Benennung)
+PyMuPDF>=1.23.0
+
+# JKS-Zertifikate (Java KeyStore)
+pyjks>=20.0.0
+
+# SOAP Client fuer BiPRO (optional, nicht mehr aktiv genutzt)
+# zeep>=4.2.0
+
+# Fuer spaeteren Export/Import (optional)
+# openpyxl>=3.1.0  # Excel-Export
+
+# Fuer Packaging
+pyinstaller>=6.0.0
+
+
+

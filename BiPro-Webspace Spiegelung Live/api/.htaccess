@@ -1,0 +1,21 @@
+# BiPro API - Router .htaccess
+# ================================
+
+# URL Rewriting aktivieren
+RewriteEngine On
+
+# Basis-Pfad setzen
+RewriteBase /api/
+
+# Wenn Datei oder Verzeichnis existiert, direkt ausliefern
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# Alles andere an index.php weiterleiten
+RewriteRule ^(.*)$ index.php?route=$1 [QSA,L]
+
+# config.php NIEMALS aufrufbar
+<Files "config.php">
+    Order Allow,Deny
+    Deny from all
+</Files>
