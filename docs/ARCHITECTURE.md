@@ -329,19 +329,29 @@ Dokumenten-Operationen mit Box-Support:
 #### Weitere API-Clients
 | Datei | Zweck | Zeilen |
 |-------|-------|--------|
-| `vu_connections.py` | VU-Verbindungsverwaltung | 426 |
-| `admin.py` | Nutzerverwaltung (Admin) | 241 |
-| `smartscan.py` | SmartScan + EmailAccounts | 501 |
-| `openrouter.py` | KI-Klassifikation | 1760 |
-| `passwords.py` | Passwort-Verwaltung | 152 |
-| `releases.py` | Auto-Update | 156 |
-| `processing_history.py` | Audit-Trail | 370 |
+| `auth.py` | Login, User-Model mit Permissions | ~150 |
+| `vu_connections.py` | VU-Verbindungsverwaltung | ~350 |
+| `admin.py` | Nutzerverwaltung (Admin) | ~200 |
+| `smartscan.py` | SmartScan + EmailAccounts | ~350 |
+| `openrouter.py` | KI-Klassifikation (zweistufig) | ~900 |
+| `passwords.py` | Passwort-Verwaltung | ~80 |
+| `releases.py` | Auto-Update | ~120 |
+| `processing_history.py` | Audit-Trail | ~380 |
+| `gdv_api.py` | GDV-Dateien server-seitig parsen | ~229 |
+| `xml_index.py` | XML-Index fuer BiPRO-Rohdaten | ~259 |
+| `smartadmin_auth.py` | SmartAdmin SAML-Auth (47 VUs) | ~640 |
 
 ---
 
 ### 3. BiPRO Client (`src/bipro/`)
 
-#### transfer_service.py (~1220 Zeilen)
+#### bipro_connector.py (~397 Zeilen)
+BiPRO-Verbindungsabstraktion:
+- SmartAdmin-Flow vs. Standard-BiPRO-Flow
+- Dispatch basierend auf VU-Konfiguration
+- Nutzt `smartadmin_auth.py` fuer SmartAdmin-Authentifizierung
+
+#### transfer_service.py (~1334 Zeilen)
 BiPRO 410/430 SOAP-Client (Multi-VU-Support):
 
 **Klassen**:

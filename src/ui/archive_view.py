@@ -55,7 +55,7 @@ def format_date_german(date_str: str) -> str:
         if len(parts) == 3:
             year, month, day = parts
             return f"{day}.{month}.{year}"
-    except:
+    except (ValueError, IndexError):
         pass
     return date_str
 
@@ -188,7 +188,7 @@ class AIRenameWorker(QThread):
                     try:
                         os.unlink(pdf_path)
                         os.rmdir(temp_dir)
-                    except:
+                    except OSError:
                         pass
                     
                 except Exception as e:
@@ -198,7 +198,7 @@ class AIRenameWorker(QThread):
                     # Fehler in DB speichern
                     try:
                         self.docs_api.update(doc.id, ai_processing_error=error_msg[:500])
-                    except:
+                    except Exception:
                         pass
                     
                     results.append((doc.id, False, error_msg))

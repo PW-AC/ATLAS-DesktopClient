@@ -1209,7 +1209,7 @@ class TransferServiceClient:
                             'content_bytes': decoded,
                             'mime_type': 'application/pdf'
                         })
-                    except:
+                    except Exception:
                         pass
         
         # Metadaten
@@ -1302,14 +1302,14 @@ class TransferServiceClient:
             try:
                 os.unlink(self._temp_cert_file.name)
                 logger.debug(f"Temp-Zertifikat geloescht: {self._temp_cert_file.name}")
-            except:
+            except OSError:
                 pass
         
         if self._temp_key_file:
             try:
                 os.unlink(self._temp_key_file.name)
                 logger.debug(f"Temp-Key geloescht: {self._temp_key_file.name}")
-            except:
+            except OSError:
                 pass
         
         logger.debug("BiPRO-Verbindung geschlossen")

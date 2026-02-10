@@ -3788,13 +3788,16 @@ class ArchiveBoxesView(QWidget):
         # Loading-Indikator anzeigen
         self._history_panel.show_loading(doc.original_filename)
         
-        # Worker starten
+        # Worker starten - alten Worker sauber stoppen
         if self._history_worker is not None:
             try:
                 self._history_worker.finished.disconnect()
                 self._history_worker.error.disconnect()
             except (RuntimeError, TypeError):
                 pass
+            if self._history_worker.isRunning():
+                self._history_worker.quit()
+                self._history_worker.wait(2000)  # Max 2 Sekunden warten
         
         self._history_worker = DocumentHistoryWorker(self.api_client, doc.id)
         self._history_worker.finished.connect(self._on_history_loaded)

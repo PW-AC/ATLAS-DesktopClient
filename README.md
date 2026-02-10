@@ -170,6 +170,7 @@ python run.py
 │   │
 │   ├── bipro/                # BiPRO SOAP Client
 │   │   ├── transfer_service.py  # BiPRO 410 STS + 430 Transfer
+│   │   ├── bipro_connector.py   # SmartAdmin vs. Standard-Flow
 │   │   ├── rate_limiter.py   # AdaptiveRateLimiter
 │   │   └── categories.py     # Kategorie-Mapping
 │   │
@@ -187,7 +188,9 @@ python run.py
 │   │
 │   ├── config/               # Konfiguration
 │   │   ├── processing_rules.py  # Verarbeitungsregeln + BiPRO-Codes
-│   │   └── vu_endpoints.py   # VU-Endpunkt-Konfiguration
+│   │   ├── vu_endpoints.py   # VU-Endpunkt-Konfiguration
+│   │   ├── smartadmin_endpoints.py # SmartAdmin VU-Endpunkte (47 VUs)
+│   │   └── certificates.py   # Zertifikat-Manager (PFX/P12)
 │   │
 │   ├── i18n/                 # Internationalisierung
 │   │   └── de.py             # Deutsche UI-Texte (~790 Keys)

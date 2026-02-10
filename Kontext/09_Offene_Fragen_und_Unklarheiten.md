@@ -29,9 +29,9 @@
 
 | Aspekt | Details |
 |--------|---------|
-| Was | `src/api/smartadmin_auth.py` (~650 Zeilen) und `src/config/smartadmin_endpoints.py` (~520 Zeilen) |
-| Status | Code vorhanden, aber nicht in AGENTS.md Features dokumentiert |
-| Frage | Wird SmartAdmin aktiv genutzt? Oder ist das fuer zukuenftige VUs? |
+| Was | `src/api/smartadmin_auth.py` (~640 Zeilen), `src/config/smartadmin_endpoints.py` (~490 Zeilen), `src/bipro/bipro_connector.py` (~397 Zeilen) |
+| Status | Code vorhanden, jetzt in AGENTS.md Dateipfade dokumentiert. 47 VU-Endpunkte definiert. |
+| Frage | Welche der 47 VUs sind produktiv getestet? Nur Degenia + VEMA sind als "funktioniert" markiert. |
 
 ---
 

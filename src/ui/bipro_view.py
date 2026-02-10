@@ -886,7 +886,7 @@ class ParallelDownloadManager(QThread):
             if self._token_manager:
                 try:
                     self._token_manager.close()
-                except:
+                except Exception:
                     pass
     
     def _worker_loop(self, worker_id: int):
@@ -1279,7 +1279,7 @@ class ParallelDownloadManager(QThread):
                     'content_base64': content_b64.strip(),
                     'mime_type': 'application/pdf'
                 })
-            except:
+            except Exception:
                 pass
         
         return documents, metadata
@@ -1424,7 +1424,7 @@ class ParallelDownloadManager(QThread):
                 if doc:
                     try:
                         doc.close()
-                    except:
+                    except Exception:
                         pass
                 logger.info(f"PDF-Oeffnung fehlgeschlagen, versuche Reparatur: {filepath} - {e}")
                 return self._attempt_pdf_repair(filepath)
@@ -1484,7 +1484,7 @@ class ParallelDownloadManager(QThread):
                     doc.close()
                     logger.info(f"PDF erfolgreich repariert: {filepath}")
                     return (True, PDFValidationStatus.PDF_REPAIRED)
-                except:
+                except Exception:
                     doc.close()
                     return (False, PDFValidationStatus.PDF_CORRUPT)
             
@@ -1498,7 +1498,7 @@ class ParallelDownloadManager(QThread):
             if os.path.exists(repaired_path):
                 try:
                     os.remove(repaired_path)
-                except:
+                except OSError:
                     pass
             return (False, PDFValidationStatus.PDF_CORRUPT)
     

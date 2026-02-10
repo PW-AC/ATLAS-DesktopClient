@@ -77,6 +77,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 │  │   └── src/api/vu_connections.py                                          │
 │  ├── BiPRO SOAP Client ✅ FUNKTIONIERT                                      │
 │  │   ├── src/bipro/transfer_service.py (STS + Transfer + SharedTokenManager)│
+│  │   ├── src/bipro/bipro_connector.py (SmartAdmin vs. Standard) **NEU**     │
 │  │   ├── src/bipro/rate_limiter.py (AdaptiveRateLimiter) **NEU v0.9.1**     │
 │  │   └── src/bipro/categories.py (Kategorie-Mapping)                        │
 │  ├── Services Layer                                                         │
@@ -1335,18 +1336,30 @@ python test_roundtrip.py
 | `src/services/document_processor.py` | **Automatische Dokumenten-Klassifikation mit Confidence-Handling** |
 | `src/services/data_cache.py` | **DataCacheService (Cache + Auto-Refresh, Thread-safe v0.9.4)** |
 | `src/config/processing_rules.py` | **Konfigurierbare Verarbeitungsregeln + BiPRO-Codes** |
-| `src/bipro/transfer_service.py` | BiPRO 430 Client (STS + Transfer + SharedTokenManager) |
+| `src/bipro/transfer_service.py` | BiPRO 430 Client (STS + Transfer + SharedTokenManager, ~1334 Zeilen) |
+| `src/bipro/bipro_connector.py` | **BiPRO-Verbindungsabstraktion (SmartAdmin vs. Standard, ~397 Zeilen)** |
 | `src/bipro/rate_limiter.py` | **AdaptiveRateLimiter (NEU v0.9.1)** |
 | `src/bipro/categories.py` | Kategorie-Code Mapping |
 | `src/services/update_service.py` | **UpdateService (Auto-Update Check + Download + Install)** |
 | `src/services/zip_handler.py` | **ZIP-Handler (Entpacken, Passwort, rekursiv) NEU v1.0.5** |
 | `src/services/pdf_unlock.py` | **PDF-Unlock (dynamische Passwoerter aus DB) v1.0.5** |
+| `src/services/msg_handler.py` | **MSG-Handler (Outlook .msg Anhaenge extrahieren) NEU v1.0.4** |
+| `src/services/atomic_ops.py` | **Atomic File Operations (SHA256, Staging, Safe-Write)** |
 | `src/ui/update_dialog.py` | **UpdateDialog (3 Modi: optional/mandatory/deprecated)** |
 | `src/ui/toast.py` | **ToastManager + ToastWidget + ProgressToastWidget (Globales Toast-System) v1.0.7/v1.0.9** |
+| `src/ui/gdv_editor_view.py` | **GDV-Editor View (RecordTable + Editor, ~648 Zeilen)** |
+| `src/ui/settings_dialog.py` | **Einstellungen-Dialog (Zertifikate verwalten, ~350 Zeilen)** |
+| `src/ui/styles/tokens.py` | **ACENCIA Design-Tokens (Farben, Fonts, Styles, ~977 Zeilen)** |
 | `docs/ui/UX_RULES.md` | **Verbindliche UI-Regeln: Keine modalen Popups, Toast-Spezifikation NEU v1.0.7** |
 | `src/api/releases.py` | **ReleasesAPI Client (Admin CRUD + Public Check)** |
 | `src/api/passwords.py` | **PasswordsAPI Client (Passwort-Verwaltung) NEU v1.0.5** |
 | `src/api/smartscan.py` | **SmartScanAPI + EmailAccountsAPI Clients (NEU v1.0.6)** |
+| `src/api/auth.py` | **AuthAPI Client (Login, User-Model mit Permissions)** |
+| `src/api/gdv_api.py` | **GDV API Client (GDV-Dateien server-seitig parsen/speichern)** |
+| `src/api/xml_index.py` | **XML-Index API Client (BiPRO-XML-Rohdaten-Index)** |
+| `src/api/smartadmin_auth.py` | **SmartAdmin-Authentifizierung (SAML-Token, 47 VUs, ~640 Zeilen)** |
+| `src/config/smartadmin_endpoints.py` | **SmartAdmin VU-Endpunkte (47 Versicherer, Auth-Typen)** |
+| `src/config/certificates.py` | **Zertifikat-Manager (PFX/P12, X.509)** |
 | `src/i18n/de.py` | **Zentrale i18n-Datei (~910 Keys: CLOSE_BLOCKED_, DUPLICATE_, SHORTCUT_, SMARTSCAN_, EMAIL_, etc.)** |
 | `VERSION` | **Zentrale Versionsdatei (Single Source of Truth)** |
 | `BIPRO_STATUS.md` | Aktueller Stand der BiPRO-Integration |
@@ -1370,6 +1383,7 @@ python test_roundtrip.py
 | `→ api/passwords.php` | **Passwort-Verwaltung (PDF/ZIP) Public + Admin (NEU v1.0.5)** |
 | `→ api/smartscan.php` | **SmartScan Settings + Send + Chunk + Historie (NEU v1.0.6)** |
 | `→ api/email_accounts.php` | **E-Mail-Konten CRUD + SMTP-Test + IMAP-Polling (NEU v1.0.6)** |
+| `→ api/xml_index.php` | **XML-Index fuer BiPRO-Rohdaten (CRUD + Suche)** |
 | `→ api/lib/PHPMailer/` | **PHPMailer v6.9.3 (3 Dateien, SMTP-Versand) (NEU v1.0.6)** |
 | `→ releases/` | **Release-Dateien Storage (Installer-EXEs)** |
 | `→ dokumente/` | Datei-Storage (nicht web-zugänglich) |
@@ -1379,13 +1393,15 @@ python test_roundtrip.py
 | Pfad | Beschreibung |
 |------|--------------|
 | `testdata/sample.gdv` | Test-GDV-Datei |
-| `src/tests/test_stability.py` | **11 Smoke-Tests (Stabilitaets-Upgrade v0.9.4)** |
+| `src/tests/run_smoke_tests.py` | **Smoke-Tests (Stabilitaets-Upgrade v0.9.4)** |
 | `scripts/run_checks.py` | **Minimal-CI Script (Lint + Tests)** |
 | `requirements-dev.txt` | **Dev-Dependencies (pytest, ruff)** |
 | `logs/bipro_gdv.log` | **Persistentes Log-File (Rotation 5 MB, 3 Backups)** |
+| `tools/decrypt_iwm_password.py` | **IWM FinanzOffice Passwort-Entschluesselung (Analyse-Tool)** |
 | `STABILITY_UPGRADE/` | **Audit-Reports des Stabilitaets-Upgrades** |
 | `Kontext/` | Generierte Projektanalyse |
-| `docs/` | ARCHITECTURE.md, DEVELOPMENT.md, DOMAIN.md |
+| `Bugs/` | Generierte Bug-Analyse |
+| `docs/` | ARCHITECTURE.md, DEVELOPMENT.md, DOMAIN.md, BIPRO_ENDPOINTS.md |
 
 ---
 

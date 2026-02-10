@@ -857,6 +857,16 @@ class MainHub(QMainWindow):
         logger.info(f"Drag & Drop Upload: {len(file_paths)} Datei(en) aus {len(paths)} Element(en)")
         self._start_drop_upload(file_paths)
 
+    def _cleanup_outlook_temp_dir(self, temp_dir: str):
+        """Raeumt ein einzelnes Outlook-Temp-Verzeichnis sofort auf."""
+        import shutil
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
+        if temp_dir in self._outlook_temp_dirs:
+            self._outlook_temp_dirs.remove(temp_dir)
+
     def _extract_outlook_emails(self, mime_data) -> List[str]:
         """
         Extrahiert E-Mails aus Outlook Drag & Drop als temporaere .msg Dateien.
@@ -878,6 +888,7 @@ class MainHub(QMainWindow):
         except ImportError:
             logger.error("pywin32 nicht installiert - Outlook Drag & Drop nicht verfuegbar")
             self._toast_manager.show_warning(texts.OUTLOOK_DROP_NO_PYWIN32)
+            self._cleanup_outlook_temp_dir(temp_dir)
             return []
 
         try:
@@ -890,11 +901,13 @@ class MainHub(QMainWindow):
 
             if not explorer or not explorer.Selection:
                 logger.warning("Outlook-Drop: Keine E-Mail-Auswahl in Outlook gefunden")
+                self._cleanup_outlook_temp_dir(temp_dir)
                 return []
 
             selection = explorer.Selection
             count = selection.Count
             if count == 0:
+                self._cleanup_outlook_temp_dir(temp_dir)
                 return []
 
             logger.info(f"Outlook-Drop: {count} E-Mail(s) in Outlook ausgewaehlt")
@@ -929,11 +942,16 @@ class MainHub(QMainWindow):
                     logger.warning(f"Outlook-Drop: E-Mail {i} konnte nicht gespeichert werden: {e}")
                     continue
 
+            # Wenn keine Dateien extrahiert, temp_dir sofort aufraeumen
+            if not temp_files:
+                self._cleanup_outlook_temp_dir(temp_dir)
+
             return temp_files
 
         except Exception as e:
             logger.error(f"Outlook COM-Fehler: {e}")
             self._toast_manager.show_error(texts.OUTLOOK_DROP_COM_ERROR.format(error=str(e)))
+            self._cleanup_outlook_temp_dir(temp_dir)
             return []
 
         finally:

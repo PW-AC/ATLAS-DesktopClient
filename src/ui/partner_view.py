@@ -304,7 +304,7 @@ def extract_partners_from_file(parsed_file: ParsedFile) -> tuple[List[Employer],
         if isinstance(beitrag, str):
             try:
                 beitrag = float(beitrag.replace(",", ".")) if beitrag else 0
-            except:
+            except (ValueError, TypeError):
                 beitrag = 0
         
         # Zahlungsweise

@@ -672,6 +672,10 @@ class DocumentProcessor:
                                     openrouter = self._get_openrouter()
                                     ki_result = openrouter.classify_sparte_with_date(pdf_path)
                                     
+                                    # Schutz gegen None-Rueckgabe bei KI-Fehler
+                                    if ki_result is None:
+                                        ki_result = {}
+                                    
                                     sparte = ki_result.get('sparte', 'sonstige')
                                     date_iso = ki_result.get('document_date_iso')
                                     ki_vu_name = ki_result.get('vu_name')
@@ -740,6 +744,10 @@ class DocumentProcessor:
                                 pdf_path = repaired_path or local_path
                                 openrouter = self._get_openrouter()
                                 ki_result = openrouter.classify_sparte_with_date(pdf_path)
+                                
+                                # Schutz gegen None-Rueckgabe bei KI-Fehler
+                                if ki_result is None:
+                                    ki_result = {}
                                 
                                 sparte = ki_result.get('sparte', 'sonstige')
                                 date_iso = ki_result.get('document_date_iso')

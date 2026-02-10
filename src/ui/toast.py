@@ -237,8 +237,9 @@ class ToastWidget(QFrame):
         if self._action_callback:
             try:
                 self._action_callback()
-            except Exception:
-                pass  # Action-Fehler nicht propagieren
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Toast-Action fehlgeschlagen: {e}")
         self._dismiss()
     
     def _fade_out(self):
