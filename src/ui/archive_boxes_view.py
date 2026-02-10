@@ -2872,9 +2872,20 @@ class ArchiveBoxesView(QWidget):
         # Nur Statistiken vom Server holen
         self._refresh_stats(force_refresh=True)
         
+        # Archived-Box erkennen (z.B. 'courtage_archived' -> box='courtage', is_archived=True)
+        is_archived_box = self._current_box and self._current_box.endswith("_archived")
+        actual_box = self._current_box.replace("_archived", "") if is_archived_box else self._current_box
+        
         # Aktuelle Box direkt vom Server laden (Cache fuer diese Box invalidieren)
-        box_type = self._current_box if self._current_box else None
+        box_type = actual_box if actual_box else None
         documents = self._cache.get_documents(box_type=box_type, force_refresh=True)
+        
+        # is_archived Filter client-seitig anwenden
+        if is_archived_box:
+            documents = [d for d in documents if d.is_archived]
+        elif actual_box:
+            documents = [d for d in documents if not d.is_archived]
+        
         self._apply_filters_and_display(documents, force_rebuild=True)
     
     # =========================================================================
