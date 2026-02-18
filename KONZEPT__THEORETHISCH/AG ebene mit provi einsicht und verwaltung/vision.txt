@@ -1,0 +1,41 @@
+ACENCIA ATLAS – Provisionsmanagement (Vision)
+===============================================
+
+Stand: 13. Februar 2026
+
+ZIEL:
+Geschäftsführer-Ebene mit Mitarbeiterverwaltung und professionellem Provisionsmanagement.
+Raus aus Excel-Listen – hin zu echter Steuerung und Kontrolle.
+
+DATENQUELLEN:
+1. VU-Provisionslisten (Versicherer-Courtage, bereits in Courtage-Box vorhanden)
+2. Xempus Advisor Exporte (Beratungen mit VSNR, Status, Berater)
+
+PROVISIONSMODELL (geklärt):
+- VU zahlt Courtage an AG (Betrag X)
+- Berater bekommt Y% von X (individueller Prozentsatz, 1–5 verschiedene Sätze)
+- Hat der Berater einen Teamleiter → TL bekommt Z% (zwei konfigurierbare Varianten):
+  - Variante A (Standard): Z% vom BERATER-ANTEIL (z.B. 10% von 400€ = 40€)
+  - Variante B: Z% von der GESAMT-COURTAGE (z.B. 10% von 1.000€ = 100€)
+- TL-Override wird in BEIDEN Varianten vom Berater-Anteil ABGEZOGEN (nicht zusätzlich von AG)
+- TL-Anteil darf nie größer sein als der Berater-Anteil (Cap)
+- TL bekommt Override NUR auf seine Team-Mitglieder
+- GF hat KEINEN eigenen Override – GF = AG = was übrig bleibt
+- AG-Anteil ist IMMER fix: 100% - Y% (unberührt vom TL-Override)
+- Keine Gemeinschaftsgeschäfte / Splits
+- Staffelmodelle: Ja, aber Phase 2
+
+RAHMENDATEN:
+- ~13 Mitarbeiter, davon 3-5 Consulter, 1 Teamleiter
+- Unterschiedliche Prozentsätze je Berater (keine strukturell verschiedenen Modelle)
+- Rückbelastungen kommen als separate Position in VU-Listen
+- Xempus-Exporte haben stabiles Format
+
+MATCHING-SCHLÜSSEL:
+- VSNR (Versicherungsscheinnummer) als gemeinsamer Primärschlüssel
+- VU-Liste: "Neue / zuletzt gültige VSNR"
+- Xempus: "Versicherungsscheinnummer"
+- Vermittler-Name-Mapping nötig (VU-Name ≠ interner Name)
+
+UMSETZUNGSPLAN:
+→ Siehe PLAN_Provisionsmanagement.md für vollständigen technischen Plan

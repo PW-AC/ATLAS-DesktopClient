@@ -33,7 +33,7 @@ def is_msg_file(file_path: str) -> bool:
     return Path(file_path).suffix.lower() == '.msg'
 
 
-def extract_msg_attachments(msg_path: str, temp_dir: Optional[str] = None) -> MsgExtractResult:
+def extract_msg_attachments(msg_path: str, temp_dir: Optional[str] = None, api_client=None) -> MsgExtractResult:
     """
     Extrahiert Anhaenge aus einer Outlook .msg Datei.
     
@@ -41,6 +41,7 @@ def extract_msg_attachments(msg_path: str, temp_dir: Optional[str] = None) -> Ms
         msg_path: Pfad zur .msg Datei
         temp_dir: Optionaler Ordner fuer temporaere Dateien.
                   Falls None, wird ein neuer temp-Ordner erstellt.
+        api_client: Optionaler APIClient fuer dynamische Passwort-Abfrage bei PDF-Unlock
     
     Returns:
         MsgExtractResult mit Pfaden zu extrahierten Anhaengen
@@ -102,7 +103,7 @@ def extract_msg_attachments(msg_path: str, temp_dir: Optional[str] = None) -> Ms
                 if filename.lower().endswith('.pdf'):
                     try:
                         from services.pdf_unlock import unlock_pdf_if_needed
-                        if unlock_pdf_if_needed(target_path):
+                        if unlock_pdf_if_needed(target_path, api_client=api_client):
                             logger.info(f"MSG-PDF-Anhang entsperrt: {filename}")
                     except ValueError as e:
                         logger.warning(f"MSG-PDF-Anhang geschuetzt: {e}")

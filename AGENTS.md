@@ -53,7 +53,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         ACENCIA ATLAS v2.0.0                                │
+│                         ACENCIA ATLAS v2.1.3                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Desktop-App (PySide6/Qt)                         Strato Webspace           │
 │  ├── UI Layer                                     ├── PHP REST API          │
@@ -63,7 +63,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 │  │   ├── bipro_view.py (BiPRO+MailImport) ✅      │   ├── documents.php     │
 │  │   ├── archive_boxes_view.py (Archiv) ✅        │   ├── gdv.php           │
 │  │   ├── gdv_editor_view.py (GDV-Editor)          │   ├── credentials.php   │
-│  │   ├── admin_view.py (Admin, 11 Panels) ✅      │   ├── admin.php         │
+│  │   ├── admin_view.py (Admin, 15 Panels) ✅      │   ├── admin.php         │
 │  │   ├── update_dialog.py (Auto-Update) ✅        │   ├── sessions.php      │
 │  │   ├── toast.py (Toast+ProgressToast)           │   ├── activity.php      │
 │  │   ├── partner_view.py                          │   ├── releases.php      │
@@ -87,7 +87,12 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 │  ├── Services Layer                                                         │
 │  │   ├── src/services/document_processor.py (Klassifikation)                │
 │  │   ├── src/services/data_cache.py (Cache + Auto-Refresh-Kontrolle)        │
-│  │   └── src/services/update_service.py (Auto-Update) **NEU v0.9.9**       │
+│  │   ├── src/services/update_service.py (Auto-Update) **NEU v0.9.9**       │
+│  │   ├── src/services/empty_page_detector.py (Leere-Seiten) **NEU v2.0.2** │
+│  │   ├── src/services/pdf_unlock.py (PDF-Passwort-Entsperrung)              │
+│  │   ├── src/services/zip_handler.py (ZIP-Entpackung)                       │
+│  │   ├── src/services/msg_handler.py (Outlook MSG-Verarbeitung)             │
+│  │   └── src/services/atomic_ops.py (Atomic File Operations)                │
 │  └── Parser Layer                                                           │
 │      ├── gdv_parser.py                                                      │
 │      └── gdv_layouts.py                                                     │
@@ -110,7 +115,8 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 | PDF-Verarbeitung | PyMuPDF (fitz) | 1.23+ |
 | HTTP Client | requests | 2.31+ |
 | BiPRO SOAP | requests (raw XML, kein zeep) | 2.31+ |
-| KI/LLM | OpenRouter API (GPT-4o) | - |
+| KI/LLM | OpenRouter ODER OpenAI API (GPT-4o/4o-mini) | - |
+| Token-Zaehlung | tiktoken | 0.5+ |
 | Server API | PHP | 7.4+ |
 | Datenbank | MySQL | 8.0 |
 | Hosting | Strato Webspace | - |
@@ -386,8 +392,9 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - Vertikale Navigation links mit 4 Sektionen, getrennt durch orangene Linien:
     - **VERWALTUNG**: Nutzerverwaltung, Sessions, Passwoerter (Panels 0-2)
     - **MONITORING**: Aktivitaetslog, KI-Kosten, Releases (Panels 3-5)
-    - **E-MAIL**: E-Mail-Konten, SmartScan-Einstellungen, SmartScan-Historie, E-Mail-Posteingang (Panels 6-9)
-    - **KOMMUNIKATION**: Mitteilungen (Panel 10) **NEU v2.0.0**
+    - **VERARBEITUNG**: KI-Klassifikation (Panel 6), KI-Provider (Panel 7), Modell-Preise (Panel 8), Dokumenten-Regeln (Panel 9) **NEU v2.1.3**
+    - **E-MAIL**: E-Mail-Konten, SmartScan-Einstellungen, SmartScan-Historie, E-Mail-Posteingang (Panels 10-13)
+    - **KOMMUNIKATION**: Mitteilungen (Panel 14) **NEU v2.0.0**
   - Monochrome `›` Icons in ACENCIA Corporate Design
   - `AdminNavButton` mit Custom-Styling (Primary-900 Hintergrund)
   - "Zurueck zur App" Button oben in der Sidebar
@@ -400,7 +407,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `BiPro-Webspace Spiegelung Live/api/activity.php` → Aktivitaetslog (nur Admins)
   - `BiPro-Webspace Spiegelung Live/setup/migration_admin.php` → DB-Migration
   - `src/api/admin.py` → AdminAPI Client
-  - `src/ui/admin_view.py` → Admin-View mit vertikaler Sidebar + QStackedWidget (11 Panels)
+  - `src/ui/admin_view.py` → Admin-View mit vertikaler Sidebar + QStackedWidget (15 Panels)
   - `src/ui/main_hub.py` → `_show_admin()` versteckt Haupt-Sidebar, `_leave_admin()` zeigt sie wieder
   - `src/api/auth.py` → User-Model mit account_type, permissions, has_permission()
   - `src/i18n/de.py` → ~80 Admin-/Permission-Texte
@@ -667,9 +674,9 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 - **PHPMailer v6.9.3**: Robuster SMTP-Versand mit TLS auf Shared Hosting
 - **DB-Tabellen**: `email_accounts`, `smartscan_settings`, `smartscan_jobs`, `smartscan_job_items`, `smartscan_emails`
 - **UI-Integration**:
-  - Admin Panel 6: E-Mail-Konten Verwaltung (CRUD + SMTP-Verbindungstest)
-  - Admin Panel 7: SmartScan Einstellungen (Zieladresse, Templates, Modi, Limits, Post-Send-Aktionen)
-  - Admin Panel 8: SmartScan Versandhistorie (Filter, Details mit Items + Emails)
+  - Admin Panel 10: E-Mail-Konten Verwaltung (CRUD + SMTP-Verbindungstest)
+  - Admin Panel 11: SmartScan Einstellungen (Zieladresse, Templates, Modi, Limits, Post-Send-Aktionen)
+  - Admin Panel 12: SmartScan Versandhistorie (Filter, Details mit Items + Emails)
   - Gruener Smart!Scan-Toolbar-Button im Archiv (sichtbar nur wenn SmartScan aktiviert)
   - Kontextmenue: "Smart!Scan" in Box-Sidebar und Dokument-Tabelle (Einzel-/Mehrfachauswahl)
   - Einfache Bestaetigung per QMessageBox (kein Dialog), Einstellungen aus Admin-Config
@@ -693,13 +700,13 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - Alle Absender oder nur Whitelist
 - **Manuell und automatisch**: Button "Postfach abrufen" in Admin oder "Mails abholen" im BiPRO-Bereich
 - **DB-Tabellen**: `email_inbox`, `email_inbox_attachments` (mit import_status Tracking)
-- **UI**: Admin Panel 9 "E-Mail Posteingang" (Tabelle, Kontextmenue, Detail-Dialog)
+- **UI**: Admin Panel 12 "E-Mail Posteingang" (Tabelle, Kontextmenue, Detail-Dialog)
 - **IMAP-Import-Einstellungen**: Integriert in SmartScan-Settings-Panel (Sektion "E-Mail-Import")
 - **Sicherheit**: IMAP TLS, Staging-Cleanup, Absender-Whitelist, MIME-Validierung, SHA256-Hashes
 - **Dateien**:
   - `BiPro-Webspace Spiegelung Live/api/email_accounts.php` → IMAP-Polling + Inbox-Endpoints
   - `src/api/smartscan.py` → `EmailAccountsAPI` mit IMAP-Methoden
-  - `src/ui/admin_view.py` → Panel 9 IMAP Inbox + Settings-Integration
+  - `src/ui/admin_view.py` → Panel 12 IMAP Inbox + Settings-Integration
   - `src/ui/bipro_view.py` → `MailImportWorker`, `_fetch_mails()` (BiPRO-Button)
   - `src/i18n/de.py` → EMAIL_INBOX_, IMAP_IMPORT_ und BIPRO_MAIL_FETCH_ Keys
 
@@ -747,21 +754,37 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `src/ui/archive_boxes_view.py` → `_setup_shortcuts()`, 7 `_shortcut_*` Handler
   - `src/i18n/de.py` → ~16 neue SHORTCUT_ Keys
 
-### 2t. Duplikat-Erkennung (Dokumentenarchiv) ✅ (v1.1.1)
-- **Zweck**: Doppelte Dokumente anhand der SHA256-Prüfziffer erkennen und visuell markieren
+### 2t. Duplikat-Erkennung (Dokumentenarchiv) ✅ (v1.1.1, Rich-Tooltip v2.1.0, Navigation+Vergleich v2.1.0)
+- **Zweck**: Doppelte Dokumente anhand der SHA256-Prüfziffer erkennen, visuell markieren, navigieren und vergleichen
 - **Erkennung**: Server berechnet SHA256-Hash beim Upload, vergleicht gegen ALLE Dokumente (inkl. archivierte)
 - **Verhalten**: Duplikate werden trotzdem hochgeladen, aber als Dopplung markiert (version > 1)
 - **Visuelle Markierung**: Eigene Spalte (Spalte 0) in der Archiv-Tabelle mit Warn-Icon (⚠)
-- **Tooltip**: Zeigt Originalname und ID des Quell-Dokuments
+- **Rich-Tooltip (NEU v2.1.0)**: Beim Hover ueber Duplikat-Icon wird eine HTML-Kachel angezeigt mit:
+  - Dateiname des Originals (fett)
+  - Box-Emoji + Box-Name | Datum (DD.MM.YYYY) | ggf. "Archiviert"
+  - ID in dezenter Schrift
+  - Gilt fuer Datei-Duplikate UND Inhaltsduplikate
+- **Zum Gegenstueck springen (NEU v2.1.0)**:
+  - Klick auf Duplikat-Icon in der Tabelle springt zur Box des Gegenstuecks und selektiert es
+  - Kontextmenue-Eintrag "Zum Gegenstueck springen" (nur bei Duplikaten)
+  - Nutzt `_jump_to_counterpart()` mit Box-Wechsel + `_pending_select_doc_id`-Pattern
+- **Vergleichsansicht (NEU v2.1.0)**:
+  - `DuplicateCompareDialog` zeigt beide Dokumente side-by-side
+  - Kontextmenue-Eintrag "Duplikat vergleichen" (nur bei Duplikaten)
+  - PDF-Vorschau beider Dokumente (paralleler Download via PreviewDownloadWorker)
+  - Aktions-Buttons pro Seite: Loeschen, Archivieren/Entarchivieren, Verschieben (Box-Menue), Farbe (8 Farben)
+  - Nach Aktion: Seite wird visuell deaktiviert mit Status-Label
+  - Beim Schliessen: `documents_changed` Signal triggert `_refresh_all()` in ArchiveBoxesView
 - **Toast-Benachrichtigung**: Bei Upload-Erkennung wird Info-Toast angezeigt
-- **PHP-Seite**: `listDocuments()` liefert jetzt `content_hash`, `version`, `previous_version_id`, `duplicate_of_filename`
-- **Python-Seite**: `Document` Dataclass hat `duplicate_of_filename` Feld, `upload()` parst Duplikat-Infos
+- **PHP-Seite**: `listDocuments()` liefert `content_hash`, `version`, `previous_version_id`, `duplicate_of_filename`, `duplicate_of_box_type`, `duplicate_of_created_at`, `duplicate_of_is_archived` (+ analog fuer Content-Duplikate)
+- **Python-Seite**: `Document` Dataclass hat 6 Duplikat-Metadaten-Felder (box_type, created_at, is_archived fuer Datei- und Content-Duplikate)
 - **Dateien**:
-  - `BiPro-Webspace Spiegelung Live/api/documents.php` → `listDocuments()` SELECT + LEFT JOIN fuer duplicate_of_filename
-  - `src/api/documents.py` → `Document.duplicate_of_filename`, `upload()` Duplikat-Felder
-  - `src/ui/archive_boxes_view.py` → Spalte 0 Duplikat-Icon, `_populate_table()`, `_compute_documents_fingerprint()`
+  - `BiPro-Webspace Spiegelung Live/api/documents.php` → `listDocuments()` + `searchDocuments()` + `getDocument()` LEFT JOIN mit Metadaten
+  - `src/api/documents.py` → `Document` mit 6 neuen Duplikat-Feldern, `from_dict()` Parsing
+  - `src/ui/archive_view.py` → `DuplicateCompareDialog` (Side-by-Side-Vergleich mit PDF-Vorschau + Aktionen)
+  - `src/ui/archive_boxes_view.py` → `_on_table_clicked()` (Jump), `_jump_to_counterpart()`, `_open_duplicate_compare()`, Kontextmenue-Erweiterung, `DocumentTableModel._build_duplicate_tooltip()` (Rich-HTML)
   - `src/ui/main_hub.py` → Duplikat-Toast in `_on_drop_upload_finished()`
-  - `src/i18n/de.py` → DUPLICATE_* Keys (6 Stueck)
+  - `src/i18n/de.py` → DUPLICATE_* + CONTENT_DUPLICATE_* + DUPLICATE_COMPARE_* Keys (~35 Stueck)
 
 ### 2u. Dokument-Historie (Seitenpanel) ✅ (v1.1.2)
 - **Zweck**: Aenderungshistorie einzelner Dokumente als Seitenpanel im Archiv anzeigen
@@ -795,15 +818,26 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `src/ui/archive_boxes_view.py` → `DocumentHistoryPanel`, `DocumentHistoryWorker`, QSplitter-Integration
   - `src/i18n/de.py` → HISTORY_* Keys (~20 Stueck)
 
-### 2v. PDF-Bearbeitung in der Vorschau ✅ (v1.1.3)
+### 2v. PDF-Bearbeitung in der Vorschau ✅ (v1.1.3, Multi-Selection v2.1.3)
 - **Zweck**: PDFs direkt im Vorschau-Dialog bearbeiten (Seiten drehen, loeschen) und gespeichert zurueck auf den Server schreiben
 - **Berechtigungen**: `documents_manage` (bestehend) fuer das Ersetzen der Datei auf dem Server
 - **Trigger**: PDF-Vorschau im Dokumentenarchiv oeffnen (automatisch im Bearbeitungsmodus)
 - **Bearbeitungs-Funktionen**:
-  - **Seite rechts drehen** (↻, 90° CW)
-  - **Seite links drehen** (↺, 90° CCW)
-  - **Seite loeschen** (🗑, mit Bestaetigungsdialog, letzte Seite geschuetzt)
+  - **Seite rechts drehen** (↻, 90° CW) - Einzel- oder Mehrfachauswahl
+  - **Seite links drehen** (↺, 90° CCW) - Einzel- oder Mehrfachauswahl
+  - **Seite loeschen** (🗑, mit Bestaetigungsdialog, mindestens 1 Seite muss verbleiben) - Einzel- oder Mehrfachauswahl
   - **Speichern**: Bearbeitetes PDF auf den Server hochladen
+- **Multi-Selection (NEU v2.1.3)**:
+  - `ExtendedSelection` Modus in Thumbnail-Sidebar (Strg+Klick, Shift+Klick, Strg+A)
+  - Statuszeile zeigt "X von Y Seiten ausgewählt" bei Mehrfachauswahl
+  - Drehen wirkt auf alle ausgewaehlten Seiten gleichzeitig
+  - Loeschen mit Bestaetigungsdialog ("{count} Seiten wirklich löschen?")
+  - Auswahl wird nach Aktionen wiederhergestellt
+- **Auto-Refresh nach Speichern (NEU v2.1.3)**:
+  - `PDFRefreshWorker` (QThread) aktualisiert im Hintergrund nach erfolgreichem Speichern:
+    - Leere-Seiten-Erkennung (`get_empty_pages()`) → `empty_page_count`/`total_page_count` Update
+    - Text-Extraktion (`extract_and_save_text()`) → `document_ai_data` Update
+  - Status "Aktualisiere Dokumentdaten..." waehrend Refresh
 - **Architektur**:
   - `QPdfView` (Qt6 native) zeigt das PDF an (read-only Darstellung)
   - `PyMuPDF` (fitz) fuehrt die Manipulationen durch (Drehen, Loeschen)
@@ -839,6 +873,271 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `src/ui/main_hub.py` → `closeEvent()` erweitert um Blocking-Check
   - `src/i18n/de.py` → CLOSE_BLOCKED_* Keys (4 Stueck)
 
+### 2y. Leere-Seiten-Erkennung (PDF) ✅ (v2.0.2)
+- **Zweck**: Komplett leere und inhaltslose Seiten in PDFs erkennen und im Archiv kennzeichnen
+- **4-Stufen-Algorithmus** (Performance-optimiert, bricht frueh ab):
+  1. **Text pruefen** (schnell, ~80% der Faelle): `page.get_text("text").strip()`
+  2. **Vektor-Objekte pruefen**: `page.get_drawings()` (Linien, Tabellen, Rahmen)
+  3. **Bilder pruefen**: `page.get_images(full=True)` (kein Text + keine Vektoren + keine Bilder = leer)
+  4. **Pixel-Analyse** (50 DPI, nur bei Bild-Seiten): Durchschnitts-Helligkeit + Standardabweichung
+- **Verhalten**: Rein informativ -- Normale Verarbeitung (KI, Benennung, Box-Zuweisung) laeuft IMMER weiter
+- **DB-Spalten**: `empty_page_count INT NULL`, `total_page_count INT NULL` in documents-Tabelle
+- **Interpretation**: NULL = nicht geprueft, 0/N = keine leeren Seiten, M/N = teilweise, N/N = komplett leer
+- **Archiv-Tabelle**: Eigene Spalte (Spalte 1) mit Icons:
+  - Leerer Kreis (○) rot: Komplett leer
+  - Halb-Kreis (◑) orange: Teilweise leere Seiten
+  - Tooltip mit Details ("3 von 8 Seiten leer" / "Komplett leer (5 Seiten)")
+- **History-Logging**: `empty_pages_detected` Aktion mit Details (Indizes, Anzahl)
+- **Performance**: ~5-20ms/Seite (Stufe 4), typisches 10-Seiten-PDF unter 200ms
+- **Phase 2 (geplant)**: Admin-Einstellungen fuer Behandlungsoptionen (Loeschen, Farbe, Verschieben)
+- **Dateien**:
+  - `src/services/empty_page_detector.py` → `is_page_empty()`, `get_empty_pages()`, `_is_pixmap_blank()`
+  - `src/services/document_processor.py` → `_check_and_log_empty_pages()` (3 PDF-Zweige)
+  - `src/api/documents.py` → `Document.empty_page_count`, `total_page_count`, `has_empty_pages`, `is_completely_empty`
+  - `src/ui/archive_boxes_view.py` → `COL_EMPTY_PAGES` Spalte im `DocumentTableModel`
+  - `src/i18n/de.py` → EMPTY_PAGES_* Keys (8 Stueck)
+  - `BiPro-Webspace Spiegelung Live/api/documents.php` → SELECT + allowedFields erweitert
+  - `BiPro-Webspace Spiegelung Live/setup/016_empty_page_detection.php` → DB-Migration
+
+### 2z. Volltext + KI-Daten-Persistierung ✅ (v2.0.2, Content-Duplikate v2.0.3)
+- **Zweck**: Pro Dokument den vollstaendigen extrahierten PDF-Text und die KI-Klassifikations-Rohantwort speichern
+- **Separate Tabelle**: `document_ai_data` (1:1 zu documents, NIEMALS in listDocuments() gejoined)
+- **DB-Spalten**:
+  - `extracted_text` (MEDIUMTEXT): Volltext aller Seiten, mit FULLTEXT-Index
+  - `extracted_text_sha256`: SHA256 des Textes (fuer Content-Duplikat-Erkennung)
+  - `extraction_method`: text/ocr/mixed/none
+  - `extracted_page_count`: Seiten mit tatsaechlichem Text
+  - `ai_full_response` (LONGTEXT): KI-Rohantwort (JSON als String)
+  - `ai_prompt_text` (MEDIUMTEXT): Verwendeter Prompt
+  - `ai_model`: Modell-ID (z.B. openai/gpt-4o-mini)
+  - `ai_prompt_version`: Prompt-Version (z.B. v2.0.2)
+  - `ai_stage`: triage_only/triage_and_detail/courtage_minimal/none
+  - `prompt_tokens`, `completion_tokens`, `total_tokens`: Token-Verbrauch
+  - `text_char_count`, `ai_response_char_count`: Zeichenanzahl fuer Analyse
+- **Integration**: Nachgelagerter Schritt im document_processor nach Archive, Fehler bricht nichts ab
+- **Volltext-Extraktion**: Alle Seiten via PyMuPDF (nicht nur 2-5 wie fuer KI), ~5-50ms
+- **Token-Durchreichung**: _usage/_raw_response/_prompt_text in classify_*-Funktionen (openrouter.py)
+- **5 Performance-Regeln**: Keine Auto-Joins, kein SELECT*, API strikt getrennt, kein DB-Trigger, kein Lazy-Load im UI
+- **CASCADE-Delete**: document_ai_data wird bei Dokument-Loeschung mitgeloescht (DSGVO)
+- **Zukunfts-Features**: Volltextsuche, Analyse-Service, Embeddings, Cross-Dokument-Analysen
+- **Dateien**:
+  - `BiPro-Webspace Spiegelung Live/setup/017_document_ai_data.php` → DB-Migration
+  - `BiPro-Webspace Spiegelung Live/api/documents.php` → POST/GET /documents/{id}/ai-data + CASCADE-Delete
+  - `src/api/documents.py` → `save_ai_data()`, `get_ai_data()`, `get_missing_ai_data_documents()`
+  - `src/api/openrouter.py` → _usage/_raw_response/_prompt_text in classify_*-Funktionen
+  - `src/services/document_processor.py` → `_extract_full_text()`, `_persist_ai_data()`
+  - `src/i18n/de.py` → AI_DATA_* Keys (5 Stueck)
+
+### 2aa. Content-Duplikat-Erkennung (Inhaltsduplikate) ✅ (v2.0.3)
+- **Zweck**: Dokumente mit identischem Inhalt erkennen (auch wenn Dateien verschieden sind, z.B. doppelter Upload oder Scan)
+- **Unterschied zu Datei-Duplikaten**: Datei-Duplikat (`content_hash`) = gleiche Bytes, Content-Duplikat = gleicher Text
+- **DB-Spalte**: `documents.content_duplicate_of_id` (INT NULL) zeigt auf das Original-Dokument
+- **Erkennung**: Beim Speichern von `extracted_text_sha256` wird geprueft ob ein aelteres Dokument denselben Hash hat
+- **Archiv-Tabelle**: Spalte 0 zeigt ≡-Icon (indigo) bei Content-Duplikat, ⚠-Icon (amber) bei Datei-Duplikat (hat Prioritaet)
+- **Tooltip**: "Inhaltlich identisch mit: {original} (ID: {id})"
+- **Document-Model**: `is_content_duplicate`, `has_any_duplicate` Properties
+- **PHP-Seite**: `saveDocumentAiData()` setzt `content_duplicate_of_id`, `listDocuments()` liefert `content_duplicate_of_filename`
+- **DB-Migration**: `018_content_duplicate_detection.php` fuegt Spalte + Index + Backfill hinzu
+- **Dateien**:
+  - `BiPro-Webspace Spiegelung Live/setup/018_content_duplicate_detection.php` → DB-Migration
+  - `BiPro-Webspace Spiegelung Live/api/documents.php` → `saveDocumentAiData()` Duplikat-Logik, `listDocuments()` JOIN
+  - `src/api/documents.py` → `Document.content_duplicate_of_id`, `is_content_duplicate`, `has_any_duplicate`
+  - `src/ui/archive_boxes_view.py` → `DocumentTableModel.data()` fuer COL_DUPLICATE mit Content-Duplikat-Icon
+  - `src/i18n/de.py` → CONTENT_DUPLICATE_* Keys (3 Stueck)
+
+### 2ab. Proaktive Text-Extraktion (Early Text Extract) ✅ (v2.0.3)
+- **Zweck**: Text-Extraktion und Duplikat-Erkennung direkt nach dem Upload, BEVOR die KI-Pipeline laeuft
+- **Problem geloest**: Duplikate waren vorher erst sichtbar NACH der KI-Verarbeitung (zu spaet fuer sofortiges Feedback)
+- **Integrationspunkte** (4 Stellen):
+  - `DropUploadWorker` in `main_hub.py` (Drag & Drop)
+  - `MultiUploadWorker` in `archive_boxes_view.py` (Button-Upload)
+  - `MailImportWorker` in `bipro_view.py` (IMAP-Anhaenge)
+  - BiPRO-Downloads in `bipro_view.py`
+- **Ablauf**:
+  1. Datei wird hochgeladen → `doc = docs_api.upload(...)`
+  2. Sofort danach: `extract_and_save_text(docs_api, doc.id, local_path, filename)`
+  3. Text wird extrahiert (PDF via PyMuPDF, Text-Dateien direkt)
+  4. SHA256 des Textes wird berechnet
+  5. `save_ai_data()` speichert Text + prueft auf Content-Duplikate
+  6. Bei Duplikat: `content_duplicate_of_id` wird gesetzt → sofort sichtbar in UI
+- **MissingAiDataWorker**: Hintergrund-Worker fuer Scan-Dokumente (Power Automate)
+  - Startet einmalig nach erstem Cache-Refresh
+  - Holt Dokumente ohne AI-Data via `GET /documents/missing-ai-data`
+  - Extrahiert Text und ruft `save_ai_data()` auf
+  - Ergebnis: Auch Scans haben sofort Duplikat-Erkennung wenn App geoeffnet wird
+- **Performance**: Text-Extraktion ~5-50ms pro Dokument, blockiert nicht den Upload
+- **Fehlertoleranz**: Fehler bei Text-Extraktion werden geloggt aber brechen Upload NICHT ab
+- **Dateien**:
+  - `src/services/early_text_extract.py` → `extract_and_save_text()` Helper
+  - `src/ui/main_hub.py` → `DropUploadWorker._upload_single()` + Early-Extract-Call
+  - `src/ui/archive_boxes_view.py` → `MultiUploadWorker._upload_single()` + `MissingAiDataWorker`
+  - `src/ui/bipro_view.py` → `_upload_single()` + `_download_and_process_shipment_parallel()`
+  - `src/api/documents.py` → `get_missing_ai_data_documents()`
+  - `BiPro-Webspace Spiegelung Live/api/documents.php` → `GET /documents/missing-ai-data`
+
+### 2ac. ATLAS Index (Volltextsuche) ✅ (v2.0.5, Erweiterungen v2.1.0)
+- **Zweck**: Globale Volltextsuche ueber alle Dokumente im Archiv (Dateiname + extrahierter Text)
+- **Position**: Virtuelle "Box" ganz oben in der Archiv-Sidebar, vor der Verarbeitungs-Gruppe
+- **Kein box_type in DB**: Rein virtuelles UI-Konzept, keine Migration, kein Datenverschieben
+- **Backend**: Neuer Endpoint `GET /documents/search?q=...&limit=200&include_raw=0&substring=0`
+  - JOIN auf `document_ai_data` NUR im Search-Endpoint (niemals in `listDocuments()`)
+  - **Zwei Suchmodi**:
+    - Standard: `MATCH ... AGAINST` mit FULLTEXT-Index in `BOOLEAN MODE` (schnell, ganze Woerter)
+    - Teilstring: `LIKE '%term%'` auf `extracted_text` (langsamer, findet Teilwoerter) **NEU v2.1.0**
+  - Query-Sanitizer: Sonderzeichen (+, -, ", *, etc.) werden entfernt
+  - Relevanz-Score: Dateiname=10 Punkte, Text=20 Punkte
+  - **Smart Text-Preview** (LOCATE-basiert): Statt immer `LEFT(extracted_text, 2000)` wird der Suchbegriff per `LOCATE()` im Text gefunden und ein 2000-Zeichen-Fenster um den Treffer extrahiert (300 Zeichen davor + 1700 danach). Fallback auf Textanfang wenn nicht gefunden. Bei Mehrwort-Queries wird das laengste Wort fuer LOCATE verwendet. **NEU v2.1.0**
+  - **XML/GDV-Filter**: `include_raw=0` (Default) blendet `box_type='roh'` und `is_gdv=1` aus **NEU v2.1.0**
+  - LIMIT als `(int)` Cast inline (PDO EMULATE_PREPARES=false Kompatibilitaet)
+  - Mindestlaenge 3 Zeichen (Server + Client konsistent)
+- **UI: AtlasIndexWidget** (eigene View im QStackedWidget):
+  - Suchfeld mit Debounce (400ms) + **Such-Button** (sichtbar wenn Live-Suche deaktiviert) **NEU v2.1.0**
+  - Checkbox "Live-Suche (ab 3 Zeichen)" (Default: an, Session-persistent)
+  - Checkbox "XML/GDV einbeziehen" (Default: aus) **NEU v2.1.0**
+  - Checkbox "Teilstring-Suche" (Default: aus) **NEU v2.1.0**
+  - Snippet-basierte Ergebnisdarstellung (Google-Stil)
+  - SearchResultCard: Dateiname, Meta-Zeile (Box|VU|Datum), Text-Snippet mit Treffer fett
+  - **Verbesserte Snippet-Aufbereitung**: Zweistufige Suche -- erst voller Suchbegriff, dann Einzelwoerter (laengstes zuerst). Findet Snippets auch bei Mehrwort-Suchen zuverlaessig. **NEU v2.1.0**
+  - Doppelklick: PDF-Vorschau, Rechtsklick: Vorschau/Download/In Box anzeigen
+  - "In Box anzeigen": Wechselt zur echten Box + selektiert Dokument
+  - Checkbox-Aenderung loest automatisch Neusuche aus (wenn Query vorhanden)
+- **Performance**: FULLTEXT-Index, LIMIT 200, Debounce, SearchWorker (QThread), LOCATE-basiertes Preview
+- **Dateien**:
+  - `BiPro-Webspace Spiegelung Live/api/documents.php` → `searchDocuments()` mit `include_raw`, `substring`, LOCATE-Preview
+  - `src/api/documents.py` → `SearchResult` Dataclass + `search_documents(query, limit, include_raw, substring)`
+  - `src/ui/archive_boxes_view.py` → `SearchWorker`, `SearchResultCard`, `AtlasIndexWidget` (3 Checkboxen + Such-Button), BoxSidebar ATLAS Index Item
+  - `src/i18n/de.py` → 16 `ATLAS_INDEX_*` Keys (3 neue: SEARCH_BUTTON, INCLUDE_RAW, SUBSTRING_SEARCH)
+
+### 2ad. Konfigurierbare KI-Klassifikation (Admin) ✅ (v2.1.1)
+- **Zweck**: KI-Verarbeitungsablauf im Admin-Panel visualisieren und konfigurieren (Prompts, Modelle, Stufen)
+- **Sofort-Kostensenkung**: Stufe 2 von GPT-4o auf GPT-4o-mini umgestellt (~17x guenstiger)
+- **Admin-Panel**: Neue Sektion "VERARBEITUNG" in der Admin-Sidebar (Panel 6)
+- **Pipeline-Visualisierung**: Statische Darstellung der Vorsortierungs-Schritte (XML, GDV, PDF-Validierung, Courtage)
+- **Stufe 1 (Pflicht)**: Model-Auswahl, Prompt-Editor (Monospace), Max-Tokens, Versions-Dropdown
+- **Stufe 2 (Optional)**: Deaktivierbar (spart Kosten), Trigger konfigurierbar (low / low+medium)
+- **Prompt-Versionierung**: Gespeicherte Versionen mit Label, aeltere Versionen aktivierbar
+- **Auto-Versionierung**: Bei Prompt-Aenderung wird automatisch neue Version in DB erstellt
+- **DB-Tabellen**: `processing_ai_settings` (Single-Row, id=1), `prompt_versions` (Versionierungs-Historie)
+- **Dynamische Settings**: `document_processor.py` laedt Settings einmal pro Verarbeitungslauf vom Server
+- **Abwaertskompatibilitaet**: Ohne Server-Settings werden Hardcoded-Defaults verwendet
+- **Dateien**:
+  - `BiPro-Webspace Spiegelung Live/api/processing_settings.php` → PHP API (Public GET + Admin CRUD)
+  - `BiPro-Webspace Spiegelung Live/api/index.php` → Route-Registrierung
+  - `BiPro-Webspace Spiegelung Live/setup/019_processing_ai_settings.php` → DB-Migration
+  - `src/api/processing_settings.py` → Python API Client
+  - `src/api/openrouter.py` → Parametrisierbare classify_sparte_with_date() + Untermethoden
+  - `src/services/document_processor.py` → _load_ai_settings() + _get_classify_kwargs()
+  - `src/ui/admin_view.py` → Panel KI-Klassifikation mit Pipeline + Prompt-Editor + Versionen
+  - `src/i18n/de.py` → ~45 neue PROCESSING_AI_ Keys
+
+### 2ae. KI-Provider-System (OpenRouter + OpenAI) ✅ (v2.1.2)
+- **Zweck**: Dynamisches Routing von KI-Anfragen ueber OpenRouter ODER direkt ueber OpenAI
+- **Motivation**: OpenRouter berechnet ~$0.02 Plattform-Gebuehr PRO API-Call; direkt ueber OpenAI ~96% guenstiger
+- **Provider-Verwaltung (Admin)**:
+  - Neuer Tab "KI-Provider" in Admin-Sidebar (Sektion VERARBEITUNG)
+  - CRUD fuer Provider-Keys (OpenRouter + OpenAI)
+  - Keys werden AES-256-GCM verschluesselt in DB gespeichert (`ai_provider_keys`)
+  - Nur 1 Key kann gleichzeitig aktiv sein (global fuer alle Nutzer)
+  - Verbindungstest pro Key (Test-Anfrage an Provider-API)
+  - Maskierte Anzeige (erste 8 + letzte 4 Zeichen)
+- **Modell-Preise (Admin)**:
+  - Neuer Tab "Modell-Preise" in Admin-Sidebar (Sektion VERARBEITUNG)
+  - Tabelle mit Input/Output-Preis pro 1M Tokens pro Modell
+  - Admin CRUD + oeffentlicher Endpunkt fuer aktive Preise
+  - Preise werden fuer exakte Kostenberechnung pro Request verwendet
+- **Dynamisches Routing (PHP-Proxy)**:
+  - `ai.php` → `handleClassify()` liest aktiven Provider aus `ai_provider_keys`
+  - Modell-Mapping: `openai/gpt-4o-mini` (OpenRouter-Format) → `gpt-4o-mini` (OpenAI-Format)
+  - `callOpenRouterProvider()` → `openrouter.ai/api/v1/chat/completions`
+  - `callOpenAIProvider()` → `api.openai.com/v1/chat/completions`
+  - Fallback auf Legacy-Key aus `config.php` wenn kein Provider in DB aktiv
+  - PII-Redaktion (E-Mail, IBAN, Telefon) vor Weiterleitung
+- **Exakte Kostenberechnung (pro Request)**:
+  - Server berechnet `real_cost_usd` aus `usage.prompt_tokens` + `usage.completion_tokens` + `model_pricing`
+  - Jeder Request wird in `ai_requests`-Tabelle geloggt (User, Provider, Model, Tokens, Kosten)
+  - Response enthaelt `_cost.real_cost_usd` + `_cost.provider` fuer Client-Logging
+- **Akkumulierte Batch-Kosten**:
+  - `ProcessingResult.cost_usd`: Kosten pro Dokument (aus Server-Response)
+  - `BatchProcessingResult.total_cost_usd`: Summe aller Einzelkosten (sofort verfuegbar)
+  - Kosten werden im Fazit-Overlay sofort angezeigt (kein 90s-Warten noetig)
+  - OpenAI: 5s Delay statt 90s fuer Kosten-Check (akkumulierte Kosten haben Prioritaet)
+  - OpenRouter: Balance-Diff als Fallback, akkumulierte Kosten als Primaerquelle
+- **Token-Schaetzung (Client-seitig)**:
+  - `tiktoken` Bibliothek fuer praezise Token-Zaehlung vor dem Request
+  - `CostCalculator`: `estimate_from_messages()` + `calculate_real_cost()`
+  - Geschaetzte Kosten werden mit dem Request an den Server gesendet
+- **KI-Klassifikation dynamisch**:
+  - Admin-Tab "KI-Klassifikation" zeigt Modelle passend zum aktiven Provider
+  - OpenRouter: Alle Modelle (openai/, anthropic/, google/, etc.)
+  - OpenAI: Nur OpenAI-Modelle (gpt-4o, gpt-4o-mini, etc.)
+  - Provider-Banner zeigt aktiven Provider im Klassifikations-Tab
+- **Credits/Usage-Anzeige (provider-aware)**:
+  - OpenRouter: Balance-Anzeige (Guthaben - Verbrauch)
+  - OpenAI: Monatliche Usage-Anzeige (Billing-API, falls verfuegbar)
+  - Service-Account-Keys (`sk-svcacct-*`): Billing-API oft nicht verfuegbar → Hinweis im Log
+- **KI-Kosten-Tab (Admin, erweitert)**:
+  - Neue Sektion "Einzelne Requests" mit Tabelle aller KI-Anfragen
+  - Spalten: Zeit, User, Provider, Modell, Prompt/Completion Tokens, Geschaetzt, Echt
+  - Zeitraum-Filter (Alle, 7, 30, 90 Tage)
+  - CSV-Export
+- **DB-Tabellen** (Migration 020):
+  - `ai_provider_keys`: id, provider_type, name, api_key_encrypted, is_active, created_by, timestamps
+  - `model_pricing`: id, provider, model_name, input_price_per_million, output_price_per_million, valid_from, is_active
+  - `ai_requests`: id, user_id, provider, model, context, document_id, prompt/completion/total_tokens, estimated/real_cost_usd, created_at
+- **Dateien**:
+  - `BiPro-Webspace Spiegelung Live/api/ai.php` → Zentraler Proxy (Routing, Kosten, PII-Redaktion, Credits)
+  - `BiPro-Webspace Spiegelung Live/api/ai_providers.php` → Provider-CRUD (Public + Admin)
+  - `BiPro-Webspace Spiegelung Live/api/model_pricing.php` → Modell-Preise + Kosten-Helpers
+  - `BiPro-Webspace Spiegelung Live/api/index.php` → Neue Routes (ai-providers, model-pricing)
+  - `src/api/ai_providers.py` → Python API Client (AIProviderKey, AIProvidersAPI)
+  - `src/api/model_pricing.py` → Python API Client (ModelPrice, ModelPricingAPI)
+  - `src/services/cost_calculator.py` → Token-Zaehlung + Kostenberechnung (tiktoken)
+  - `src/config/ai_models.py` → Zentrale Modell-Definitionen pro Provider
+  - `src/api/openrouter.py` → Server-Kosten propagieren (_server_cost_usd), Provider-Log
+  - `src/services/document_processor.py` → Akkumulierte Kosten (ProcessingResult.cost_usd, BatchProcessingResult)
+  - `src/ui/archive_boxes_view.py` → Provider-aware Credits/Kosten, verkuerzter Delay bei OpenAI
+  - `src/ui/admin_view.py` → 3 neue Panels (KI-Provider, Modell-Preise) + erweiterte KI-Kosten
+  - `src/i18n/de.py` → ~65 neue Keys (AI_PROVIDER_, MODEL_PRICING_, AI_COSTS_REQUESTS_)
+  - `requirements.txt` → `tiktoken>=0.5.0,<1.0.0`
+
+### 2af. Dokumenten-Regeln (Admin) ✅ (v2.1.3)
+- **Zweck**: Konfigurierbare automatische Aktionen bei Duplikaten und leeren Seiten waehrend der Dokumentenverarbeitung
+- **Admin-Panel**: Neues Panel "Dokumenten-Regeln" in Sektion VERARBEITUNG (Panel 9)
+- **4 Regel-Kategorien**:
+  1. **Datei-Duplikate** (gleiche SHA256-Prüfziffer):
+     - Keine Aktion / Beide farblich markieren / Nur neue Datei markieren / Neue Datei loeschen / Alte Datei loeschen
+  2. **Inhaltsduplikate** (gleicher extrahierter Text, andere Datei):
+     - Gleiche Optionen wie Datei-Duplikate (gesondert konfigurierbar)
+  3. **Teilweise leere PDFs** (einige Seiten leer):
+     - Keine Aktion / Leere Seiten entfernen / Datei farblich markieren
+  4. **Komplett leere Dateien** (alle Seiten leer):
+     - Keine Aktion / Datei loeschen / Datei farblich markieren
+- **Farbauswahl**: 8 Farben (Gruen, Rot, Blau, Orange, Lila, Pink, Tuerkis, Gelb) - Dropdown erscheint nur wenn Aktion Farbe erfordert
+- **DB-Tabelle**: `document_rules_settings` (Single-Row, id=1) mit `file_dup_action`, `file_dup_color`, `content_dup_action`, `content_dup_color`, `partial_empty_action`, `partial_empty_color`, `full_empty_action`, `full_empty_color`
+- **Integration**: `document_processor._apply_document_rules()` wird nach `_persist_ai_data()` aufgerufen
+  - Regeln werden einmal pro Verarbeitungslauf vom Server geladen (`_load_document_rules()`)
+  - Fehler bei Regelanwendung werden geloggt aber brechen die Verarbeitung NICHT ab
+  - `_remove_empty_pages()`: Laedt PDF herunter, entfernt leere Seiten mit PyMuPDF, laedt bereinigte Version hoch, invalidiert Preview-Cache
+  - `_apply_duplicate_rule()`: Farbmarkierung oder Loeschung von Duplikaten (mit Schutz gegen Loeschen beider)
+- **Cache-Invalidierung**: Nach Verarbeitungslauf wird der lokale Preview-Cache fuer alle verarbeiteten Dokumente geleert
+- **Dateien**:
+  - `BiPro-Webspace Spiegelung Live/api/document_rules.php` → PHP API (Public GET + Admin PUT)
+  - `BiPro-Webspace Spiegelung Live/api/index.php` → Route-Registrierung (`document-rules`, `admin/document-rules`)
+  - `src/api/document_rules.py` → `DocumentRulesSettings` Dataclass + `DocumentRulesAPI` Client
+  - `src/services/document_processor.py` → `_load_document_rules()`, `_apply_document_rules()`, `_apply_duplicate_rule()`, `_remove_empty_pages()`
+  - `src/ui/admin_view.py` → Panel 9 Dokumenten-Regeln (`_create_document_rules_tab()`, `_load_document_rules()`, `_save_document_rules()`)
+  - `src/ui/archive_boxes_view.py` → Preview-Cache-Invalidierung in `_on_processing_finished()`
+  - `src/i18n/de.py` → ~35 neue DOC_RULES_* Keys
+
+### 2ag. Cache-Wipe bei ungültiger Session ✅ (v2.1.3)
+- **Zweck**: Lokale Caches loeschen wenn beim App-Start keine gueltige Session vorhanden ist
+- **Trigger**: `_try_auto_login()` in `LoginDialog` stellt fest, dass der gespeicherte Token ungueltig ist oder kein Token existiert
+- **Ablauf**: `_clear_local_caches()` wird aufgerufen und loescht den gesamten `%TEMP%/bipro_preview_cache/` Ordner
+- **Grund**: Verhindert, dass nach einem Logout oder einer abgelaufenen Session veraltete PDF-Vorschauen eines anderen Nutzers angezeigt werden
+- **Fehlertoleranz**: Fehler beim Loeschen werden nur im Debug-Log vermerkt, kein Crash
+- **Dateien**:
+  - `src/ui/login_dialog.py` → `_clear_local_caches()`, Aufruf in `_try_auto_login()` else-Zweig
+
 ### 2x. Mitteilungszentrale / Communication Hub ✅ (v2.0.0)
 - **Zweck**: Zentrales Kommunikations- und Informationsportal in der App
 - **Position**: Neue Seite in linker Sidebar VOR BiPRO (Index 0)
@@ -850,7 +1149,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 - **Badge**: Roter Kreis auf "Zentrale"-Button mit Summe aus ungelesenen Chats + System-Meldungen
 - **Toast**: Bei neuer Chat-Nachricht Toast mit "Neue Nachricht von ..." + Klick-Aktion zum Chat
 - **Chat-Vollbild**: Sidebar wird versteckt (wie Admin), Conversation-Liste links, Nachrichten rechts
-- **Admin-Panel**: Neues Panel 10 "Mitteilungen" in Admin-View (CRUD)
+- **Admin-Panel**: Panel 14 "Mitteilungen" in Admin-View (CRUD)
 - **Sicherheit**: Content-Escaping (htmlspecialchars), Laengenlimits, Autorisierung (nur eigene Chats), kein HTML/Markdown
 - **DB-Tabellen**: `messages`, `message_reads`, `private_conversations`, `private_messages`
 - **Dateien**:
@@ -864,7 +1163,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `src/ui/message_center_view.py` → Dashboard-View (3 Kacheln)
   - `src/ui/chat_view.py` → Vollbild-Chat-View
   - `src/ui/main_hub.py` → NavButton + Badge + NotificationPoller + Chat-Sidebar-Hide
-  - `src/ui/admin_view.py` → Panel 10 Mitteilungen
+  - `src/ui/admin_view.py` → Panel 14 Mitteilungen
   - `src/i18n/de.py` → ~60 neue Keys (MSG_CENTER_, CHAT_, ADMIN_MSG_)
 
 ### 3. Datei öffnen/speichern
@@ -984,7 +1283,7 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 
 ---
 
-## Aktueller Stand (11. Februar 2026)
+## Aktueller Stand (18. Februar 2026)
 
 ### Implementiert ✅
 - ✅ GDV-Dateien öffnen/parsen/speichern
@@ -1183,6 +1482,12 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 - ✅ **Duplikat-Toast: Info-Benachrichtigung bei Upload von Duplikaten (v1.1.1)**
 - ✅ **PHP listDocuments: content_hash, version, previous_version_id, duplicate_of_filename (v1.1.1)**
 - ✅ **Python Document.duplicate_of_filename + upload() parst Duplikat-Infos (v1.1.1)**
+- ✅ **Duplikat-Rich-Tooltip: HTML-Kachel beim Hover mit Dateiname, Box, Datum, Archiv-Status (v2.1.0)**
+- ✅ **Duplikat-Metadaten: PHP LEFT JOIN liefert box_type, created_at, is_archived fuer Datei- und Content-Duplikate (v2.1.0)**
+- ✅ **Document-Model: 6 neue Felder fuer Duplikat-Metadaten (duplicate_of_box_type/created_at/is_archived + content_*) (v2.1.0)**
+- ✅ **Duplikat-Navigation: Klick auf Duplikat-Icon springt zum Gegenstueck in dessen Box (v2.1.0)**
+- ✅ **Duplikat-Vergleichsansicht: DuplicateCompareDialog mit Side-by-Side PDF-Vorschau und Aktions-Buttons (v2.1.0)**
+- ✅ **Duplikat-Kontextmenue: "Zum Gegenstueck springen" + "Duplikat vergleichen" bei Duplikat-Dokumenten (v2.1.0)**
 - ✅ **Dokument-Historie: Seitenpanel im Archiv zeigt Aenderungshistorie pro Dokument (v1.1.2)**
 - ✅ **DocumentHistoryPanel: Farbcodierte Eintraege mit Debounce, Cache, async Worker (v1.1.2)**
 - ✅ **PHP getDocumentHistory(): GET /documents/{id}/history aus activity_log (v1.1.2)**
@@ -1208,6 +1513,100 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 - ✅ **get_blocking_operations(): Neue Methode in ArchiveBoxesView prueft blockierende Worker (v1.1.4)**
 - ✅ **MainHub.closeEvent(): Blocking-Check vor GDV-Check, Toast-Warnung bei Block (v1.1.4)**
 - ✅ **i18n: 4 neue CLOSE_BLOCKED_* Keys fuer Schliess-Schutz (v1.1.4)**
+- ✅ **QTableView-Migration: QTableWidget durch QTableView+QAbstractTableModel ersetzt (v2.0.1)**
+- ✅ **DocumentTableModel: Virtualisiertes Rendering - nur sichtbare Zeilen werden gerendert (~30 statt 500+)**
+- ✅ **DocumentSortFilterProxy: Sortierung (Datum nach ISO) + Textsuche im Proxy statt manueller Iteration**
+- ✅ **DraggableDocumentView: QTableView mit Drag-Unterstuetzung (portiert von DraggableDocumentTable)**
+- ✅ **Performance: 531 Dokumente: 0.1ms statt ~50s Freeze, 5000 Dokumente: <500ms**
+- ✅ **Entfernte Klassen: SortableTableWidgetItem, DraggableDocumentTable (QTableWidget-basiert)**
+- ✅ **Leere-Seiten-Erkennung: 4-Stufen-Algorithmus (Text, Vektoren, Bilder, Pixel@50DPI) (v2.0.2)**
+- ✅ **empty_page_detector.py: Eigenstaendiges Modul mit is_page_empty() + get_empty_pages() (v2.0.2)**
+- ✅ **DB: empty_page_count + total_page_count Spalten in documents-Tabelle (v2.0.2)**
+- ✅ **Archiv-Tabelle: Neue Spalte COL_EMPTY_PAGES mit Icons (○ rot / ◑ orange) und Tooltip (v2.0.2)**
+- ✅ **document_processor: _check_and_log_empty_pages() in allen 3 PDF-Zweigen nach _validate_pdf() (v2.0.2)**
+- ✅ **Rein informativ: Leere-Seiten-Erkennung blockiert NICHT die normale KI-Pipeline (v2.0.2)**
+- ✅ **Volltext + KI-Daten-Persistierung: Separates document_ai_data Tabelle (1:1 zu documents) (v2.0.3)**
+- ✅ **extracted_text MEDIUMTEXT mit FULLTEXT-Index fuer Volltextsuche (v2.0.3)**
+- ✅ **ai_full_response LONGTEXT fuer komplette KI-Rohantworten (v2.0.3)**
+- ✅ **text_char_count + ai_response_char_count fuer Groessen-Analyse (v2.0.3)**
+- ✅ **Content-Duplikat-Erkennung: documents.content_duplicate_of_id fuer Inhaltsduplikate (v2.0.3)**
+- ✅ **extracted_text_sha256 fuer semantische Duplikat-Erkennung (gleicher Text, verschiedene Datei) (v2.0.3)**
+- ✅ **Archiv-Tabelle: ≡-Icon (indigo) fuer Content-Duplikate neben ⚠-Icon (amber) fuer Datei-Duplikate (v2.0.3)**
+- ✅ **Proaktive Text-Extraktion: Text sofort nach Upload extrahiert (BEVOR KI-Pipeline) (v2.0.3)**
+- ✅ **early_text_extract.py: Utility fuer sofortige Text-Extraktion + Duplikat-Check (v2.0.3)**
+- ✅ **MissingAiDataWorker: Hintergrund-Worker fuer Scan-Dokumente bei App-Start (v2.0.3)**
+- ✅ **GET /documents/missing-ai-data: PHP-Endpoint fuer Dokumente ohne AI-Data (v2.0.3)**
+- ✅ **DB-Migration 017: document_ai_data Tabelle mit CASCADE-Delete (v2.0.3)**
+- ✅ **DB-Migration 018: content_duplicate_of_id Spalte + Backfill (v2.0.3)**
+- ✅ **PDF-Unlock-Fix: api_client korrekt durchgereicht fuer MSG/ZIP-Anhaenge (v2.0.4)**
+- ✅ **ValueError-Handling: Passwortgeschuetzte PDFs ohne Passwort crashen nicht mehr (v2.0.4)**
+- ✅ **msg_handler.py: api_client Parameter fuer PDF-Unlock in extract_msg_attachments() (v2.0.4)**
+- ✅ **document_ai_data Tabelle: Separate 1:1-Tabelle fuer Volltext + KI-Daten (v2.0.2)**
+- ✅ **Volltext-Extraktion: Alle Seiten via PyMuPDF, FULLTEXT-Index fuer spaetere Suche (v2.0.2)**
+- ✅ **KI-Rohantwort + Prompt + Token-Verbrauch werden pro Dokument persistiert (v2.0.2)**
+- ✅ **Token-Durchreichung: _usage/_raw_response/_prompt_text in classify_*-Funktionen (v2.0.2)**
+- ✅ **5 Performance-Regeln: Keine Auto-Joins, kein SELECT*, API getrennt, kein Trigger, kein Lazy-Load (v2.0.2)**
+- ✅ **CASCADE-Delete: document_ai_data wird bei Dokument-Loeschung mitgeloescht (DSGVO) (v2.0.2)**
+- ✅ **PHP-Endpoints: POST/GET /documents/{id}/ai-data (Upsert + Lesen) (v2.0.2)**
+- ✅ **ATLAS Index: Virtuelle Such-Box ganz oben in Archiv-Sidebar (v2.0.5)**
+- ✅ **GET /documents/search: Volltextsuche mit FULLTEXT-Index + filename LIKE (v2.0.5)**
+- ✅ **SearchResult Dataclass: Document + text_preview + relevance_score (v2.0.5)**
+- ✅ **AtlasIndexWidget: Snippet-basierte Ergebnisdarstellung (Google-Stil) (v2.0.5)**
+- ✅ **SearchWorker: QThread fuer nicht-blockierenden Such-API-Call (v2.0.5)**
+- ✅ **BOOLEAN MODE Sanitizer: Sonderzeichen-Entfernung verhindert SQL-Fehler (v2.0.5)**
+- ✅ **Client-seitige Snippet-Aufbereitung: Kontext um ersten Treffer mit Bold-Highlighting (v2.0.5)**
+- ✅ **Live-Suche Checkbox: Abschaltbar bei Performance-Problemen (v2.0.5)**
+- ✅ **"In Box anzeigen": Wechselt zur echten Box + selektiert Dokument in Tabelle (v2.0.5)**
+- ✅ **i18n: 13 neue ATLAS_INDEX_* Keys (v2.0.5)**
+- ✅ **ATLAS Index XML/GDV-Filter: Rohdaten und GDV-Dateien standardmaessig ausgeblendet (v2.1.0)**
+- ✅ **ATLAS Index Teilstring-Suche: LIKE statt FULLTEXT per Checkbox aktivierbar (v2.1.0)**
+- ✅ **ATLAS Index Smart-Snippet: LOCATE-basierte Text-Preview-Extraktion um Treffer herum (v2.1.0)**
+- ✅ **ATLAS Index Such-Button: Erscheint wenn Live-Suche deaktiviert ist (v2.1.0)**
+- ✅ **ATLAS Index Snippet-Fix: Zweistufige Suche (voller Begriff, dann Einzelwoerter) (v2.1.0)**
+- ✅ **i18n: 3 neue ATLAS_INDEX_* Keys (SEARCH_BUTTON, INCLUDE_RAW, SUBSTRING_SEARCH) (v2.1.0)**
+- ✅ **KI-Klassifikation Admin-Panel: Pipeline-Visualisierung + Prompt-Editor + Modell-Auswahl (v2.1.1)**
+- ✅ **Stufe 2 auf GPT-4o-mini umgestellt: ~17x Kostensenkung bei Detail-Klassifikation (v2.1.1)**
+- ✅ **Prompt-Versionierung: Gespeicherte Versionen mit Label, aktivierbar im Admin (v2.1.1)**
+- ✅ **Konfigurierbare KI-Pipeline: Stufe 2 deaktivierbar, Trigger konfigurierbar (low/low+medium) (v2.1.1)**
+- ✅ **Dynamische KI-Settings: document_processor laedt Settings pro Verarbeitungslauf vom Server (v2.1.1)**
+- ✅ **DB-Migration 019: processing_ai_settings + prompt_versions Tabellen (v2.1.1)**
+- ✅ **PHP API: processing_settings.php mit Public GET + Admin CRUD + Prompt-Versionen (v2.1.1)**
+- ✅ **Python ProcessingSettingsAPI Client: get_ai_settings, save, get_versions, activate (v2.1.1)**
+- ✅ **openrouter.py parametrisierbar: classify_sparte_with_date() akzeptiert Prompt/Model/Tokens als Parameter (v2.1.1)**
+- ✅ **Admin-Sidebar: Neue Sektion VERARBEITUNG mit KI-Klassifikation Panel (Index 6) (v2.1.1)**
+- ✅ **i18n: ~45 neue PROCESSING_AI_ Keys fuer KI-Klassifikation Admin-Panel (v2.1.1)**
+- ✅ **KI-Provider-System: Dynamisches Routing OpenRouter ↔ OpenAI im Admin konfigurierbar (v2.1.2)**
+- ✅ **Provider-Verwaltung (Admin): CRUD fuer API-Keys mit AES-256-GCM Verschluesselung (v2.1.2)**
+- ✅ **OpenAI-Direktanbindung: callOpenAIProvider() in ai.php, ~96% Kostenersparnis (v2.1.2)**
+- ✅ **Modell-Preise: model_pricing Tabelle mit Input/Output-Preis pro 1M Tokens (v2.1.2)**
+- ✅ **Exakte Kostenberechnung: real_cost_usd pro Request aus Tokens + model_pricing (v2.1.2)**
+- ✅ **ai_requests Logging: Jeder KI-Call in DB geloggt (User, Provider, Model, Tokens, Kosten) (v2.1.2)**
+- ✅ **Akkumulierte Batch-Kosten: ProcessingResult.cost_usd + BatchProcessingResult.total_cost_usd (v2.1.2)**
+- ✅ **Token-Schaetzung: tiktoken fuer praezise Token-Zaehlung vor dem Request (v2.1.2)**
+- ✅ **CostCalculator: estimate_from_messages() + calculate_real_cost() (v2.1.2)**
+- ✅ **Provider-aware Credits: OpenRouter Balance vs. OpenAI Billing, dynamischer Delay (v2.1.2)**
+- ✅ **KI-Kosten-Tab erweitert: Einzelne Requests Tabelle mit Zeitraum-Filter (v2.1.2)**
+- ✅ **KI-Klassifikation dynamisch: Modell-Liste passt sich aktivem Provider an (v2.1.2)**
+- ✅ **Modell-Mapping: openai/gpt-4o-mini (OpenRouter) ↔ gpt-4o-mini (OpenAI) (v2.1.2)**
+- ✅ **DB-Migration 020: ai_provider_keys + model_pricing + ai_requests Tabellen (v2.1.2)**
+- ✅ **PHP: ai_providers.php + model_pricing.php neue API-Dateien (v2.1.2)**
+- ✅ **Python: ai_providers.py + model_pricing.py + cost_calculator.py + ai_models.py (v2.1.2)**
+- ✅ **i18n: ~65 neue Keys (AI_PROVIDER_, MODEL_PRICING_, AI_COSTS_REQUESTS_) (v2.1.2)**
+- ✅ **PDF-Vorschau Multi-Selection: Strg+Klick, Shift+Klick, Strg+A fuer Mehrfachauswahl in Thumbnail-Sidebar (v2.1.3)**
+- ✅ **PDF Bulk-Rotation/Loeschung: Mehrere Seiten gleichzeitig drehen oder loeschen (v2.1.3)**
+- ✅ **PDFRefreshWorker: Leere-Seiten + Text nach PDF-Speichern automatisch aktualisieren (v2.1.3)**
+- ✅ **Dokumenten-Regeln Admin-Panel: Konfigurierbare Aktionen fuer Duplikate und leere Seiten (v2.1.3)**
+- ✅ **4 Regel-Kategorien: Datei-Duplikate, Inhaltsduplikate, teilweise leere PDFs, komplett leere Dateien (v2.1.3)**
+- ✅ **Automatische Leere-Seiten-Entfernung: PyMuPDF-basiert mit Server-Upload und Cache-Invalidierung (v2.1.3)**
+- ✅ **Duplikat-Regelanwendung: Farbmarkierung oder Loeschung bei Erkennung (v2.1.3)**
+- ✅ **DB-Tabelle document_rules_settings: Single-Row-Konfiguration fuer alle Dokumenten-Regeln (v2.1.3)**
+- ✅ **PHP API: document_rules.php mit Public GET + Admin PUT (v2.1.3)**
+- ✅ **Python DocumentRulesAPI Client: get_rules() + save_rules() (v2.1.3)**
+- ✅ **Cache-Wipe bei ungültiger Session: Preview-Cache wird beim Start geleert wenn Session abgelaufen (v2.1.3)**
+- ✅ **i18n: ~40 neue Keys (DOC_RULES_*, PDF_EDIT_DELETE_MULTI_*, PDF_EDIT_MIN_ONE_*, PDF_EDIT_MULTI_*, PDF_EDIT_REFRESH*) (v2.1.3)**
+
+### TODO - DRINGEND
+- ✅ ~~OpenRouter als Mittelsmann eliminieren~~ → **ERLEDIGT v2.1.2**: KI-Provider-System unterstuetzt jetzt OpenRouter UND direkte OpenAI-API. Umschaltbar im Admin. ~96% Kostenersparnis bei OpenAI-Direktanbindung.
 
 ### In Arbeit / Bekannte Issues
 - ⚠️ UI-Texte nicht in i18n-Datei (Hardcoded Strings)
@@ -1219,8 +1618,8 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 
 ### Tech Debt
 - `bipro_view.py` ist sehr gross (~4900+ Zeilen) → Aufteilen: ParallelDownloadManager + MailImportWorker in eigene Dateien
-- `archive_boxes_view.py` ist sehr gross (~5380+ Zeilen) → SmartScanWorker, BoxDownloadWorker in eigene Dateien
-- `admin_view.py` ist sehr gross (~4290+ Zeilen) → 11 Panels in separate Dateien aufteilen
+- `archive_boxes_view.py` ist sehr gross (~6350 Zeilen) → SmartScanWorker, BoxDownloadWorker, AtlasIndexWidget in eigene Dateien
+- `admin_view.py` ist sehr gross (~5200+ Zeilen) → 15 Panels in separate Dateien aufteilen
 - `main_hub.py` ist gewachsen (~1324 Zeilen) → NotificationPoller + DropUploadWorker auslagern
 - `main_window.py` ist zu gross (~1060 Zeilen) → Aufteilen
 - `openrouter.py` ist gross (~1760+ Zeilen) → Triage/Klassifikation separieren
@@ -1377,14 +1776,20 @@ python test_roundtrip.py
 | `src/ui/main_window.py` | GDV-Editor Hauptfenster |
 | `src/ui/partner_view.py` | Partner-Übersicht |
 | `src/ui/bipro_view.py` | **BiPRO UI (~4900 Zeilen) (VU-Verwaltung, ParallelDownloadManager, MailImportWorker)** |
-| `src/ui/archive_boxes_view.py` | **Dokumentenarchiv mit Box-System + SmartScan-Button + Duplikat-Spalte + Schliess-Schutz (~5380 Zeilen)** |
-| `src/ui/archive_view.py` | Legacy-Archiv-View |
+| `src/ui/archive_boxes_view.py` | **Dokumentenarchiv mit Box-System + QTableView/Model-Architektur + SmartScan + Duplikat + Schliess-Schutz + ATLAS Index (~6350 Zeilen)** |
+| `src/ui/archive_view.py` | Legacy-Archiv-View + `PDFViewerDialog` (Multi-Selection + PDFRefreshWorker) + `DuplicateCompareDialog` (Side-by-Side-Vergleich) |
 | `src/api/client.py` | API-Base-Client |
-| `src/api/documents.py` | **Dokumenten-API (Box-Support, Bulk-Ops, Duplikat-Erkennung, Farbmarkierung)** |
+| `src/api/documents.py` | **Dokumenten-API (Box-Support, Bulk-Ops, Duplikat-Erkennung, Farbmarkierung, ATLAS Index Suche)** |
 | `src/api/vu_connections.py` | VU-Verbindungen API |
 | `src/api/openrouter.py` | **OpenRouter Client (Zweistufige KI-Klassifikation + Confidence)** |
 | `src/api/processing_history.py` | **Processing-History API Client (Audit-Trail)** |
-| `src/services/document_processor.py` | **Automatische Dokumenten-Klassifikation mit Confidence-Handling** |
+| `src/api/processing_settings.py` | **Processing-Settings API Client (KI-Klassifikation) NEU v2.1.1** |
+| `src/api/document_rules.py` | **DocumentRulesSettings + DocumentRulesAPI Client NEU v2.1.3** |
+| `src/api/ai_providers.py` | **KI-Provider API Client (AIProviderKey, AIProvidersAPI) NEU v2.1.2** |
+| `src/api/model_pricing.py` | **Modell-Preise + KI-Request-Historie API Client NEU v2.1.2** |
+| `src/services/cost_calculator.py` | **Token-Zaehlung (tiktoken) + Kostenberechnung NEU v2.1.2** |
+| `src/config/ai_models.py` | **Zentrale Modell-Definitionen pro Provider NEU v2.1.2** |
+| `src/services/document_processor.py` | **Automatische Dokumenten-Klassifikation mit Confidence-Handling + AI-Daten-Persistierung + dynamische KI-Settings + akkumulierte Kosten + Dokumenten-Regeln** |
 | `src/services/data_cache.py` | **DataCacheService (Cache + Auto-Refresh, Thread-safe v0.9.4)** |
 | `src/config/processing_rules.py` | **Konfigurierbare Verarbeitungsregeln + BiPRO-Codes** |
 | `src/bipro/transfer_service.py` | BiPRO 430 Client (STS + Transfer + SharedTokenManager, ~1334 Zeilen) |
@@ -1394,11 +1799,14 @@ python test_roundtrip.py
 | `src/services/update_service.py` | **UpdateService (Auto-Update Check + Download + Install)** |
 | `src/services/zip_handler.py` | **ZIP-Handler (Entpacken, Passwort, rekursiv) NEU v1.0.5** |
 | `src/services/pdf_unlock.py` | **PDF-Unlock (dynamische Passwoerter aus DB) v1.0.5** |
+| `src/services/empty_page_detector.py` | **Leere-Seiten-Erkennung (4-Stufen: Text, Vektoren, Bilder, Pixel) NEU v2.0.2** |
 | `src/services/msg_handler.py` | **MSG-Handler (Outlook .msg Anhaenge extrahieren) NEU v1.0.4** |
 | `src/services/atomic_ops.py` | **Atomic File Operations (SHA256, Staging, Safe-Write)** |
 | `src/ui/update_dialog.py` | **UpdateDialog (3 Modi: optional/mandatory/deprecated)** |
 | `src/ui/toast.py` | **ToastManager + ToastWidget + ProgressToastWidget (Globales Toast-System) v1.0.7/v1.0.9** |
 | `src/ui/gdv_editor_view.py` | **GDV-Editor View (RecordTable + Editor, ~648 Zeilen)** |
+| `src/ui/login_dialog.py` | **Login-Dialog (Anmeldung + Auto-Login + Cache-Wipe bei ungültiger Session)** |
+| `src/ui/user_detail_view.py` | **Benutzerfreundliche Detail-Ansicht (editierbare Felder)** |
 | `src/ui/settings_dialog.py` | **Einstellungen-Dialog (Zertifikate verwalten, ~350 Zeilen)** |
 | `src/ui/styles/tokens.py` | **ACENCIA Design-Tokens (Farben, Fonts, Styles, ~977 Zeilen)** |
 | `docs/ui/UX_RULES.md` | **Verbindliche UI-Regeln: Keine modalen Popups, Toast-Spezifikation NEU v1.0.7** |
@@ -1413,7 +1821,7 @@ python test_roundtrip.py
 | `src/api/smartadmin_auth.py` | **SmartAdmin-Authentifizierung (SAML-Token, 47 VUs, ~640 Zeilen)** |
 | `src/config/smartadmin_endpoints.py` | **SmartAdmin VU-Endpunkte (47 Versicherer, Auth-Typen)** |
 | `src/config/certificates.py` | **Zertifikat-Manager (PFX/P12, X.509)** |
-| `src/i18n/de.py` | **Zentrale i18n-Datei (~980 Keys: MSG_CENTER_, CHAT_, ADMIN_MSG_, CLOSE_BLOCKED_, DUPLICATE_, SHORTCUT_, SMARTSCAN_, EMAIL_, etc.)** |
+| `src/i18n/de.py` | **Zentrale i18n-Datei (~1170 Keys: DOC_RULES_, AI_PROVIDER_, MODEL_PRICING_, AI_COSTS_REQUESTS_, PROCESSING_AI_, ATLAS_INDEX_, MSG_CENTER_, CHAT_, ADMIN_MSG_, CLOSE_BLOCKED_, DUPLICATE_, SHORTCUT_, SMARTSCAN_, EMAIL_, etc.)** |
 | `VERSION` | **Zentrale Versionsdatei (Single Source of Truth)** |
 | `BIPRO_STATUS.md` | Aktueller Stand der BiPRO-Integration |
 
@@ -1425,12 +1833,16 @@ python test_roundtrip.py
 | `→ api/config.php` | DB-Credentials, Master-Key (SENSIBEL!) |
 | `→ api/index.php` | API-Router |
 | `→ api/auth.php` | Login/Logout/Token |
-| `→ api/documents.php` | Dokumenten-Endpunkte |
+| `→ api/documents.php` | Dokumenten-Endpunkte + ATLAS Index Volltextsuche |
 | `→ api/gdv.php` | GDV-Operationen |
 | `→ api/credentials.php` | VU-Verbindungen |
 | `→ api/shipments.php` | Lieferungen |
 | `→ api/processing_history.php` | **Audit-Trail (gefixt v0.9.4)** |
-| `→ api/ai.php` | OpenRouter Key-Endpoint |
+| `→ api/processing_settings.php` | **KI-Klassifikation Einstellungen (Public GET + Admin CRUD) NEU v2.1.1** |
+| `→ api/ai.php` | **Zentraler KI-Proxy (OpenRouter/OpenAI Routing, Kosten, PII-Redaktion) v2.1.2** |
+| `→ api/ai_providers.php` | **KI-Provider-Verwaltung (CRUD, Aktivierung, Test) NEU v2.1.2** |
+| `→ api/model_pricing.php` | **Modell-Preise + Kosten-Helpers + Request-Logging NEU v2.1.2** |
+| `→ api/document_rules.php` | **Dokumenten-Regeln Settings (Public GET + Admin PUT) NEU v2.1.3** |
 | `→ api/releases.php` | **Release-Verwaltung + Update-Check (NEU v0.9.9)** |
 | `→ api/incoming_scans.php` | **Scan-Upload fuer Power Automate (API-Key-Auth) (NEU v1.0.2)** |
 | `→ api/passwords.php` | **Passwort-Verwaltung (PDF/ZIP) Public + Admin (NEU v1.0.5)** |

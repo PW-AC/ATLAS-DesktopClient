@@ -5,6 +5,7 @@
  * Endpunkte:
  * - GET /documents - Liste aller Dokumente
  * - GET /documents/stats - Box-Statistiken
+ * - GET /documents/search?q=... - Volltextsuche (ATLAS Index)
  * - POST /documents - Dokument hochladen
  * - POST /documents/move - Dokumente verschieben
  * - POST /documents/colors - Bulk-Farbmarkierung setzen/entfernen
@@ -28,11 +29,20 @@ function handleDocumentsRequest(string $idOrAction, string $method, ?string $sub
                 // Liste/Stats: Alle authentifizierten User
                 ActivityLogger::logDocument($payload, 'list', null, 'Dokumentenliste abgerufen');
                 listDocuments($payload);
+            } elseif ($idOrAction === 'search') {
+                // GET /documents/search?q=... → ATLAS Index Volltextsuche
+                searchDocuments($payload);
             } elseif ($idOrAction === 'stats') {
                 getBoxStats($payload);
+            } elseif ($idOrAction === 'missing-ai-data') {
+                // GET /documents/missing-ai-data → Dokumente ohne Text-Extraktion
+                getMissingAiDataDocuments($payload);
             } elseif ($sub === 'history' && is_numeric($idOrAction)) {
                 // GET /documents/{id}/history → Dokument-Historie
                 getDocumentHistory($idOrAction, $payload);
+            } elseif ($sub === 'ai-data' && is_numeric($idOrAction)) {
+                // GET /documents/{id}/ai-data → KI- und Volltext-Daten
+                getDocumentAiData($idOrAction, $payload);
             } elseif ($sub === 'info' && is_numeric($idOrAction)) {
                 // GET /documents/{id}/info → Dokument-Metadaten (BUG-0013 Fix)
                 getDocumentInfo($idOrAction, $payload);
@@ -47,8 +57,14 @@ function handleDocumentsRequest(string $idOrAction, string $method, ?string $sub
             break;
             
         case 'POST':
-            // POST /documents/{id}/replace → Datei ersetzen
-            if ($sub === 'replace' && is_numeric($idOrAction)) {
+            // POST /documents/{id}/ai-data → KI- und Volltext-Daten speichern
+            if ($sub === 'ai-data' && is_numeric($idOrAction)) {
+                if (!hasPermission($payload['user_id'], 'documents_manage')) {
+                    json_error('Keine Berechtigung zum Verwalten', 403, ['required_permission' => 'documents_manage']);
+                }
+                saveDocumentAiData($idOrAction, $payload);
+            } elseif ($sub === 'replace' && is_numeric($idOrAction)) {
+                // POST /documents/{id}/replace → Datei ersetzen
                 if (!hasPermission($payload['user_id'], 'documents_manage')) {
                     ActivityLogger::logDocument($payload, 'replace_denied', (int)$idOrAction, 'Datei-Ersetzung verweigert: Keine Berechtigung', null, 'denied');
                     json_error('Keine Berechtigung zum Verwalten', 403, ['required_permission' => 'documents_manage']);
@@ -217,17 +233,30 @@ function listDocuments(array $user): void {
             d.bipro_category,
             COALESCE(d.is_archived, 0) as is_archived,
             d.display_color,
+            d.empty_page_count,
+            d.total_page_count,
             d.content_hash,
             COALESCE(d.version, 1) as version,
             d.previous_version_id,
-            -- Duplikat-Erkennung: Originalname des Quell-Dokuments (fuer UI-Tooltip)
-            COALESCE(orig.original_filename, '') as duplicate_of_filename
+            -- Duplikat-Erkennung: Originalname + Metadaten des Quell-Dokuments (fuer Rich-Tooltip)
+            COALESCE(orig.original_filename, '') as duplicate_of_filename,
+            COALESCE(orig.box_type, '') as duplicate_of_box_type,
+            orig.created_at as duplicate_of_created_at,
+            COALESCE(orig.is_archived, 0) as duplicate_of_is_archived,
+            -- Inhaltsduplikat-Erkennung: Dokument mit identischem Text + Metadaten
+            d.content_duplicate_of_id,
+            COALESCE(content_orig.original_filename, '') as content_duplicate_of_filename,
+            COALESCE(content_orig.box_type, '') as content_duplicate_of_box_type,
+            content_orig.created_at as content_duplicate_of_created_at,
+            COALESCE(content_orig.is_archived, 0) as content_duplicate_of_is_archived
         FROM documents d
         LEFT JOIN users u ON d.uploaded_by = u.id
         LEFT JOIN shipments s ON d.shipment_id = s.id
         LEFT JOIN vu_connections vc ON s.vu_connection_id = vc.id
         -- Self-Join fuer Duplikat-Original (previous_version_id -> Original-Dokument)
         LEFT JOIN documents orig ON d.previous_version_id = orig.id
+        -- Self-Join fuer Inhaltsduplikat-Original (content_duplicate_of_id -> Original-Dokument)
+        LEFT JOIN documents content_orig ON d.content_duplicate_of_id = content_orig.id
         WHERE $where
         ORDER BY d.created_at DESC
         LIMIT 1000
@@ -236,6 +265,153 @@ function listDocuments(array $user): void {
     json_success([
         'documents' => $documents,
         'count' => count($documents)
+    ]);
+}
+
+/**
+ * GET /documents/search?q=...&limit=200&include_raw=0&substring=0
+ * ATLAS Index: Volltextsuche ueber Dateinamen und extrahierten Dokumentinhalt.
+ * 
+ * JOIN auf document_ai_data NUR hier -- niemals in listDocuments()!
+ * Nutzt FULLTEXT-Index (ft_extracted_text) fuer performante Suche.
+ * 
+ * Parameter:
+ *   q          - Suchbegriff (min. 3 Zeichen)
+ *   limit      - Max. Ergebnisse (1-500, default 200)
+ *   include_raw - XML/GDV-Rohdaten einbeziehen (0=nein [default], 1=ja)
+ *   substring  - Teilstring-Suche auf Textinhalt (0=nein [default, FULLTEXT], 1=ja [LIKE])
+ */
+function searchDocuments(array $user): void {
+    $rawQuery = trim($_GET['q'] ?? '');
+    $limit = min(max((int)($_GET['limit'] ?? 200), 1), 500);
+    $includeRaw = ($_GET['include_raw'] ?? '0') === '1';
+    $substringMode = ($_GET['substring'] ?? '0') === '1';
+    
+    // Mindestlaenge 3 Zeichen (konsistent mit Client)
+    if (mb_strlen($rawQuery) < 3) {
+        json_success(['documents' => []]);
+        return;
+    }
+    
+    // === BOOLEAN MODE Sanitizing ===
+    // Sonderzeichen entfernen die BOOLEAN MODE brechen koennen
+    // Erlaubt: Buchstaben, Zahlen, Leerzeichen, Umlaute, Punkt, Bindestrich-in-Woertern
+    // Entfernt: +, -, <, >, ~, *, (, ), @, "
+    $cleanQuery = preg_replace('/[+\-<>~*()"@]/', ' ', $rawQuery);
+    $cleanQuery = preg_replace('/\s+/', ' ', trim($cleanQuery));
+    
+    if (empty($cleanQuery)) {
+        json_success(['documents' => []]);
+        return;
+    }
+    
+    $like = '%' . $cleanQuery . '%';
+    $params = [];
+    
+    // === Smart Text-Preview: LOCATE-basiert ===
+    // Statt immer die ersten 2000 Zeichen zu nehmen, wird der Suchbegriff
+    // im Text gesucht und ein Fenster von 2000 Zeichen um den Treffer extrahiert.
+    // Fuer Mehrwort-Queries: erstes Wort (laengstes) fuer LOCATE verwenden.
+    $locateTerms = array_filter(explode(' ', $cleanQuery), fn($w) => mb_strlen($w) >= 3);
+    usort($locateTerms, fn($a, $b) => mb_strlen($b) - mb_strlen($a));
+    $locateTerm = !empty($locateTerms) ? $locateTerms[0] : $cleanQuery;
+    
+    // Textinhalt-Suche: FULLTEXT (Standard) oder LIKE (Teilstring)
+    if ($substringMode) {
+        // Teilstring-Suche: LIKE auf extracted_text (langsamer, aber findet Teilwoerter)
+        $textMatchSelect = "(CASE 
+                WHEN ai.extracted_text IS NOT NULL AND ai.extracted_text LIKE ? 
+                THEN 20 ELSE 0 END)";
+        $textMatchWhere = "(ai.extracted_text IS NOT NULL AND ai.extracted_text LIKE ?)";
+        // Parameter: locateTerm x2 (preview), like (filename score), like (text score), like (filename where), like (text where)
+        $params = [$locateTerm, $locateTerm, $like, $like, $like, $like];
+    } else {
+        // Standard: FULLTEXT BOOLEAN MODE (schnell, nutzt Index, aber nur ganze Woerter)
+        $textMatchSelect = "(CASE 
+                WHEN ai.extracted_text IS NOT NULL 
+                     AND MATCH(ai.extracted_text) AGAINST(? IN BOOLEAN MODE) 
+                THEN 20 ELSE 0 END)";
+        $textMatchWhere = "(ai.extracted_text IS NOT NULL 
+                AND MATCH(ai.extracted_text) AGAINST(? IN BOOLEAN MODE))";
+        // Parameter: locateTerm x2 (preview), like (filename score), cleanQuery (text score), like (filename where), cleanQuery (text where)
+        $params = [$locateTerm, $locateTerm, $like, $cleanQuery, $like, $cleanQuery];
+    }
+    
+    // Filter: XML/GDV-Rohdaten standardmaessig ausblenden
+    $rawFilter = '';
+    if (!$includeRaw) {
+        $rawFilter = "AND d.box_type NOT IN ('roh') AND d.is_gdv = 0";
+    }
+    
+    $sql = "
+        SELECT 
+            d.id,
+            d.filename,
+            d.original_filename,
+            d.mime_type,
+            d.file_size,
+            d.source_type,
+            d.is_gdv,
+            d.created_at,
+            u.username as uploaded_by_name,
+            COALESCE(d.external_shipment_id, s.external_shipment_id) as external_shipment_id,
+            COALESCE(d.vu_name, vc.vu_name) as vu_name,
+            COALESCE(d.ai_renamed, 0) as ai_renamed,
+            d.ai_processing_error,
+            COALESCE(d.box_type, 'sonstige') as box_type,
+            COALESCE(d.processing_status, 'completed') as processing_status,
+            d.document_category,
+            d.bipro_category,
+            COALESCE(d.is_archived, 0) as is_archived,
+            d.display_color,
+            d.empty_page_count,
+            d.total_page_count,
+            d.content_hash,
+            COALESCE(d.version, 1) as version,
+            d.previous_version_id,
+            COALESCE(orig.original_filename, '') as duplicate_of_filename,
+            COALESCE(orig.box_type, '') as duplicate_of_box_type,
+            orig.created_at as duplicate_of_created_at,
+            COALESCE(orig.is_archived, 0) as duplicate_of_is_archived,
+            d.content_duplicate_of_id,
+            COALESCE(content_orig.original_filename, '') as content_duplicate_of_filename,
+            COALESCE(content_orig.box_type, '') as content_duplicate_of_box_type,
+            content_orig.created_at as content_duplicate_of_created_at,
+            COALESCE(content_orig.is_archived, 0) as content_duplicate_of_is_archived,
+            -- Smart Text-Preview: 2000 Zeichen um den Treffer herum (statt immer vom Anfang)
+            -- LOCATE findet den Suchbegriff, SUBSTRING extrahiert 300 Zeichen davor + 1700 danach
+            CASE
+                WHEN ai.extracted_text IS NOT NULL AND LOCATE(?, ai.extracted_text) > 0
+                THEN SUBSTRING(ai.extracted_text, GREATEST(1, LOCATE(?, ai.extracted_text) - 300), 2000)
+                ELSE LEFT(ai.extracted_text, 2000)
+            END as text_preview,
+            -- Relevanz-Score: Dateiname=10, Volltext=20
+            (CASE WHEN d.filename LIKE ? THEN 10 ELSE 0 END) +
+            $textMatchSelect as relevance_score
+        FROM documents d
+        LEFT JOIN document_ai_data ai ON ai.document_id = d.id
+        LEFT JOIN users u ON d.uploaded_by = u.id
+        LEFT JOIN shipments s ON d.shipment_id = s.id
+        LEFT JOIN vu_connections vc ON s.vu_connection_id = vc.id
+        LEFT JOIN documents orig ON d.previous_version_id = orig.id
+        LEFT JOIN documents content_orig ON d.content_duplicate_of_id = content_orig.id
+        WHERE
+            (d.filename LIKE ?
+            OR $textMatchWhere)
+            $rawFilter
+        ORDER BY relevance_score DESC, d.created_at DESC
+        LIMIT $limit
+    ";
+    
+    $documents = Database::query($sql, $params);
+    
+    $mode = $substringMode ? 'substring' : 'fulltext';
+    $raw = $includeRaw ? '+raw' : '';
+    ActivityLogger::logDocument($user, 'search', null, 
+        "ATLAS Index Suche ($mode$raw): \"" . mb_substr($rawQuery, 0, 100) . '" (' . count($documents) . ' Treffer)');
+    
+    json_success([
+        'documents' => $documents
     ]);
 }
 
@@ -266,15 +442,26 @@ function getDocumentInfo(string $id, array $user): void {
             d.bipro_category,
             COALESCE(d.is_archived, 0) as is_archived,
             d.display_color,
+            d.empty_page_count,
+            d.total_page_count,
             d.content_hash,
             COALESCE(d.version, 1) as version,
             d.previous_version_id,
-            COALESCE(orig.original_filename, '') as duplicate_of_filename
+            COALESCE(orig.original_filename, '') as duplicate_of_filename,
+            COALESCE(orig.box_type, '') as duplicate_of_box_type,
+            orig.created_at as duplicate_of_created_at,
+            COALESCE(orig.is_archived, 0) as duplicate_of_is_archived,
+            d.content_duplicate_of_id,
+            COALESCE(content_orig.original_filename, '') as content_duplicate_of_filename,
+            COALESCE(content_orig.box_type, '') as content_duplicate_of_box_type,
+            content_orig.created_at as content_duplicate_of_created_at,
+            COALESCE(content_orig.is_archived, 0) as content_duplicate_of_is_archived
         FROM documents d
         LEFT JOIN users u ON d.uploaded_by = u.id
         LEFT JOIN shipments s ON d.shipment_id = s.id
         LEFT JOIN vu_connections vc ON s.vu_connection_id = vc.id
         LEFT JOIN documents orig ON d.previous_version_id = orig.id
+        LEFT JOIN documents content_orig ON d.content_duplicate_of_id = content_orig.id
         WHERE d.id = ?
     ", [(int)$id]);
 
@@ -706,6 +893,9 @@ function deleteDocument(string $id, array $user): void {
     
     $filePath = DOCUMENTS_PATH . $doc['storage_path'];
     
+    // CASCADE: AI-Daten mitloeschen (DSGVO: Klartext darf nicht verwaisen)
+    Database::execute('DELETE FROM document_ai_data WHERE document_id = ?', [$id]);
+    
     // Aus DB löschen
     Database::execute('DELETE FROM documents WHERE id = ?', [$id]);
     
@@ -748,6 +938,12 @@ function bulkDeleteDocuments(array $user): void {
     // Dokument-Infos holen (fuer Datei-Loeschung und Logging)
     $docs = Database::query(
         "SELECT id, storage_path, original_filename, box_type FROM documents WHERE id IN ($placeholders)",
+        array_values($docIds)
+    );
+    
+    // CASCADE: AI-Daten mitloeschen (DSGVO: Klartext darf nicht verwaisen)
+    Database::execute(
+        "DELETE FROM document_ai_data WHERE document_id IN ($placeholders)",
         array_values($docIds)
     );
     
@@ -816,7 +1012,9 @@ function updateDocument(string $id, array $user): void {
         'bipro_document_id',           // Eindeutige ID aus BiPRO-Response (Idempotenz)
         'source_xml_index_id',         // Relation zur XML-Quell-Lieferung
         'is_archived',                 // Archivierungs-Status (nach Download)
-        'display_color'                // Farbmarkierung (green, red, blue, orange, purple, pink, cyan, yellow)
+        'display_color',               // Farbmarkierung (green, red, blue, orange, purple, pink, cyan, yellow)
+        'empty_page_count',            // Anzahl leerer Seiten (NULL = nicht geprueft)
+        'total_page_count'             // Gesamtseitenzahl (NULL = nicht geprueft)
     ];
     
     // Box-Typ validieren
@@ -1327,4 +1525,223 @@ function replaceDocumentFile(string $id, array $user): void {
         'content_hash' => $newHash,
         'file_size' => $newSize
     ], 'Datei erfolgreich ersetzt');
+}
+
+// =========================================================================
+// AI-Data Funktionen (document_ai_data Tabelle)
+// PERFORMANCE-REGEL: Nie in listDocuments() joinen!
+// =========================================================================
+
+/**
+ * POST /documents/{id}/ai-data
+ * 
+ * Speichert oder aktualisiert Volltext + KI-Daten fuer ein Dokument.
+ * Verwendet INSERT ... ON DUPLICATE KEY UPDATE (Upsert).
+ * 
+ * @param string|int $id Document-ID
+ * @param array $user JWT-Payload
+ */
+function saveDocumentAiData($id, array $user): void {
+    // Dokument existiert?
+    $doc = Database::queryOne(
+        "SELECT id, original_filename FROM documents WHERE id = ?",
+        [(int)$id]
+    );
+    if (!$doc) {
+        json_error('Dokument nicht gefunden', 404);
+    }
+    
+    $data = get_json_body();
+    if (!$data) {
+        json_error('JSON-Body erforderlich', 400);
+    }
+    
+    // Erlaubte Felder
+    $allowedFields = [
+        'extracted_text', 'extracted_text_sha256', 'extraction_method',
+        'extracted_page_count', 'ai_full_response', 'ai_prompt_text',
+        'ai_model', 'ai_prompt_version', 'ai_stage',
+        'text_char_count', 'ai_response_char_count',
+        'prompt_tokens', 'completion_tokens', 'total_tokens'
+    ];
+    
+    // Felder filtern
+    $fields = [];
+    $values = [];
+    foreach ($allowedFields as $field) {
+        if (array_key_exists($field, $data)) {
+            $fields[] = $field;
+            $values[] = $data[$field];
+        }
+    }
+    
+    if (empty($fields)) {
+        json_error('Keine gueltigen Felder angegeben', 400);
+    }
+    
+    // extraction_method validieren
+    if (isset($data['extraction_method'])) {
+        $validMethods = ['text', 'ocr', 'mixed', 'none'];
+        if (!in_array($data['extraction_method'], $validMethods)) {
+            json_error('Ungueltiger extraction_method Wert', 400);
+        }
+    }
+    
+    // ai_stage validieren
+    if (isset($data['ai_stage'])) {
+        $validStages = ['triage_only', 'triage_and_detail', 'courtage_minimal', 'none'];
+        if (!in_array($data['ai_stage'], $validStages)) {
+            json_error('Ungueltiger ai_stage Wert', 400);
+        }
+    }
+    
+    // Upsert: INSERT ... ON DUPLICATE KEY UPDATE
+    $insertFields = array_merge(['document_id', 'filename'], $fields);
+    $insertPlaceholders = array_fill(0, count($insertFields), '?');
+    $insertValues = array_merge([(int)$id, $doc['original_filename']], $values);
+    
+    // UPDATE-Teil: Alle Felder ausser document_id und filename
+    $updateParts = [];
+    foreach ($fields as $field) {
+        $updateParts[] = "$field = VALUES($field)";
+    }
+    // Filename bei Update auch aktualisieren (falls sich der Name geaendert hat)
+    $updateParts[] = "filename = VALUES(filename)";
+    
+    $sql = "INSERT INTO document_ai_data (" . implode(', ', $insertFields) . ") "
+         . "VALUES (" . implode(', ', $insertPlaceholders) . ") "
+         . "ON DUPLICATE KEY UPDATE " . implode(', ', $updateParts);
+    
+    Database::execute($sql, $insertValues);
+    
+    // Inhaltsduplikat-Erkennung: Text-Hash gegen bestehende Dokumente pruefen
+    $contentDuplicateOfId = null;
+    $contentDuplicateOfFilename = null;
+    $textHash = $data['extracted_text_sha256'] ?? null;
+    
+    if ($textHash) {
+        // Aeltestes Dokument mit gleichem Text-Hash finden (ausser sich selbst)
+        $original = Database::queryOne(
+            "SELECT dad.document_id, d.original_filename 
+             FROM document_ai_data dad
+             JOIN documents d ON dad.document_id = d.id
+             WHERE dad.extracted_text_sha256 = ?
+               AND dad.document_id != ?
+             ORDER BY dad.document_id ASC
+             LIMIT 1",
+            [$textHash, (int)$id]
+        );
+        
+        if ($original) {
+            $contentDuplicateOfId = (int)$original['document_id'];
+            $contentDuplicateOfFilename = $original['original_filename'];
+            
+            // Aktuelles Dokument als Inhaltsduplikat markieren
+            Database::execute(
+                "UPDATE documents SET content_duplicate_of_id = ? WHERE id = ?",
+                [$contentDuplicateOfId, (int)$id]
+            );
+        } else {
+            // Kein Duplikat (mehr) - ggf. alten Marker entfernen
+            Database::execute(
+                "UPDATE documents SET content_duplicate_of_id = NULL WHERE id = ? AND content_duplicate_of_id IS NOT NULL",
+                [(int)$id]
+            );
+        }
+    }
+    
+    // Activity-Log (leichtgewichtig, kein Detail-Logging fuer AI-Data)
+    ActivityLogger::logDocument($user, 'ai_data_saved', (int)$id,
+        "AI-Daten gespeichert: {$doc['original_filename']}" 
+            . ($contentDuplicateOfId ? " (Inhaltsduplikat von #{$contentDuplicateOfId})" : ''),
+        [
+            'extraction_method' => $data['extraction_method'] ?? null,
+            'ai_model' => $data['ai_model'] ?? null,
+            'ai_stage' => $data['ai_stage'] ?? null,
+            'total_tokens' => $data['total_tokens'] ?? null,
+            'content_duplicate_of_id' => $contentDuplicateOfId
+        ]
+    );
+    
+    $responseData = ['document_id' => (int)$id];
+    if ($contentDuplicateOfId) {
+        $responseData['content_duplicate_of_id'] = $contentDuplicateOfId;
+        $responseData['content_duplicate_of_filename'] = $contentDuplicateOfFilename;
+    }
+    
+    json_success($responseData, 'AI-Daten gespeichert');
+}
+
+/**
+ * GET /documents/{id}/ai-data
+ * 
+ * Liest Volltext + KI-Daten fuer ein Dokument.
+ * Nur auf explizite Anfrage -- wird NICHT automatisch geladen.
+ * 
+ * @param string|int $id Document-ID
+ * @param array $user JWT-Payload
+ */
+function getDocumentAiData($id, array $user): void {
+    // Dokument existiert?
+    $doc = Database::queryOne(
+        "SELECT id FROM documents WHERE id = ?",
+        [(int)$id]
+    );
+    if (!$doc) {
+        json_error('Dokument nicht gefunden', 404);
+    }
+    
+    $aiData = Database::queryOne(
+        "SELECT document_id, filename, extracted_text, extracted_text_sha256,
+                extraction_method, extracted_page_count,
+                ai_full_response, ai_prompt_text, ai_model, ai_prompt_version, ai_stage,
+                text_char_count, ai_response_char_count,
+                prompt_tokens, completion_tokens, total_tokens,
+                created_at, updated_at
+         FROM document_ai_data
+         WHERE document_id = ?",
+        [(int)$id]
+    );
+    
+    if (!$aiData) {
+        json_success(['ai_data' => null], 'Keine AI-Daten vorhanden');
+        return;
+    }
+    
+    // Integer-Felder casten
+    $aiData['document_id'] = (int)$aiData['document_id'];
+    $aiData['extracted_page_count'] = $aiData['extracted_page_count'] !== null ? (int)$aiData['extracted_page_count'] : null;
+    $aiData['text_char_count'] = $aiData['text_char_count'] !== null ? (int)$aiData['text_char_count'] : null;
+    $aiData['ai_response_char_count'] = $aiData['ai_response_char_count'] !== null ? (int)$aiData['ai_response_char_count'] : null;
+    $aiData['prompt_tokens'] = $aiData['prompt_tokens'] !== null ? (int)$aiData['prompt_tokens'] : null;
+    $aiData['completion_tokens'] = $aiData['completion_tokens'] !== null ? (int)$aiData['completion_tokens'] : null;
+    $aiData['total_tokens'] = $aiData['total_tokens'] !== null ? (int)$aiData['total_tokens'] : null;
+    
+    json_success(['ai_data' => $aiData]);
+}
+
+/**
+ * GET /documents/missing-ai-data
+ * 
+ * Gibt Dokumente zurueck die noch keinen Eintrag in document_ai_data haben.
+ * Begrenzt auf nicht-archivierte Dokumente in der Eingangsbox.
+ * Wird genutzt um serverseitig hochgeladene Scans nachtraeglich zu pruefen.
+ * 
+ * Limit: max. 50 Dokumente pro Aufruf (leichtgewichtig).
+ */
+function getMissingAiDataDocuments(array $user): void {
+    $docs = Database::query(
+        "SELECT d.id, d.original_filename, d.mime_type, d.file_size
+         FROM documents d
+         LEFT JOIN document_ai_data dad ON d.id = dad.document_id
+         WHERE dad.id IS NULL
+           AND COALESCE(d.is_archived, 0) = 0
+         ORDER BY d.created_at DESC
+         LIMIT 50"
+    );
+    
+    json_success([
+        'documents' => $docs,
+        'count' => count($docs)
+    ]);
 }

@@ -559,9 +559,6 @@ class ChatView(QWidget):
             return
         # Nicht starten wenn bereits ein Refresh laeuft
         if self._refresh_worker and self._refresh_worker.isRunning():
-            # #region agent log
-            import time as _t; import json as _j; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j.dumps({"id":"log_chat_worker_overlap","timestamp":int(_t.time()*1000),"location":"chat_view.py:_auto_refresh_poll","message":"Worker overlap SKIPPED - previous still running","data":{"cycle":self._refresh_cycle_count},"hypothesisId":"D"})+'\n')
-            # #endregion
             return
         
         # Conversations nur alle 5 Zyklen nachladen (~15s)
@@ -612,15 +609,9 @@ class ChatView(QWidget):
         self._has_unread_to_mark = has_unread
         
         if has_changes:
-            # #region agent log
-            import time as _t_pop; _pop_start = _t_pop.time()
-            # #endregion
             old_count = len(self._messages)
             self._messages = new_messages
             self._populate_messages()
-            # #region agent log
-            _pop_dur = (_t_pop.time() - _pop_start) * 1000; import json as _jpop; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_jpop.dumps({"id":"log_chat_repopulate","timestamp":int(_t_pop.time()*1000),"location":"chat_view.py:_on_refresh_messages","message":"Chat repopulate on refresh","data":{"duration_ms":round(_pop_dur,1),"msg_count":len(new_messages),"has_unread":has_unread},"hypothesisId":"F"})+'\n')
-            # #endregion
             
             # Nur nach unten scrollen wenn neue Nachrichten dazukamen
             if len(new_messages) > old_count:
@@ -696,16 +687,10 @@ class ChatView(QWidget):
         self._load_messages(conv_id)
         
         # Als gelesen markieren
-        # #region agent log
-        import time as _t; _log_b_start = _t.time()
-        # #endregion
         try:
             self._chat_api.mark_as_read(conv_id)
         except Exception:
             pass
-        # #region agent log
-        _log_b_dur = (_t.time() - _log_b_start) * 1000; import json as _j; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j.dumps({"id":"log_chat_mark_read","timestamp":int(_t.time()*1000),"location":"chat_view.py:691","message":"SYNC mark_as_read in main thread (chat click)","data":{"duration_ms":round(_log_b_dur,1),"conv_id":conv_id},"hypothesisId":"B"})+'\n')
-        # #endregion
     
     # ====================================================================
     # Nachrichten laden

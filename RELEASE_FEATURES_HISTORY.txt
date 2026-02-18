@@ -1,4 +1,27 @@
-﻿- Zentrale
+﻿- Dokument Regeln.
+- Neu API. OpenAI API direkt angebunden um weitere Kosten zu sparen
+- Provider Model
+- verarbeitungsablauf konfi.
+- PDF Multi auswahl.
+- Sicherheits Cache wipe bei Log out.
+- API, Proxy, Ablauf und Quell Rework.
+- ATLAS Index ist bereit und verfügbar!
+- Suche über alle Dokumente nach text inhalt, dateiname teiltreffer USW!
+- Text-Extraktion fuer Inhaltsduplikat-Erkennung
+- Fehlerbehebung (Passwort-pdf und Outlook msg.)
+- Bug fix.
+- Vorbereitung für Spätere Features
+- Leere-Seiten-Erkennung
+- Neue Spalte im Dokumentenarchiv mit Markierung
+- ◑ Orange: Teilweise leere Seiten (z.B. "3 von 8 Seiten leer")
+- ○ Rot: Komplett leeres PDF (z.B. "Komplett leer (5 Seiten)")
+- Performance-Verbesserungen
+- QTableView-Migration
+- Archiv-Tabelle von QTableWidget auf QTableView + QAbstractTableModel umgestellt
+- Virtualisiertes Rendering: Nur sichtbare Zeilen werden gerendert (~30 statt 500+)
+- Sortierung und Textsuche ueber QSortFilterProxyModel statt manueller Iteration
+- Ergebnis: 531 Dokumente laden in ~0.1ms statt ~50s Freeze
+- Zentrale
 - Internes Nachrichtensystem
 - Komplette überarbeitung.
 - Delete Perfomance optmimierung

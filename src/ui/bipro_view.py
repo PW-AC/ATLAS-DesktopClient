@@ -442,20 +442,20 @@ class MailImportWorker(QThread):
                 for ext in zr.extracted_paths:
                     if is_msg_file(ext):
                         md = tempfile.mkdtemp(prefix="atlas_mail_msg_", dir=td)
-                        mr = extract_msg_attachments(ext, md)
+                        mr = extract_msg_attachments(ext, md, api_client=self._api_client)
                         if mr.error:
                             errors.append(mr.error)
                         else:
                             for att in mr.attachment_paths:
                                 try:
-                                    unlock_pdf_if_needed(att)
+                                    unlock_pdf_if_needed(att, api_client=self._api_client)
                                 except Exception:
                                     pass
                                 jobs.append((att, None))
                         jobs.append((ext, 'roh'))
                     else:
                         try:
-                            unlock_pdf_if_needed(ext)
+                            unlock_pdf_if_needed(ext, api_client=self._api_client)
                         except Exception:
                             pass
                         jobs.append((ext, None))
@@ -463,7 +463,7 @@ class MailImportWorker(QThread):
 
         elif is_msg_file(file_path):
             td = tempfile.mkdtemp(prefix="atlas_mail_msg_", dir=temp_base)
-            mr = extract_msg_attachments(file_path, td)
+            mr = extract_msg_attachments(file_path, td, api_client=self._api_client)
             if mr.error:
                 errors.append(mr.error)
             else:
@@ -476,14 +476,14 @@ class MailImportWorker(QThread):
                         else:
                             for ext in zr.extracted_paths:
                                 try:
-                                    unlock_pdf_if_needed(ext)
+                                    unlock_pdf_if_needed(ext, api_client=self._api_client)
                                 except Exception:
                                     pass
                                 jobs.append((ext, None))
                         jobs.append((att, 'roh'))
                     else:
                         try:
-                            unlock_pdf_if_needed(att)
+                            unlock_pdf_if_needed(att, api_client=self._api_client)
                         except Exception:
                             pass
                         jobs.append((att, None))
@@ -491,7 +491,7 @@ class MailImportWorker(QThread):
 
         else:
             try:
-                unlock_pdf_if_needed(file_path)
+                unlock_pdf_if_needed(file_path, api_client=self._api_client)
             except Exception:
                 pass
             jobs.append((file_path, None))
@@ -521,6 +521,13 @@ class MailImportWorker(QThread):
             else:
                 doc = docs_api.upload(file_path, 'imap_import')
             if doc:
+                # Fruehe Text-Extraktion fuer Inhaltsduplikat-Erkennung
+                if box_type != 'roh':
+                    try:
+                        from services.early_text_extract import extract_and_save_text
+                        extract_and_save_text(docs_api, doc.id, file_path, name)
+                    except Exception:
+                        pass  # Darf Upload nicht abbrechen
                 return (name, True, doc)
             else:
                 return (name, False, "Upload fehlgeschlagen")
@@ -4759,6 +4766,12 @@ class BiPROView(QWidget):
                     if result:
                         uploaded += 1
                         self._log(f"  [OK] {doc['filename']} -> Archiv (BiPRO: {vu_name}, Kat: {bipro_category})")
+                        # Fruehe Text-Extraktion fuer Inhaltsduplikat-Erkennung
+                        try:
+                            from services.early_text_extract import extract_and_save_text
+                            extract_and_save_text(self.docs_api, result.id, doc['filepath'], doc['filename'])
+                        except Exception:
+                            pass
                     else:
                         failed += 1
                         self._log(f"  [!] {doc['filename']} Upload fehlgeschlagen")

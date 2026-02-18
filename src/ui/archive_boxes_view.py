@@ -19,14 +19,18 @@ import os
 import logging
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
     QHeaderView, QPushButton, QLabel, QComboBox, QLineEdit,
     QFileDialog, QMessageBox, QMenu, QProgressDialog, QFrame,
     QSplitter, QGroupBox, QTreeWidget, QTreeWidgetItem, QToolBar,
     QApplication, QProgressBar, QInputDialog, QStyledItemDelegate,
-    QDialog, QFormLayout, QCheckBox, QScrollArea
+    QDialog, QFormLayout, QCheckBox, QScrollArea, QAbstractItemView,
+    QStackedWidget
 )
-from PySide6.QtCore import Qt, Signal, QThread, QMimeData, QTimer, QSize
+from PySide6.QtCore import (
+    Qt, Signal, QThread, QMimeData, QTimer, QSize,
+    QAbstractTableModel, QModelIndex, QSortFilterProxyModel
+)
 from shiboken6 import isValid
 from PySide6.QtGui import QAction, QFont, QColor, QDrag, QBrush, QPainter, QShortcut, QKeySequence
 
@@ -48,7 +52,7 @@ from ui.styles.tokens import (
 
 from api.client import APIClient
 from api.documents import (
-    DocumentsAPI, Document, BoxStats, 
+    DocumentsAPI, Document, BoxStats, SearchResult,
     BOX_TYPES, BOX_TYPES_ADMIN, BOX_DISPLAY_NAMES, BOX_COLORS
 )
 
@@ -492,6 +496,61 @@ class CacheDocumentLoadWorker(QThread):
             self.error.emit(str(e))
 
 
+class MissingAiDataWorker(QThread):
+    """
+    Hintergrund-Worker der Dokumente ohne AI-Data (Text-Extraktion) prueft.
+    
+    Wird einmal beim Archiv-Start ausgefuehrt. Findet Dokumente die
+    serverseitig hochgeladen wurden (z.B. Scans via Power Automate)
+    und fuer die noch kein Volltext extrahiert wurde.
+    
+    Fuer jedes solche Dokument: Download -> Text extrahieren -> save_ai_data.
+    Dadurch werden auch Scan-Duplikate erkannt.
+    """
+    finished = Signal(int)  # Anzahl verarbeiteter Dokumente
+    
+    def __init__(self, docs_api):
+        super().__init__()
+        self._docs_api = docs_api
+    
+    def run(self):
+        import tempfile
+        import time
+        from services.early_text_extract import extract_and_save_text
+        
+        try:
+            missing = self._docs_api.get_missing_ai_data_documents()
+            if not missing:
+                self.finished.emit(0)
+                return
+            
+            processed = 0
+            for doc_info in missing:
+                doc_id = doc_info.get('id')
+                filename = doc_info.get('original_filename', '')
+                if not doc_id:
+                    continue
+                
+                try:
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        file_path = self._docs_api.download(
+                            doc_id, tmp_dir, filename_override=filename
+                        )
+                        if file_path:
+                            extract_and_save_text(
+                                self._docs_api, doc_id, file_path, filename
+                            )
+                            processed += 1
+                except Exception:
+                    pass  # Einzelne Fehler ueberspringen
+                
+                time.sleep(0.2)  # Server nicht ueberlasten
+            
+            self.finished.emit(processed)
+        except Exception:
+            self.finished.emit(0)
+
+
 class LoadingOverlay(QWidget):
     """
     Semi-transparentes Overlay mit Lade-Animation.
@@ -849,16 +908,15 @@ class ProcessingProgressOverlay(QWidget):
                 lines.append(f"  • {box_name}: {count}")
         
         # KOSTEN-ANZEIGE
-        if total_cost is not None:
+        if total_cost is not None and total_cost > 0:
             lines.append("")
             lines.append("💰 Kosten:")
             lines.append(f"  • Gesamt: ${total_cost:.4f} USD")
-            if cost_per_doc is not None and success_count > 0:
+            if cost_per_doc is not None and len(results) > 0:
                 lines.append(f"  • Pro Dokument: ${cost_per_doc:.6f} USD")
-        elif isinstance(batch_result, BatchProcessingResult) and batch_result.credits_before is not None:
-            # Kosten werden verzoegert berechnet
+        elif isinstance(batch_result, BatchProcessingResult):
             lines.append("")
-            lines.append("💰 Kosten werden in ~45s berechnet...")
+            lines.append("💰 Kosten werden ermittelt...")
         
         self._summary_label.setText("\n".join(lines))
         self._summary_frame.setVisible(True)
@@ -934,23 +992,29 @@ class MultiUploadWorker(QThread):
                 for ext in zr.extracted_paths:
                     if is_msg_file(ext):
                         md = tempfile.mkdtemp(prefix="atlas_msg_", dir=td)
-                        mr = extract_msg_attachments(ext, md)
+                        mr = extract_msg_attachments(ext, md, api_client=self.docs_api.client)
                         if mr.error:
                             self._errors.append((Path(ext).name, mr.error))
                         else:
                             for att in mr.attachment_paths:
-                                unlock_pdf_if_needed(att)
+                                try:
+                                    unlock_pdf_if_needed(att, api_client=self.docs_api.client)
+                                except ValueError as e:
+                                    logger.warning(str(e))
                                 jobs.append((att, None))
                         jobs.append((ext, 'roh'))
                     else:
-                        unlock_pdf_if_needed(ext)
+                        try:
+                            unlock_pdf_if_needed(ext, api_client=self.docs_api.client)
+                        except ValueError as e:
+                            logger.warning(str(e))
                         jobs.append((ext, None))
                 jobs.append((fp, 'roh'))
 
             elif is_msg_file(fp):
                 td = tempfile.mkdtemp(prefix="atlas_msg_")
                 self._temp_dirs.append(td)
-                mr = extract_msg_attachments(fp, td)
+                mr = extract_msg_attachments(fp, td, api_client=self.docs_api.client)
                 if mr.error:
                     self._errors.append((Path(fp).name, mr.error))
                     continue
@@ -962,16 +1026,25 @@ class MultiUploadWorker(QThread):
                             self._errors.append((Path(att).name, zr.error))
                         else:
                             for ext in zr.extracted_paths:
-                                unlock_pdf_if_needed(ext)
+                                try:
+                                    unlock_pdf_if_needed(ext, api_client=self.docs_api.client)
+                                except ValueError as e:
+                                    logger.warning(str(e))
                                 jobs.append((ext, None))
                         jobs.append((att, 'roh'))
                     else:
-                        unlock_pdf_if_needed(att)
+                        try:
+                            unlock_pdf_if_needed(att, api_client=self.docs_api.client)
+                        except ValueError as e:
+                            logger.warning(str(e))
                         jobs.append((att, None))
                 jobs.append((fp, 'roh'))
 
             else:
-                unlock_pdf_if_needed(fp)
+                try:
+                    unlock_pdf_if_needed(fp, api_client=self.docs_api.client)
+                except ValueError as e:
+                    logger.warning(str(e))
                 jobs.append((fp, None))
 
         return jobs
@@ -999,6 +1072,13 @@ class MultiUploadWorker(QThread):
             else:
                 doc = docs_api.upload(path, source_type)
             if doc:
+                # Fruehe Text-Extraktion fuer Inhaltsduplikat-Erkennung
+                if box_type != 'roh':
+                    try:
+                        from services.early_text_extract import extract_and_save_text
+                        extract_and_save_text(docs_api, doc.id, path, name)
+                    except Exception:
+                        pass  # Darf Upload nicht abbrechen
                 return (name, True, doc)
             else:
                 return (name, False, "Upload fehlgeschlagen")
@@ -1081,13 +1161,16 @@ class PreviewDownloadWorker(QThread):
     
     def run(self):
         try:
+            from api.documents import safe_cache_filename
+            
             if self._cancelled:
                 self.download_finished.emit(None)
                 return
             
             # Cache-Check: Datei bereits lokal vorhanden?
             if self.cache_dir and self.filename:
-                cached_path = os.path.join(self.cache_dir, f"{self.doc_id}_{self.filename}")
+                cache_name = safe_cache_filename(self.doc_id, self.filename)
+                cached_path = os.path.join(self.cache_dir, cache_name)
                 if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
                     logger.info(f"Vorschau aus Cache: {cached_path}")
                     self.download_finished.emit(cached_path)
@@ -1095,9 +1178,10 @@ class PreviewDownloadWorker(QThread):
             
             # Download mit filename_override (spart get_document API-Call)
             download_dir = self.cache_dir or self.target_dir
+            cache_name = safe_cache_filename(self.doc_id, self.filename) if self.cache_dir and self.filename else self.filename
             result = self.docs_api.download(
                 self.doc_id, download_dir, 
-                filename_override=f"{self.doc_id}_{self.filename}" if self.cache_dir and self.filename else self.filename
+                filename_override=cache_name
             )
             
             if self._cancelled:
@@ -1274,7 +1358,7 @@ class BoxDownloadWorker(QThread):
 
 
 class CreditsWorker(QThread):
-    """Worker zum Abrufen der OpenRouter Credits."""
+    """Worker zum Abrufen der KI-Provider Credits/Usage."""
     finished = Signal(object)  # dict oder None
     
     def __init__(self, api_client):
@@ -1364,14 +1448,19 @@ class DelayedCostWorker(QThread):
                 self.finished.emit(None)
                 return
             
-            credits_after = credits_info.get('balance', 0.0)
+            provider = credits_info.get('provider', 'openrouter')
+            if provider == 'openai':
+                credits_after = credits_info.get('total_usage', 0.0) or 0.0
+            else:
+                credits_after = credits_info.get('balance', 0.0)
             
             # Kosten berechnen und in DB loggen
             processor = DocumentProcessor(self.api_client)
             cost_result = processor.log_delayed_costs(
                 history_entry_id=self.history_entry_id,
                 batch_result=self.batch_result,
-                credits_after=credits_after
+                credits_after=credits_after,
+                provider=provider
             )
             
             self.finished.emit(cost_result)
@@ -1474,22 +1563,355 @@ class ProcessingWorker(QThread):
             self.error.emit(str(e))
 
 
-class SortableTableWidgetItem(QTableWidgetItem):
+class DocumentTableModel(QAbstractTableModel):
     """
-    TableWidgetItem mit benutzerdefinierter Sortierung.
+    Virtualisiertes Table-Model fuer Dokumente.
     
-    Speichert einen separaten Sortier-Wert, der für den Vergleich verwendet wird.
+    Ersetzt QTableWidget + QTableWidgetItem komplett.
+    Qt ruft data() NUR fuer sichtbare Zeilen auf (~30 statt 500+).
+    Kein Item-Spam, kein Rebuild, kein UI-Freeze.
     """
     
-    def __init__(self, display_text: str, sort_value: str = ""):
-        super().__init__(display_text)
-        self._sort_value = sort_value if sort_value else display_text
+    # Spalten-Konstanten
+    COL_DUPLICATE = 0
+    COL_EMPTY_PAGES = 1
+    COL_FILENAME = 2
+    COL_BOX = 3
+    COL_SOURCE = 4
+    COL_TYPE = 5
+    COL_AI = 6
+    COL_DATE = 7
+    COL_BY = 8
+    COLUMN_COUNT = 9
     
-    def __lt__(self, other):
-        """Vergleich für Sortierung basierend auf Sortier-Wert."""
-        if isinstance(other, SortableTableWidgetItem):
-            return self._sort_value < other._sort_value
-        return super().__lt__(other)
+    # Dateiendung -> Anzeigename Mapping (statisch)
+    _TYPE_MAP = {
+        '.pdf': 'PDF', '.xml': 'XML', '.txt': 'TXT', '.gdv': 'GDV',
+        '.dat': 'DAT', '.vwb': 'VWB', '.csv': 'CSV', '.xlsx': 'Excel',
+        '.xls': 'Excel', '.doc': 'Word', '.docx': 'Word', '.jpg': 'Bild',
+        '.jpeg': 'Bild', '.png': 'Bild', '.gif': 'Bild', '.zip': 'ZIP',
+    }
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._documents: List[Document] = []
+        self._box_font = QFont("Open Sans", 9, QFont.Weight.Medium)
+        # Header-Labels (werden in headerData verwendet)
+        from i18n.de import DUPLICATE_COLUMN_HEADER, EMPTY_PAGES_COLUMN_HEADER
+        self._headers = [
+            DUPLICATE_COLUMN_HEADER, EMPTY_PAGES_COLUMN_HEADER, "Dateiname", "Box", "Quelle",
+            "Art", "KI", "Datum", "Von"
+        ]
+    
+    def rowCount(self, parent=QModelIndex()):
+        if parent.isValid():
+            return 0
+        return len(self._documents)
+    
+    def columnCount(self, parent=QModelIndex()):
+        if parent.isValid():
+            return 0
+        return self.COLUMN_COUNT
+    
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        """Liefert Daten fuer eine Zelle - wird NUR fuer sichtbare Zeilen aufgerufen."""
+        if not index.isValid():
+            return None
+        
+        row = index.row()
+        col = index.column()
+        
+        if row < 0 or row >= len(self._documents):
+            return None
+        
+        doc = self._documents[row]
+        
+        # ---- DisplayRole: Anzeige-Text ----
+        if role == Qt.ItemDataRole.DisplayRole:
+            if col == self.COL_DUPLICATE:
+                if doc.is_duplicate:
+                    from i18n.de import DUPLICATE_ICON
+                    return DUPLICATE_ICON
+                elif doc.is_content_duplicate:
+                    from i18n.de import CONTENT_DUPLICATE_ICON
+                    return CONTENT_DUPLICATE_ICON
+                return ""
+            elif col == self.COL_EMPTY_PAGES:
+                if doc.is_completely_empty:
+                    from i18n.de import EMPTY_PAGES_ICON_FULL
+                    return EMPTY_PAGES_ICON_FULL
+                elif doc.has_empty_pages:
+                    from i18n.de import EMPTY_PAGES_ICON_PARTIAL
+                    return EMPTY_PAGES_ICON_PARTIAL
+                return ""
+            elif col == self.COL_FILENAME:
+                return doc.original_filename
+            elif col == self.COL_BOX:
+                return doc.box_type_display
+            elif col == self.COL_SOURCE:
+                return doc.source_type_display
+            elif col == self.COL_TYPE:
+                return self._get_file_type(doc)
+            elif col == self.COL_AI:
+                if doc.ai_renamed:
+                    return "✓"
+                elif doc.ai_processing_error:
+                    return "✗"
+                elif doc.is_pdf:
+                    return "-"
+                return ""
+            elif col == self.COL_DATE:
+                return format_date_german(doc.created_at)
+            elif col == self.COL_BY:
+                return doc.uploaded_by_name or ""
+        
+        # ---- UserRole: Document-Objekt (fuer alle Spalten verfuegbar) ----
+        elif role == Qt.ItemDataRole.UserRole:
+            return doc
+        
+        # ---- ForegroundRole: Text-Farben ----
+        elif role == Qt.ItemDataRole.ForegroundRole:
+            if col == self.COL_DUPLICATE:
+                if doc.is_duplicate:
+                    return QColor("#f59e0b")  # Amber: Datei-Duplikat
+                elif doc.is_content_duplicate:
+                    return QColor("#6366f1")  # Indigo: Inhaltsduplikat
+            elif col == self.COL_EMPTY_PAGES:
+                if doc.is_completely_empty:
+                    return QColor("#dc2626")  # Rot: komplett leer
+                elif doc.has_empty_pages:
+                    return QColor("#f59e0b")  # Orange: teilweise leer
+            elif col == self.COL_BOX:
+                return QColor(doc.box_color)
+            elif col == self.COL_SOURCE:
+                if doc.source_type == 'bipro_auto':
+                    return QColor(INFO)
+                elif doc.source_type == 'scan':
+                    return QColor("#9C27B0")
+            elif col == self.COL_TYPE:
+                ft = self._get_file_type(doc)
+                if ft == "GDV":
+                    return QColor(SUCCESS)
+                elif ft == "PDF":
+                    return QColor(ERROR)
+                elif ft == "XML":
+                    return QColor(INFO)
+            elif col == self.COL_AI:
+                if doc.ai_renamed:
+                    return QColor(SUCCESS)
+                elif doc.ai_processing_error:
+                    return QColor(ERROR)
+        
+        # ---- BackgroundRole: Farbmarkierung (display_color) ----
+        elif role == Qt.ItemDataRole.BackgroundRole:
+            if doc.display_color and doc.display_color in DOCUMENT_DISPLAY_COLORS:
+                return QBrush(QColor(DOCUMENT_DISPLAY_COLORS[doc.display_color]))
+        
+        # ---- FontRole: Spezial-Fonts ----
+        elif role == Qt.ItemDataRole.FontRole:
+            if col == self.COL_BOX:
+                return self._box_font
+        
+        # ---- TextAlignmentRole ----
+        elif role == Qt.ItemDataRole.TextAlignmentRole:
+            if col in (self.COL_DUPLICATE, self.COL_EMPTY_PAGES, self.COL_AI):
+                return int(Qt.AlignmentFlag.AlignCenter)
+        
+        # ---- ToolTipRole ----
+        elif role == Qt.ItemDataRole.ToolTipRole:
+            if col == self.COL_DUPLICATE:
+                if doc.is_duplicate:
+                    from i18n.de import (DUPLICATE_TOOLTIP_LABEL, DUPLICATE_TOOLTIP_NO_ORIGINAL)
+                    if doc.duplicate_of_filename:
+                        return self._build_duplicate_tooltip(
+                            label=DUPLICATE_TOOLTIP_LABEL,
+                            filename=doc.duplicate_of_filename,
+                            doc_id=doc.previous_version_id,
+                            box_type=doc.duplicate_of_box_type or '',
+                            created_at=doc.duplicate_of_created_at or '',
+                            is_archived=doc.duplicate_of_is_archived,
+                        )
+                    else:
+                        return DUPLICATE_TOOLTIP_NO_ORIGINAL.format(version=doc.version)
+                elif doc.is_content_duplicate:
+                    from i18n.de import (CONTENT_DUPLICATE_TOOLTIP_LABEL,
+                                         CONTENT_DUPLICATE_TOOLTIP_NO_ORIGINAL)
+                    if doc.content_duplicate_of_filename:
+                        return self._build_duplicate_tooltip(
+                            label=CONTENT_DUPLICATE_TOOLTIP_LABEL,
+                            filename=doc.content_duplicate_of_filename,
+                            doc_id=doc.content_duplicate_of_id,
+                            box_type=doc.content_duplicate_of_box_type or '',
+                            created_at=doc.content_duplicate_of_created_at or '',
+                            is_archived=doc.content_duplicate_of_is_archived,
+                        )
+                    else:
+                        return CONTENT_DUPLICATE_TOOLTIP_NO_ORIGINAL
+            elif col == self.COL_EMPTY_PAGES:
+                if doc.is_completely_empty:
+                    from i18n.de import EMPTY_PAGES_TOOLTIP_FULL
+                    return EMPTY_PAGES_TOOLTIP_FULL.format(total=doc.total_page_count)
+                elif doc.has_empty_pages:
+                    from i18n.de import EMPTY_PAGES_TOOLTIP_PARTIAL
+                    return EMPTY_PAGES_TOOLTIP_PARTIAL.format(
+                        count=doc.empty_page_count, total=doc.total_page_count
+                    )
+            elif col == self.COL_AI:
+                if doc.ai_renamed:
+                    return "KI-verarbeitet"
+                elif doc.ai_processing_error:
+                    return doc.ai_processing_error
+        
+        return None
+    
+    def headerData(self, section: int, orientation, role: int = Qt.ItemDataRole.DisplayRole):
+        """Spalten-Header."""
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            if 0 <= section < len(self._headers):
+                return self._headers[section]
+        return None
+    
+    def flags(self, index: QModelIndex):
+        """Alle Zellen sind selektierbar und aktiviert, aber nicht editierbar."""
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+    
+    def set_documents(self, documents: List[Document]):
+        """Setzt die gesamte Dokumentliste (ersetzt _populate_table)."""
+        self.beginResetModel()
+        self._documents = documents
+        self.endResetModel()
+    
+    def get_document(self, row: int) -> Optional[Document]:
+        """Zugriff auf ein Dokument per Zeilen-Index."""
+        if 0 <= row < len(self._documents):
+            return self._documents[row]
+        return None
+    
+    def get_documents(self) -> List[Document]:
+        """Gibt die komplette Dokumentliste zurueck."""
+        return self._documents
+    
+    def update_colors(self, doc_ids: set, color: Optional[str]):
+        """Aktualisiert display_color fuer betroffene Dokumente und emittiert dataChanged."""
+        for row, doc in enumerate(self._documents):
+            if doc.id in doc_ids:
+                doc.display_color = color
+                # Nur BackgroundRole hat sich geaendert - emittiere fuer die ganze Zeile
+                top_left = self.index(row, 0)
+                bottom_right = self.index(row, self.COLUMN_COUNT - 1)
+                self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.BackgroundRole])
+    
+    @staticmethod
+    def _get_file_type(doc) -> str:
+        """Ermittelt den Dateityp fuer die Anzeige."""
+        if doc.is_gdv:
+            return "GDV"
+        ext = doc.file_extension.lower() if hasattr(doc, 'file_extension') else ""
+        if not ext and '.' in doc.original_filename:
+            ext = '.' + doc.original_filename.rsplit('.', 1)[-1].lower()
+        return DocumentTableModel._TYPE_MAP.get(ext, ext.upper().lstrip('.') if ext else '?')
+
+    @staticmethod
+    def _build_duplicate_tooltip(label: str, filename: str, doc_id, box_type: str,
+                                  created_at: str, is_archived: bool) -> str:
+        """Baut einen Rich-HTML-Tooltip fuer Duplikat-Anzeige (analog ATLAS Index Kachel)."""
+        from html import escape
+        from i18n.de import DUPLICATE_TOOLTIP_ARCHIVED
+
+        # Box-Emojis (gleiche Mapping wie SearchResultCard)
+        box_emojis = {
+            'gdv': '📊', 'courtage': '💰', 'sach': '🏠', 'leben': '❤️',
+            'kranken': '🏥', 'sonstige': '📁', 'roh': '📦', 'eingang': '📬',
+            'verarbeitung': '📥', 'falsch': '⚠️'
+        }
+        box_emoji = box_emojis.get(box_type, '📁') if box_type else '📁'
+        box_display = BOX_DISPLAY_NAMES.get(box_type, box_type) if box_type else ''
+
+        # Datum formatieren (YYYY-MM-DD HH:MM:SS -> DD.MM.YYYY)
+        date_display = ''
+        if created_at:
+            try:
+                date_part = created_at[:10]  # YYYY-MM-DD
+                parts = date_part.split('-')
+                if len(parts) == 3:
+                    date_display = f"{parts[2]}.{parts[1]}.{parts[0]}"
+            except (IndexError, ValueError):
+                date_display = created_at[:10] if created_at else ''
+
+        # Meta-Zeile zusammenbauen
+        meta_parts = []
+        if box_display:
+            meta_parts.append(f"{box_emoji} {escape(box_display)}")
+        if date_display:
+            meta_parts.append(date_display)
+        if is_archived:
+            meta_parts.append(f"📦 {DUPLICATE_TOOLTIP_ARCHIVED}")
+        meta_line = " &nbsp;|&nbsp; ".join(meta_parts) if meta_parts else ''
+
+        # HTML zusammenbauen
+        html = f"""<div style="padding: 4px;">
+<div style="color: #9E9E9E; font-size: 11px; margin-bottom: 2px;">{escape(label)}</div>
+<div style="font-weight: bold; font-size: 12px; margin-bottom: 3px;">{escape(filename)}</div>"""
+        if meta_line:
+            html += f'\n<div style="color: #757575; font-size: 11px;">{meta_line}</div>'
+        if doc_id:
+            html += f'\n<div style="color: #BDBDBD; font-size: 10px; margin-top: 2px;">ID: {doc_id}</div>'
+        html += '\n</div>'
+        return html
+
+
+class DocumentSortFilterProxy(QSortFilterProxyModel):
+    """
+    Proxy-Model fuer Sortierung und Suche.
+    
+    - filterAcceptsRow(): Textsuche nach Dateiname
+    - lessThan(): Custom-Sortierung fuer Datum-Spalte (ISO statt DD.MM.YYYY)
+    """
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._search_text = ""
+        self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+    
+    def set_search_text(self, text: str):
+        """Setzt den Suchtext und filtert die Tabelle."""
+        self._search_text = text.lower()
+        self.invalidateFilter()
+    
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        """Filtert Zeilen nach Suchtext im Dateinamen."""
+        if not self._search_text:
+            return True
+        model = self.sourceModel()
+        if model is None:
+            return True
+        index = model.index(source_row, DocumentTableModel.COL_FILENAME, source_parent)
+        filename = model.data(index, Qt.ItemDataRole.DisplayRole)
+        if filename is None:
+            return False
+        return self._search_text in filename.lower()
+    
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        """Custom-Sortierung: Datum-Spalte nach ISO-String, Rest nach Display-Text."""
+        col = left.column()
+        model = self.sourceModel()
+        if model is None:
+            return False
+        
+        if col == DocumentTableModel.COL_DATE:
+            # Nach ISO-Datum sortieren (created_at), nicht nach DD.MM.YYYY
+            left_doc = model.data(left, Qt.ItemDataRole.UserRole)
+            right_doc = model.data(right, Qt.ItemDataRole.UserRole)
+            left_val = left_doc.created_at or "" if left_doc else ""
+            right_val = right_doc.created_at or "" if right_doc else ""
+            return left_val < right_val
+        
+        # Standard: Display-Text vergleichen
+        left_data = model.data(left, Qt.ItemDataRole.DisplayRole) or ""
+        right_data = model.data(right, Qt.ItemDataRole.DisplayRole) or ""
+        return left_data < right_data
 
 
 class ColorBackgroundDelegate(QStyledItemDelegate):
@@ -1497,7 +1919,7 @@ class ColorBackgroundDelegate(QStyledItemDelegate):
     Custom Delegate der Item-Hintergrundfarben respektiert,
     auch wenn ein globales Qt-Stylesheet gesetzt ist.
     
-    Qt-Stylesheets ueberschreiben normalerweise setBackground() auf Items.
+    Qt-Stylesheets ueberschreiben normalerweise BackgroundRole auf Items.
     Dieser Delegate malt die Hintergrundfarbe manuell vor dem Standard-Rendering.
     """
     
@@ -1511,11 +1933,11 @@ class ColorBackgroundDelegate(QStyledItemDelegate):
         super().paint(painter, option, index)
 
 
-class DraggableDocumentTable(QTableWidget):
+class DraggableDocumentView(QTableView):
     """
-    Tabelle mit Drag-Unterstützung für Dokumente.
+    QTableView mit Drag-Unterstuetzung fuer Dokumente.
     
-    Beim Ziehen werden die IDs der ausgewählten Dokumente als Text übertragen.
+    Beim Ziehen werden die IDs der ausgewaehlten Dokumente als Text uebertragen.
     Mehrfachauswahl bleibt beim Drag erhalten.
     """
     
@@ -1526,14 +1948,14 @@ class DraggableDocumentTable(QTableWidget):
         self._clicked_on_selected = False
     
     def mousePressEvent(self, event):
-        """Speichert Startposition für Drag und prüft ob auf Auswahl geklickt."""
+        """Speichert Startposition fuer Drag und prueft ob auf Auswahl geklickt."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_start_pos = event.position().toPoint()
             self._drag_started = False
             
-            # Prüfen ob auf ein bereits ausgewähltes Item geklickt wurde
-            item = self.itemAt(event.position().toPoint())
-            if item and item.isSelected():
+            # Pruefen ob auf eine bereits ausgewaehlte Zeile geklickt wurde
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid() and self.selectionModel().isSelected(index):
                 self._clicked_on_selected = True
                 # Nicht an Parent weitergeben - verhindert Auswahl-Reset
                 return
@@ -1552,7 +1974,7 @@ class DraggableDocumentTable(QTableWidget):
             super().mouseMoveEvent(event)
             return
         
-        # Prüfen ob Mindestdistanz überschritten
+        # Pruefen ob Mindestdistanz ueberschritten
         distance = (event.position().toPoint() - self._drag_start_pos).manhattanLength()
         if distance < QApplication.startDragDistance():
             super().mouseMoveEvent(event)
@@ -1564,15 +1986,13 @@ class DraggableDocumentTable(QTableWidget):
             self._start_drag()
     
     def mouseReleaseEvent(self, event):
-        """Setzt Drag-Startposition zurück und handhabt Klick auf Auswahl."""
-        # Wenn auf ausgewähltes Item geklickt wurde aber kein Drag stattfand
-        # -> Auswahl auf dieses Item reduzieren
+        """Setzt Drag-Startposition zurueck und handhabt Klick auf Auswahl."""
         if self._clicked_on_selected and not self._drag_started:
-            item = self.itemAt(event.position().toPoint())
-            if item:
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid():
                 self.clearSelection()
-                self.setCurrentItem(item)
-                self.selectRow(item.row())
+                self.setCurrentIndex(index)
+                self.selectRow(index.row())
         
         self._drag_start_pos = None
         self._drag_started = False
@@ -1581,21 +2001,22 @@ class DraggableDocumentTable(QTableWidget):
     
     def _start_drag(self):
         """Startet Drag mit Dokument-IDs als MIME-Daten."""
+        # Sammle eindeutige Zeilen aus der Auswahl
         selected_rows = set()
-        for item in self.selectedItems():
-            selected_rows.add(item.row())
+        for index in self.selectedIndexes():
+            selected_rows.add(index.row())
         
         if not selected_rows:
             return
         
-        # Dokument-IDs sammeln
+        # Dokument-IDs ueber das Model holen
         doc_ids = []
+        model = self.model()
         for row in selected_rows:
-            id_item = self.item(row, 1)
-            if id_item:
-                doc = id_item.data(Qt.ItemDataRole.UserRole)
-                if doc:
-                    doc_ids.append(str(doc.id))
+            index = model.index(row, DocumentTableModel.COL_FILENAME)
+            doc = index.data(Qt.ItemDataRole.UserRole)
+            if doc:
+                doc_ids.append(str(doc.id))
         
         if not doc_ids:
             return
@@ -1610,9 +2031,8 @@ class DraggableDocumentTable(QTableWidget):
         
         # Drag-Vorschau (Anzahl der Dokumente)
         count = len(doc_ids)
-        from PySide6.QtGui import QPixmap, QPainter
+        from PySide6.QtGui import QPixmap
         
-        # Einfaches Vorschau-Pixmap
         pixmap = QPixmap(140, 32)
         pixmap.fill(QColor("#1a1a2e"))
         painter = QPainter(pixmap)
@@ -1627,6 +2047,524 @@ class DraggableDocumentTable(QTableWidget):
         
         self._drag_start_pos = None
         drag.exec(Qt.DropAction.MoveAction)
+
+
+# =============================================
+# ATLAS Index - Volltextsuche
+# =============================================
+
+class SearchWorker(QThread):
+    """
+    Worker fuer nicht-blockierende ATLAS Index Volltextsuche.
+    
+    Fuehrt GET /documents/search?q=... im Hintergrund aus.
+    """
+    finished = Signal(list)   # List[SearchResult]
+    error = Signal(str)       # Fehlermeldung
+    
+    def __init__(self, api_client: APIClient, query: str, limit: int = 200,
+                 include_raw: bool = False, substring: bool = False, parent=None):
+        super().__init__(parent)
+        self.api_client = api_client
+        self.query = query
+        self.limit = limit
+        self.include_raw = include_raw
+        self.substring = substring
+    
+    def run(self):
+        try:
+            docs_api = DocumentsAPI(self.api_client)
+            results = docs_api.search_documents(
+                self.query, self.limit,
+                include_raw=self.include_raw,
+                substring=self.substring
+            )
+            self.finished.emit(results)
+        except Exception as e:
+            logger.error(f"ATLAS Index Suche fehlgeschlagen: {e}")
+            self.error.emit(str(e))
+
+
+class SearchResultCard(QFrame):
+    """
+    Einzelne Ergebnis-Karte im ATLAS Index (Google-Stil).
+    
+    Zeigt: Dateiname (fett), Meta-Zeile (Box|VU|Datum), Text-Snippet mit Highlighting.
+    """
+    clicked = Signal(object)         # SearchResult
+    double_clicked = Signal(object)  # SearchResult
+    context_menu_requested = Signal(object, object)  # SearchResult, QPoint
+    
+    # Box-Emojis fuer Meta-Zeile
+    _BOX_EMOJIS = {
+        'gdv': '📊', 'courtage': '💰', 'sach': '🏠', 'leben': '❤️',
+        'kranken': '🏥', 'sonstige': '📁', 'roh': '📦', 'eingang': '📬',
+        'verarbeitung': '📥', 'falsch': '⚠️'
+    }
+    
+    def __init__(self, result: SearchResult, query: str, parent=None):
+        super().__init__(parent)
+        self.result = result
+        self.query = query
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        from html import escape
+        from i18n.de import ATLAS_INDEX_RESULT_ARCHIVED, ATLAS_INDEX_NO_TEXT
+        
+        doc = self.result.document
+        self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Plain)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # Hover-Effekt + Basis-Style
+        border_color = BORDER_DEFAULT
+        bg = BG_PRIMARY
+        color_strip = ""
+        if doc.display_color and doc.display_color in DOCUMENT_DISPLAY_COLORS:
+            color_strip = f"border-left: 4px solid {doc.display_color};"
+        
+        self.setStyleSheet(f"""
+            SearchResultCard {{
+                background: {bg};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+                padding: 10px 12px;
+                {color_strip}
+            }}
+            SearchResultCard:hover {{
+                background: {BG_SECONDARY};
+                border-color: {PRIMARY_500};
+            }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        
+        # Zeile 1: Dateiname (fett)
+        filename_label = QLabel(f"📄 {escape(doc.original_filename)}")
+        filename_label.setFont(QFont(FONT_BODY, int(FONT_SIZE_BODY.replace('pt', '').replace('px', '')), QFont.Weight.Bold))
+        filename_label.setStyleSheet(f"color: {TEXT_PRIMARY}; border: none; background: transparent; padding: 0;")
+        filename_label.setWordWrap(True)
+        layout.addWidget(filename_label)
+        
+        # Zeile 2: Meta (Box | VU | Datum | Archiviert)
+        box_emoji = self._BOX_EMOJIS.get(doc.box_type, '📁')
+        box_name = BOX_DISPLAY_NAMES.get(doc.box_type, doc.box_type)
+        box_color = BOX_COLORS.get(doc.box_type, TEXT_SECONDARY)
+        
+        meta_parts = [f'<span style="color:{box_color}; font-weight:600;">{box_emoji} {escape(box_name)}</span>']
+        if doc.vu_name:
+            meta_parts.append(escape(doc.vu_name))
+        if doc.created_at:
+            meta_parts.append(format_date_german(doc.created_at))
+        if doc.is_archived:
+            meta_parts.append(f'<span style="color:{WARNING};">{escape(ATLAS_INDEX_RESULT_ARCHIVED)}</span>')
+        
+        meta_label = QLabel(" &nbsp;|&nbsp; ".join(meta_parts))
+        meta_label.setTextFormat(Qt.TextFormat.RichText)
+        meta_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; border: none; background: transparent; padding: 0;")
+        layout.addWidget(meta_label)
+        
+        # Zeile 3: Text-Snippet mit Highlighting
+        snippet_html = self._build_snippet(self.result.text_preview, self.query)
+        if snippet_html:
+            snippet_label = QLabel(snippet_html)
+            snippet_label.setTextFormat(Qt.TextFormat.RichText)
+            snippet_label.setWordWrap(True)
+            snippet_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; border: none; background: transparent; padding: 2px 0 0 0;")
+            layout.addWidget(snippet_label)
+        else:
+            no_text_label = QLabel(f"<i>{escape(ATLAS_INDEX_NO_TEXT)}</i>")
+            no_text_label.setTextFormat(Qt.TextFormat.RichText)
+            no_text_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; border: none; background: transparent; padding: 2px 0 0 0;")
+            layout.addWidget(no_text_label)
+    
+    @staticmethod
+    def _build_snippet(text_preview: Optional[str], query: str) -> Optional[str]:
+        """
+        Baut ein kontextuelles Snippet mit dem ersten Treffer fett hervorgehoben.
+        
+        - Sucht case-insensitive nach dem vollen Suchbegriff, dann nach Einzelwoertern
+        - Zeigt ~100 Zeichen davor + Treffer + ~200 Zeichen danach
+        - Schneidet an Wortgrenzen ab
+        - HTML-escaped, Treffer-Wort in <b>
+        """
+        from html import escape
+        
+        if not text_preview or not text_preview.strip():
+            return None
+        
+        # Einzeiliger Text (Newlines -> Spaces)
+        clean_text = ' '.join(text_preview.split())
+        text_lower = clean_text.lower()
+        
+        # Treffer finden: Erst voller Suchbegriff, dann Einzelwoerter
+        match_term = None
+        pos = -1
+        
+        # 1. Versuch: Voller Suchbegriff
+        query_lower = query.lower().strip()
+        pos = text_lower.find(query_lower)
+        if pos >= 0:
+            match_term = query.strip()
+        
+        # 2. Versuch: Einzelne Woerter (laengstes zuerst, da aussagekraeftiger)
+        if pos < 0:
+            words = [w for w in query.split() if len(w) >= 3]
+            words.sort(key=len, reverse=True)
+            for word in words:
+                word_pos = text_lower.find(word.lower())
+                if word_pos >= 0:
+                    pos = word_pos
+                    match_term = word
+                    break
+        
+        if pos >= 0 and match_term:
+            match_len = len(match_term)
+            # Kontext um den Treffer: ~100 vor, ~200 nach
+            start = max(0, pos - 100)
+            end = min(len(clean_text), pos + match_len + 200)
+            
+            # An Wortgrenzen ausrichten (nicht mitten im Wort abschneiden)
+            if start > 0:
+                space_pos = clean_text.find(' ', start)
+                if space_pos != -1 and space_pos < pos:
+                    start = space_pos + 1
+            if end < len(clean_text):
+                space_pos = clean_text.rfind(' ', pos + match_len, end + 30)
+                if space_pos != -1:
+                    end = space_pos
+            
+            snippet = clean_text[start:end]
+            
+            # Prefix/Suffix Ellipsis
+            prefix = "..." if start > 0 else ""
+            suffix = "..." if end < len(clean_text) else ""
+            
+            # Treffer-Wort im Snippet hervorheben (nur erstes Vorkommen)
+            snippet_lower = snippet.lower()
+            match_pos = snippet_lower.find(match_term.lower())
+            if match_pos >= 0:
+                before = escape(snippet[:match_pos])
+                matched = escape(snippet[match_pos:match_pos + match_len])
+                after = escape(snippet[match_pos + match_len:])
+                return f'{prefix}{before}<b style="color:{TEXT_PRIMARY};">{matched}</b>{after}{suffix}'
+            
+            return f'{prefix}{escape(snippet)}{suffix}'
+        else:
+            # Kein Treffer im Preview (nur Dateiname-Match) -> erste ~200 Zeichen
+            snippet = clean_text[:200]
+            if len(clean_text) > 200:
+                # An Wortgrenze abschneiden
+                space_pos = snippet.rfind(' ', 150)
+                if space_pos != -1:
+                    snippet = snippet[:space_pos]
+                snippet += "..."
+            return escape(snippet)
+    
+    def mouseDoubleClickEvent(self, event):
+        """Doppelklick -> Vorschau oeffnen."""
+        self.double_clicked.emit(self.result)
+        event.accept()
+    
+    def mousePressEvent(self, event):
+        """Einfacher Klick."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.result)
+        event.accept()
+    
+    def contextMenuEvent(self, event):
+        """Rechtsklick -> Kontextmenue."""
+        self.context_menu_requested.emit(self.result, event.globalPos())
+        event.accept()
+
+
+class AtlasIndexWidget(QWidget):
+    """
+    ATLAS Index - Globale Volltextsuche ueber alle Dokumente.
+    
+    Virtuelle "Box" im Archiv, die server-seitige Suche mit FULLTEXT-Index
+    auf document_ai_data.extracted_text nutzt. Snippet-basierte Ergebnisdarstellung.
+    """
+    # Signale fuer Interaktion mit dem ArchiveBoxesView
+    preview_requested = Signal(object)       # Document -> Vorschau oeffnen
+    show_in_box_requested = Signal(object)   # Document -> Zur Box wechseln
+    download_requested = Signal(object)      # Document -> Download
+    
+    def __init__(self, api_client: APIClient, parent=None):
+        super().__init__(parent)
+        self.api_client = api_client
+        self._search_worker: Optional[SearchWorker] = None
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(400)
+        self._debounce_timer.timeout.connect(self._execute_search)
+        self._current_query = ""
+        self._result_cards: List[SearchResultCard] = []
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        from i18n.de import (
+            ATLAS_INDEX_TITLE, ATLAS_INDEX_SEARCH_PLACEHOLDER,
+            ATLAS_INDEX_LIVE_SEARCH, ATLAS_INDEX_ENTER_QUERY
+        )
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        
+        # Header: Titel
+        title = QLabel(f"🔎 {ATLAS_INDEX_TITLE}")
+        title.setFont(QFont(FONT_HEADLINE, 18, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {TEXT_PRIMARY};")
+        layout.addWidget(title)
+        
+        # Suchfeld
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText(ATLAS_INDEX_SEARCH_PLACEHOLDER)
+        self._search_input.setFont(QFont(FONT_BODY, 13))
+        self._search_input.setMinimumHeight(38)
+        self._search_input.setStyleSheet(f"""
+            QLineEdit {{
+                border: 2px solid {BORDER_DEFAULT};
+                border-radius: {RADIUS_MD};
+                padding: 6px 12px;
+                font-size: 13px;
+                background: {BG_PRIMARY};
+                color: {TEXT_PRIMARY};
+            }}
+            QLineEdit:focus {{
+                border-color: {PRIMARY_500};
+            }}
+        """)
+        self._search_input.textChanged.connect(self._on_text_changed)
+        self._search_input.returnPressed.connect(self._on_enter_pressed)
+        search_row.addWidget(self._search_input)
+        
+        # Such-Button (sichtbar wenn Live-Suche deaktiviert)
+        from i18n.de import ATLAS_INDEX_SEARCH_BUTTON
+        self._search_btn = QPushButton(ATLAS_INDEX_SEARCH_BUTTON)
+        self._search_btn.setMinimumHeight(38)
+        self._search_btn.setFont(QFont(FONT_BODY, 13))
+        self._search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._search_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT_500};
+                color: white;
+                border: none;
+                border-radius: {RADIUS_MD};
+                padding: 6px 20px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background: {PRIMARY_900};
+            }}
+            QPushButton:pressed {{
+                background: {PRIMARY_900};
+            }}
+        """)
+        self._search_btn.clicked.connect(self._on_enter_pressed)
+        self._search_btn.setVisible(False)  # Anfangs versteckt (Live-Suche ist an)
+        search_row.addWidget(self._search_btn)
+        
+        layout.addLayout(search_row)
+        
+        # Checkboxen: Suchoptionen
+        from i18n.de import ATLAS_INDEX_INCLUDE_RAW, ATLAS_INDEX_SUBSTRING_SEARCH
+        
+        options_row = QHBoxLayout()
+        options_row.setSpacing(16)
+        
+        self._live_search_cb = QCheckBox(ATLAS_INDEX_LIVE_SEARCH)
+        self._live_search_cb.setChecked(True)
+        self._live_search_cb.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self._live_search_cb.toggled.connect(self._on_live_search_toggled)
+        options_row.addWidget(self._live_search_cb)
+        
+        self._include_raw_cb = QCheckBox(ATLAS_INDEX_INCLUDE_RAW)
+        self._include_raw_cb.setChecked(False)
+        self._include_raw_cb.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self._include_raw_cb.toggled.connect(self._on_option_changed)
+        options_row.addWidget(self._include_raw_cb)
+        
+        self._substring_cb = QCheckBox(ATLAS_INDEX_SUBSTRING_SEARCH)
+        self._substring_cb.setChecked(False)
+        self._substring_cb.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        self._substring_cb.toggled.connect(self._on_option_changed)
+        options_row.addWidget(self._substring_cb)
+        
+        options_row.addStretch()
+        layout.addLayout(options_row)
+        
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {BORDER_DEFAULT};")
+        layout.addWidget(sep)
+        
+        # Ergebnis-Zaehler / Status
+        self._status_label = QLabel(ATLAS_INDEX_ENTER_QUERY)
+        self._status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 13px; font-weight: 500;")
+        layout.addWidget(self._status_label)
+        
+        # Ergebnis-Liste (scrollbar)
+        self._scroll_area = QScrollArea()
+        self._scroll_area.setWidgetResizable(True)
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                border: none;
+                background: transparent;
+            }}
+        """)
+        
+        self._results_container = QWidget()
+        self._results_layout = QVBoxLayout(self._results_container)
+        self._results_layout.setContentsMargins(0, 0, 8, 0)
+        self._results_layout.setSpacing(8)
+        self._results_layout.addStretch()
+        
+        self._scroll_area.setWidget(self._results_container)
+        layout.addWidget(self._scroll_area, 1)  # stretch=1 -> nimmt restlichen Platz
+    
+    def _on_text_changed(self, text: str):
+        """Reagiert auf Texteingabe im Suchfeld."""
+        from i18n.de import ATLAS_INDEX_MIN_CHARS, ATLAS_INDEX_ENTER_QUERY
+        
+        text = text.strip()
+        if len(text) < 3:
+            self._debounce_timer.stop()
+            if len(text) == 0:
+                self._status_label.setText(ATLAS_INDEX_ENTER_QUERY)
+            else:
+                self._status_label.setText(ATLAS_INDEX_MIN_CHARS)
+            self._clear_results()
+            return
+        
+        self._current_query = text
+        
+        if self._live_search_cb.isChecked():
+            # Live-Suche: Debounce 400ms
+            self._debounce_timer.start()
+        # Wenn Live-Suche deaktiviert: nichts tun (warten auf Enter)
+    
+    def _on_live_search_toggled(self, checked: bool):
+        """Live-Suche Checkbox geaendert -> Such-Button ein-/ausblenden."""
+        self._search_btn.setVisible(not checked)
+        if not checked:
+            self._debounce_timer.stop()
+    
+    def _on_enter_pressed(self):
+        """Enter oder Such-Button gedrueckt -> sofort suchen."""
+        text = self._search_input.text().strip()
+        if len(text) >= 3:
+            self._current_query = text
+            self._debounce_timer.stop()
+            self._execute_search()
+    
+    def _on_option_changed(self, checked: bool):
+        """Checkbox geaendert -> erneut suchen wenn Ergebnisse vorhanden."""
+        if self._current_query and len(self._current_query) >= 3:
+            self._execute_search()
+    
+    def _execute_search(self):
+        """Fuehrt die Suche per SearchWorker aus."""
+        from i18n.de import ATLAS_INDEX_SEARCHING
+        
+        query = self._current_query
+        if len(query) < 3:
+            return
+        
+        # Laufenden Worker abbrechen
+        if self._search_worker is not None and self._search_worker.isRunning():
+            self._search_worker.disconnect()
+            # Worker im Hintergrund auslaufen lassen
+            self._search_worker = None
+        
+        self._status_label.setText(ATLAS_INDEX_SEARCHING)
+        
+        self._search_worker = SearchWorker(
+            self.api_client, query,
+            include_raw=self._include_raw_cb.isChecked(),
+            substring=self._substring_cb.isChecked()
+        )
+        self._search_worker.finished.connect(self._on_search_finished)
+        self._search_worker.error.connect(self._on_search_error)
+        self._search_worker.start()
+    
+    def _on_search_finished(self, results: List[SearchResult]):
+        """Callback wenn Suchergebnisse vorliegen."""
+        from i18n.de import ATLAS_INDEX_RESULTS_COUNT, ATLAS_INDEX_NO_RESULTS
+        
+        self._clear_results()
+        
+        if not results:
+            self._status_label.setText(ATLAS_INDEX_NO_RESULTS)
+            return
+        
+        self._status_label.setText(ATLAS_INDEX_RESULTS_COUNT.format(count=len(results)))
+        
+        for result in results:
+            card = SearchResultCard(result, self._current_query)
+            card.double_clicked.connect(self._on_card_double_clicked)
+            card.context_menu_requested.connect(self._on_card_context_menu)
+            self._result_cards.append(card)
+            # Vor dem Stretch einfuegen
+            self._results_layout.insertWidget(self._results_layout.count() - 1, card)
+    
+    def _on_search_error(self, error_msg: str):
+        """Callback bei Suchfehler."""
+        self._clear_results()
+        self._status_label.setText(f"Fehler: {error_msg}")
+    
+    def _clear_results(self):
+        """Entfernt alle Ergebnis-Karten."""
+        for card in self._result_cards:
+            card.setParent(None)
+            card.deleteLater()
+        self._result_cards.clear()
+    
+    def _on_card_double_clicked(self, result: SearchResult):
+        """Doppelklick auf Ergebnis-Karte -> Vorschau."""
+        self.preview_requested.emit(result.document)
+    
+    def _on_card_context_menu(self, result: SearchResult, pos):
+        """Rechtsklick auf Ergebnis-Karte -> Kontextmenue."""
+        from i18n.de import (
+            ATLAS_INDEX_PREVIEW, ATLAS_INDEX_DOWNLOAD, ATLAS_INDEX_SHOW_IN_BOX
+        )
+        
+        menu = QMenu(self)
+        
+        preview_action = menu.addAction(f"👁 {ATLAS_INDEX_PREVIEW}")
+        download_action = menu.addAction(f"💾 {ATLAS_INDEX_DOWNLOAD}")
+        menu.addSeparator()
+        box_name = BOX_DISPLAY_NAMES.get(result.document.box_type, result.document.box_type)
+        show_in_box_action = menu.addAction(f"📂 {ATLAS_INDEX_SHOW_IN_BOX} ({box_name})")
+        
+        action = menu.exec(pos)
+        if action == preview_action:
+            self.preview_requested.emit(result.document)
+        elif action == download_action:
+            self.download_requested.emit(result.document)
+        elif action == show_in_box_action:
+            self.show_in_box_requested.emit(result.document)
+    
+    def focus_search(self):
+        """Setzt Fokus auf das Suchfeld."""
+        self._search_input.setFocus()
+        self._search_input.selectAll()
+    
+    def cleanup(self):
+        """Bereinigt laufende Worker."""
+        self._debounce_timer.stop()
+        if self._search_worker is not None and self._search_worker.isRunning():
+            self._search_worker.disconnect()
+            self._search_worker = None
 
 
 class BoxSidebar(QWidget):
@@ -1732,6 +2670,20 @@ class BoxSidebar(QWidget):
         self.tree.dragEnterEvent = self._tree_drag_enter
         self.tree.dragMoveEvent = self._tree_drag_move
         self.tree.dropEvent = self._tree_drop
+        
+        # ATLAS Index (ganz oben, virtuelle Box fuer Volltextsuche)
+        from i18n.de import ATLAS_INDEX_TITLE
+        self.atlas_index_item = QTreeWidgetItem(self.tree)
+        self.atlas_index_item.setText(0, f"🔎 {ATLAS_INDEX_TITLE}")
+        self.atlas_index_item.setData(0, Qt.ItemDataRole.UserRole, "atlas_index")
+        self.atlas_index_item.setFont(0, QFont("Segoe UI", 11, QFont.Weight.Bold))
+        self.atlas_index_item.setForeground(0, QBrush(QColor(PRIMARY_500)))
+        
+        # Separator nach ATLAS Index
+        atlas_separator = QTreeWidgetItem(self.tree)
+        atlas_separator.setText(0, "")
+        atlas_separator.setFlags(Qt.ItemFlag.NoItemFlags)
+        atlas_separator.setSizeHint(0, QSize(0, 8))
         
         # Verarbeitung (eingeklappt) - mit Pfeil-Indikator
         self.processing_item = QTreeWidgetItem(self.tree)
@@ -1926,6 +2878,41 @@ class BoxSidebar(QWidget):
         
         self._current_box = box_type
         self.box_selected.emit(box_type)
+    
+    def select_box(self, box_type: str):
+        """Programmatisch eine Box auswaehlen (fuer 'In Box anzeigen' aus ATLAS Index).
+        
+        Args:
+            box_type: Box-Key (z.B. 'sach', 'courtage_archived', '')
+        """
+        # Item im Baum finden
+        target_item = self._find_tree_item(box_type)
+        if target_item:
+            self.tree.setCurrentItem(target_item)
+            # Eltern-Item aufklappen falls noetig
+            parent = target_item.parent()
+            if parent:
+                parent.setExpanded(True)
+        
+        self._current_box = box_type
+        self.box_selected.emit(box_type)
+    
+    def _find_tree_item(self, box_type: str) -> Optional[QTreeWidgetItem]:
+        """Findet ein QTreeWidgetItem anhand des box_type UserRole-Wertes."""
+        def _search(item: QTreeWidgetItem) -> Optional[QTreeWidgetItem]:
+            if item.data(0, Qt.ItemDataRole.UserRole) == box_type:
+                return item
+            for i in range(item.childCount()):
+                result = _search(item.child(i))
+                if result:
+                    return result
+            return None
+        
+        for i in range(self.tree.topLevelItemCount()):
+            result = _search(self.tree.topLevelItem(i))
+            if result:
+                return result
+        return None
     
     def _show_box_context_menu(self, position):
         """Zeigt Kontextmenue fuer Rechtsklick auf eine Box."""
@@ -2306,6 +3293,7 @@ class ArchiveBoxesView(QWidget):
         
         # Flag ob erste Ladung erfolgt ist
         self._initial_load_done = False
+        self._missing_ai_data_checked = False
         
         # Fingerprint der aktuellen Dokumente (verhindert unnoetige Tabellen-Rebuilds)
         self._documents_fingerprint: str = ""
@@ -2443,6 +3431,11 @@ class ArchiveBoxesView(QWidget):
                     worker.wait(1000)
         
         self._active_workers.clear()
+        
+        # ATLAS Index Widget bereinigen
+        if hasattr(self, '_atlas_index_widget'):
+            self._atlas_index_widget.cleanup()
+        
         super().closeEvent(event)
     
     def resizeEvent(self, event):
@@ -2539,7 +3532,18 @@ class ArchiveBoxesView(QWidget):
         # Inner-Splitter-Proportionen (Tabelle : Historie = 3:1)
         self._inner_splitter.setSizes([800, 0])
         
-        splitter.addWidget(self._inner_splitter)
+        # ========== CONTENT STACK (Tabelle vs. ATLAS Index) ==========
+        self._content_stack = QStackedWidget()
+        self._content_stack.addWidget(self._inner_splitter)  # Page 0: Normale Archiv-Tabelle
+        
+        # ATLAS Index Widget (Page 1: Volltextsuche)
+        self._atlas_index_widget = AtlasIndexWidget(self.api_client)
+        self._atlas_index_widget.preview_requested.connect(self._on_atlas_preview)
+        self._atlas_index_widget.download_requested.connect(self._on_atlas_download)
+        self._atlas_index_widget.show_in_box_requested.connect(self._on_atlas_show_in_box)
+        self._content_stack.addWidget(self._atlas_index_widget)  # Page 1: ATLAS Index
+        
+        splitter.addWidget(self._content_stack)
         
         # Splitter-Proportionen (Sidebar : Hauptbereich = 1:4)
         splitter.setSizes([200, 800])
@@ -2667,7 +3671,7 @@ class ArchiveBoxesView(QWidget):
             font-size: {FONT_SIZE_CAPTION};
             font-family: {FONT_BODY};
         """)
-        self.credits_label.setToolTip("OpenRouter API Guthaben")
+        self.credits_label.setToolTip("KI-Provider Guthaben / Kosten")
         header_layout.addWidget(self.credits_label)
         
         header_layout.addSpacing(20)
@@ -2827,49 +3831,56 @@ class ArchiveBoxesView(QWidget):
         return filter_group
     
     def _create_table(self):
-        """Erstellt die Dokumenten-Tabelle mit Drag-Unterstützung."""
-        self.table = DraggableDocumentTable()
-        self.table.setColumnCount(8)
-        from i18n.de import DUPLICATE_COLUMN_HEADER
-        self.table.setHorizontalHeaderLabels([
-            DUPLICATE_COLUMN_HEADER, "Dateiname", "Box", "Quelle", "Art", "KI", "Datum", "Von"
-        ])
+        """Erstellt die Dokumenten-Tabelle mit Model/View-Architektur."""
+        # Model + Proxy erstellen
+        self._doc_model = DocumentTableModel(self)
+        self._proxy_model = DocumentSortFilterProxy(self)
+        self._proxy_model.setSourceModel(self._doc_model)
         
+        # View erstellen und Model setzen
+        self.table = DraggableDocumentView()
+        self.table.setModel(self._proxy_model)
+        
+        # Header konfigurieren
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)   # Duplikat-Icon (schmal)
-        header.resizeSection(0, 30)  # Feste Breite fuer Duplikat-Spalte
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Dateiname
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Box
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Quelle
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Art
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # KI (schmal)
-        header.resizeSection(5, 35)  # Feste Breite für KI-Spalte
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)  # Datum
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)  # Von
+        header.resizeSection(0, 30)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)   # Leere-Seiten-Icon (schmal)
+        header.resizeSection(1, 30)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Dateiname
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Box
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Quelle
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # Art
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # KI (schmal)
+        header.resizeSection(6, 35)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)  # Datum
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)  # Von
         
         # Sortieren aktivieren (Klick auf Header zum Sortieren)
         self.table.setSortingEnabled(True)
         # Standard: Nach Datum absteigend (neueste zuerst)
-        self.table.sortByColumn(6, Qt.SortOrder.DescendingOrder)
+        self._proxy_model.sort(DocumentTableModel.COL_DATE, Qt.SortOrder.DescendingOrder)
         
-        # Zeilenhöhe fest anpassen (nicht vom Nutzer änderbar)
+        # Zeilenhoehe fest anpassen (nicht vom Nutzer aenderbar)
         self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.table.verticalHeader().setVisible(False)
         
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.clicked.connect(self._on_table_clicked)
         self.table.doubleClicked.connect(self._on_double_click)
-        self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
+        self.table.selectionModel().selectionChanged.connect(self._on_table_selection_changed)
         
         # Fokus-Umrandung entfernen
         self.table.setStyleSheet("""
-            QTableWidget::item:focus {
+            QTableView::item:focus {
                 outline: none;
                 border: none;
             }
-            QTableWidget:focus {
+            QTableView:focus {
                 outline: none;
             }
         """)
@@ -2879,7 +3890,7 @@ class ArchiveBoxesView(QWidget):
         
         # Drag aktivieren (Drop wird von Sidebar gehandhabt)
         self.table.setDragEnabled(True)
-        self.table.setDragDropMode(QTableWidget.DragDropMode.DragOnly)
+        self.table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
     
     def _refresh_all(self, force_refresh: bool = True):
         """
@@ -2949,6 +3960,33 @@ class ArchiveBoxesView(QWidget):
         self.sidebar._smartscan_enabled = self._smartscan_enabled
         if hasattr(self, '_smartscan_btn'):
             self._smartscan_btn.setVisible(self._smartscan_enabled)
+        
+        # Einmalig: Dokumente ohne Text-Extraktion pruefen (Scan-Uploads etc.)
+        if not self._missing_ai_data_checked:
+            self._missing_ai_data_checked = True
+            self._check_missing_ai_data()
+    
+    def _check_missing_ai_data(self):
+        """Startet Hintergrund-Worker fuer Dokumente ohne Text-Extraktion.
+        
+        Wird einmal beim App-Start ausgefuehrt. Prueft ob Scan-Dokumente
+        oder andere serverseitig hochgeladene Dateien noch keinen
+        document_ai_data-Eintrag haben und holt die Text-Extraktion nach.
+        """
+        worker = MissingAiDataWorker(self.docs_api)
+        worker.finished.connect(self._on_missing_ai_data_finished)
+        self._active_workers.append(worker)
+        worker.start()
+        logger.debug("MissingAiDataWorker gestartet")
+    
+    def _on_missing_ai_data_finished(self, count: int):
+        """Callback wenn Hintergrund-Text-Extraktion fertig ist."""
+        if count > 0:
+            logger.info(f"Nachtraegliche Text-Extraktion: {count} Dokument(e) verarbeitet")
+            # Archiv aktualisieren, damit Duplikat-Markierungen erscheinen
+            self._refresh_all(force_refresh=True)
+        else:
+            logger.debug("Keine Dokumente ohne Text-Extraktion gefunden")
     
     def _load_avg_cost_stats(self):
         """Laedt die durchschnittlichen Verarbeitungskosten pro Dokument im Hintergrund."""
@@ -3007,12 +4045,32 @@ class ArchiveBoxesView(QWidget):
     
     def _on_credits_loaded(self, credits: Optional[dict]):
         """Callback wenn Credits geladen wurden (ACENCIA Design)."""
-        if credits:
+        if not credits:
+            self.credits_label.setText("")
+            self.credits_label.setToolTip("")
+            return
+        
+        provider = credits.get('provider', 'openrouter')
+        
+        if provider == 'openai':
+            usage = credits.get('total_usage')
+            if usage is not None:
+                self.credits_label.setStyleSheet(f"""
+                    color: {SUCCESS};
+                    font-size: {FONT_SIZE_CAPTION};
+                    font-family: {FONT_BODY};
+                """)
+                self.credits_label.setText(f"OpenAI: ${float(usage):.2f}")
+                period = credits.get('period', '')
+                self.credits_label.setToolTip(f"OpenAI Kosten: ${float(usage):.4f}\n{period}")
+            else:
+                self.credits_label.setText("OpenAI")
+                self.credits_label.setToolTip("")
+        else:
             balance = credits.get('balance', 0)
             total_credits = credits.get('total_credits', 0)
             total_usage = credits.get('total_usage', 0)
             
-            # Farbkodierung basierend auf verbleibendem Guthaben
             if balance < 1.0:
                 color = ERROR
             elif balance < 5.0:
@@ -3032,9 +4090,6 @@ class ArchiveBoxesView(QWidget):
                 f"Verbraucht: ${total_usage:.4f}\n"
                 f"Verbleibend: ${balance:.4f}"
             )
-        else:
-            self.credits_label.setText("")
-            self.credits_label.setToolTip("")
     
     def _refresh_stats(self, force_refresh: bool = True):
         """
@@ -3186,7 +4241,7 @@ class ArchiveBoxesView(QWidget):
         # Art-Filter anwenden (Dateityp)
         file_type = self.type_filter.currentData() if hasattr(self, 'type_filter') else None
         if file_type:
-            documents = [d for d in documents if self._get_file_type(d) == file_type]
+            documents = [d for d in documents if DocumentTableModel._get_file_type(d) == file_type]
         
         # KI-Filter anwenden
         ki_status = self.ki_filter.currentData() if hasattr(self, 'ki_filter') else None
@@ -3195,7 +4250,7 @@ class ArchiveBoxesView(QWidget):
         elif ki_status == "no":
             documents = [d for d in documents if not d.ai_renamed and d.is_pdf]
         
-        # Fingerprint pruefen: Tabelle nur neu bauen wenn sich Daten geaendert haben
+        # Fingerprint pruefen: Model nur aktualisieren wenn sich Daten geaendert haben
         new_fingerprint = self._compute_documents_fingerprint(documents)
         if not force_rebuild and new_fingerprint == self._documents_fingerprint:
             logger.debug("Auto-Refresh: Keine Aenderungen - Tabelle uebersprungen")
@@ -3203,7 +4258,8 @@ class ArchiveBoxesView(QWidget):
         
         self._documents_fingerprint = new_fingerprint
         self._documents = documents
-        self._populate_table()
+        # Model aktualisieren - virtualisiert, kein Item-Spam
+        self._doc_model.set_documents(documents)
         self.table.setEnabled(True)
         
         # Box-Name ermitteln (inkl. archivierte Boxen)
@@ -3223,174 +4279,14 @@ class ArchiveBoxesView(QWidget):
         self.status_label.setText(f"Fehler: {error}")
         self._toast_manager.show_error(f"Dokumente konnten nicht geladen werden:\n{error}")
     
-    def _populate_table(self):
-        """Fuellt die Tabelle mit Dokumenten.
-        
-        Performance-Optimierung: Blockiert Signale und UI-Updates waehrend
-        des Befuellens, um Qt Layout/Paint-Zyklen pro setItem() zu vermeiden.
-        """
-        from i18n.de import (DUPLICATE_ICON, DUPLICATE_TOOLTIP,
-                              DUPLICATE_TOOLTIP_NO_ORIGINAL)
-        
-        # Performance: UI-Updates und Signale blockieren waehrend des Befuellens
-        self.table.setUpdatesEnabled(False)
-        self.table.blockSignals(True)
-        
-        # Sortierung temporär deaktivieren während des Befüllens
-        self.table.setSortingEnabled(False)
-        self.table.setRowCount(len(self._documents))
-        
-        # Flags fuer nicht-editierbare Items
-        readonly_flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-        
-        # Performance: QFont-Objekt einmal erstellen statt N-mal in der Schleife
-        box_font = QFont("Open Sans", 9, QFont.Weight.Medium)
-        
-        for row, doc in enumerate(self._documents):
-            # Spalte 0: Duplikat-Icon
-            if doc.is_duplicate:
-                dup_item = QTableWidgetItem(DUPLICATE_ICON)
-                dup_item.setForeground(QColor("#f59e0b"))  # Amber/Orange fuer Warnung
-                if doc.duplicate_of_filename:
-                    dup_item.setToolTip(DUPLICATE_TOOLTIP.format(
-                        original=doc.duplicate_of_filename,
-                        id=doc.previous_version_id
-                    ))
-                else:
-                    dup_item.setToolTip(DUPLICATE_TOOLTIP_NO_ORIGINAL.format(
-                        version=doc.version
-                    ))
-            else:
-                dup_item = QTableWidgetItem("")
-            dup_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            dup_item.setFlags(readonly_flags)
-            self.table.setItem(row, 0, dup_item)
-            
-            # Spalte 1: Dateiname (nicht direkt editierbar - nur ueber Kontextmenue)
-            # Document-Referenz wird hier als UserRole gespeichert
-            name_item = QTableWidgetItem(doc.original_filename)
-            name_item.setData(Qt.ItemDataRole.UserRole, doc)
-            name_item.setFlags(readonly_flags)
-            self.table.setItem(row, 1, name_item)
-            
-            # Spalte 2: Box mit Farbkodierung
-            box_item = QTableWidgetItem(doc.box_type_display)
-            box_color = QColor(doc.box_color)
-            box_item.setForeground(QBrush(box_color))
-            box_item.setFont(box_font)
-            box_item.setFlags(readonly_flags)
-            self.table.setItem(row, 2, box_item)
-            
-            # Spalte 3: Quelle
-            source_item = QTableWidgetItem(doc.source_type_display)
-            if doc.source_type == 'bipro_auto':
-                source_item.setForeground(QColor(INFO))  # ACENCIA Hellblau
-            elif doc.source_type == 'scan':
-                source_item.setForeground(QColor("#9C27B0"))  # Lila fuer Scan
-            source_item.setFlags(readonly_flags)
-            self.table.setItem(row, 3, source_item)
-            
-            # Spalte 4: Art (Dateityp)
-            file_type = self._get_file_type(doc)
-            type_item = QTableWidgetItem(file_type)
-            # Farbkodierung nach Typ
-            if file_type == "GDV":
-                type_item.setForeground(QColor(SUCCESS))  # Grün
-            elif file_type == "PDF":
-                type_item.setForeground(QColor(ERROR))  # Rot (auffällig)
-            elif file_type == "XML":
-                type_item.setForeground(QColor(INFO))  # Hellblau
-            type_item.setFlags(readonly_flags)
-            self.table.setItem(row, 4, type_item)
-            
-            # Spalte 5: KI-Status (schlanke Spalte)
-            if doc.ai_renamed:
-                ai_item = QTableWidgetItem("✓")
-                ai_item.setForeground(QColor(SUCCESS))  # Grün
-                ai_item.setToolTip("KI-verarbeitet")
-            elif doc.ai_processing_error:
-                ai_item = QTableWidgetItem("✗")
-                ai_item.setForeground(QColor(ERROR))  # Rot
-                ai_item.setToolTip(doc.ai_processing_error)
-            elif doc.is_pdf:
-                ai_item = QTableWidgetItem("-")
-            else:
-                ai_item = QTableWidgetItem("")
-            ai_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            ai_item.setFlags(readonly_flags)
-            self.table.setItem(row, 5, ai_item)
-            
-            # Spalte 6: Datum (deutsches Format) - mit ISO-Format für korrekte Sortierung
-            date_item = SortableTableWidgetItem(
-                format_date_german(doc.created_at),
-                doc.created_at or ""  # ISO-Format für Sortierung
-            )
-            date_item.setFlags(readonly_flags)
-            self.table.setItem(row, 6, date_item)
-            
-            # Spalte 7: Hochgeladen von
-            by_item = QTableWidgetItem(doc.uploaded_by_name or "")
-            by_item.setFlags(readonly_flags)
-            self.table.setItem(row, 7, by_item)
-            
-            # Farbmarkierung: Hintergrundfarbe fuer alle Zellen der Zeile
-            if doc.display_color and doc.display_color in DOCUMENT_DISPLAY_COLORS:
-                bg_color = QColor(DOCUMENT_DISPLAY_COLORS[doc.display_color])
-                bg_brush = QBrush(bg_color)
-                for col in range(self.table.columnCount()):
-                    item = self.table.item(row, col)
-                    if item:
-                        item.setBackground(bg_brush)
-        
-        # Sortierung wieder aktivieren
-        self.table.setSortingEnabled(True)
-        
-        # Performance: UI-Updates und Signale wieder freigeben
-        self.table.blockSignals(False)
-        self.table.setUpdatesEnabled(True)
-    
     def _get_file_type(self, doc) -> str:
-        """Ermittelt den Dateityp für die Anzeige."""
-        # GDV hat Priorität
-        if doc.is_gdv:
-            return "GDV"
-        
-        # Dateiendung extrahieren
-        ext = doc.file_extension.lower() if hasattr(doc, 'file_extension') else ""
-        if not ext and '.' in doc.original_filename:
-            ext = '.' + doc.original_filename.rsplit('.', 1)[-1].lower()
-        
-        # Bekannte Typen
-        type_map = {
-            '.pdf': 'PDF',
-            '.xml': 'XML',
-            '.txt': 'TXT',
-            '.gdv': 'GDV',
-            '.dat': 'DAT',
-            '.vwb': 'VWB',
-            '.csv': 'CSV',
-            '.xlsx': 'Excel',
-            '.xls': 'Excel',
-            '.doc': 'Word',
-            '.docx': 'Word',
-            '.jpg': 'Bild',
-            '.jpeg': 'Bild',
-            '.png': 'Bild',
-            '.gif': 'Bild',
-            '.zip': 'ZIP',
-        }
-        
-        return type_map.get(ext, ext.upper().lstrip('.') if ext else '?')
+        """Ermittelt den Dateityp fuer die Anzeige (delegiert an Model)."""
+        return DocumentTableModel._get_file_type(doc)
     
     def _filter_table(self):
-        """Filtert die Tabelle nach Suchbegriff."""
-        search_text = self.search_input.text().lower()
-        
-        for row in range(self.table.rowCount()):
-            filename_item = self.table.item(row, 1)
-            if filename_item:
-                matches = search_text in filename_item.text().lower()
-                self.table.setRowHidden(row, not matches)
+        """Filtert die Tabelle nach Suchbegriff (via Proxy-Model)."""
+        search_text = self.search_input.text()
+        self._proxy_model.set_search_text(search_text)
     
     def _apply_filter(self):
         """Wendet Filter an (aus Cache, kein Server-Request)."""
@@ -3428,14 +4324,23 @@ class ArchiveBoxesView(QWidget):
         self.type_filter.blockSignals(False)
         self.ki_filter.blockSignals(False)
         
-        # Sortierung auf Standard zurücksetzen (Datum absteigend, Spalte 6)
-        self.table.sortByColumn(6, Qt.SortOrder.DescendingOrder)
+        # Sortierung auf Standard zuruecksetzen (Datum absteigend, Spalte 6)
+        self._proxy_model.sort(DocumentTableModel.COL_DATE, Qt.SortOrder.DescendingOrder)
         
         # Tabelle neu laden
         self._refresh_documents(force_refresh=False)
     
     def _on_box_selected(self, box_type: str):
         """Handler wenn eine Box in der Sidebar ausgewaehlt wird."""
+        # ATLAS Index: Zur Such-View wechseln
+        if box_type == "atlas_index":
+            self._content_stack.setCurrentIndex(1)  # AtlasIndexWidget
+            self._atlas_index_widget.focus_search()
+            return
+        
+        # Normale Box: Zur Archiv-Tabelle wechseln
+        self._content_stack.setCurrentIndex(0)
+        
         self._current_box = box_type
         
         # Titel aktualisieren
@@ -3463,6 +4368,49 @@ class ArchiveBoxesView(QWidget):
             # Dokumente aus Cache laden (kein Server-Request!)
             logger.debug(f"Box '{box_type}' aus Cache (instant)")
             self._refresh_documents(force_refresh=False)
+    
+    # ========================================
+    # ATLAS Index Handler
+    # ========================================
+    
+    def _on_atlas_preview(self, document: Document):
+        """ATLAS Index: Vorschau fuer ein Dokument oeffnen."""
+        self._preview_document(document)
+    
+    def _on_atlas_download(self, document: Document):
+        """ATLAS Index: Dokument herunterladen."""
+        self._download_document(document)
+    
+    def _on_atlas_show_in_box(self, document: Document):
+        """ATLAS Index: Zur echten Box des Dokuments wechseln und selektieren."""
+        target_box = document.box_type or ''
+        # Wenn archiviert, zur archivierten Sub-Box wechseln
+        if document.is_archived and target_box:
+            target_box = f"{target_box}_archived"
+        
+        # Zur Box wechseln (triggert _on_box_selected -> laedt Dokumente)
+        self.sidebar.select_box(target_box)
+        
+        # Nach kurzer Verzoegerung Dokument selektieren (Tabelle muss erst geladen sein)
+        self._pending_select_doc_id = document.id
+        QTimer.singleShot(500, self._select_pending_document)
+    
+    def _select_pending_document(self):
+        """Selektiert ein Dokument in der Tabelle nach Box-Wechsel (fuer 'In Box anzeigen')."""
+        doc_id = getattr(self, '_pending_select_doc_id', None)
+        if doc_id is None:
+            return
+        self._pending_select_doc_id = None
+        
+        # Dokument in der Tabelle finden und selektieren
+        for row in range(self._proxy_model.rowCount()):
+            proxy_index = self._proxy_model.index(row, 0)
+            source_index = self._proxy_model.mapToSource(proxy_index)
+            doc = self._doc_model.get_document(source_index.row())
+            if doc and doc.id == doc_id:
+                self.table.selectRow(row)
+                self.table.scrollTo(proxy_index)
+                break
     
     def _should_refresh_box(self, box_type: str) -> bool:
         """
@@ -3499,8 +4447,8 @@ class ArchiveBoxesView(QWidget):
     
     def _show_context_menu(self, position):
         """Zeigt das Kontextmenue."""
-        item = self.table.itemAt(position)
-        if not item:
+        index = self.table.indexAt(position)
+        if not index.isValid():
             return
         
         selected_docs = self._get_selected_documents()
@@ -3545,6 +4493,36 @@ class ArchiveBoxesView(QWidget):
             rename_action = QAction(RENAME, self)
             rename_action.triggered.connect(lambda: self._rename_document(selected_docs[0]))
             menu.addAction(rename_action)
+        
+        # ===== Duplikat-Navigation (nur bei Einzelauswahl + Duplikat) =====
+        if len(selected_docs) == 1:
+            doc = selected_docs[0]
+            if doc.is_duplicate or doc.is_content_duplicate:
+                from i18n.de import DUPLICATE_JUMP_TO, DUPLICATE_COMPARE
+                menu.addSeparator()
+                
+                # Gegenstueck-ID und Metadaten ermitteln
+                if doc.is_duplicate and doc.previous_version_id:
+                    _cpart_id = doc.previous_version_id
+                    _cpart_box = doc.duplicate_of_box_type or ''
+                    _cpart_archived = doc.duplicate_of_is_archived
+                elif doc.is_content_duplicate and doc.content_duplicate_of_id:
+                    _cpart_id = doc.content_duplicate_of_id
+                    _cpart_box = doc.content_duplicate_of_box_type or ''
+                    _cpart_archived = doc.content_duplicate_of_is_archived
+                else:
+                    _cpart_id = None
+                
+                if _cpart_id:
+                    jump_action = QAction(DUPLICATE_JUMP_TO, self)
+                    jump_action.triggered.connect(
+                        lambda checked, cid=_cpart_id, cb=_cpart_box, ca=_cpart_archived:
+                            self._jump_to_counterpart(cid, cb, ca))
+                    menu.addAction(jump_action)
+                
+                compare_action = QAction(DUPLICATE_COMPARE, self)
+                compare_action.triggered.connect(lambda: self._open_duplicate_compare(doc))
+                menu.addAction(compare_action)
         
         menu.addSeparator()
         
@@ -3742,12 +4720,67 @@ class ArchiveBoxesView(QWidget):
         
         menu.exec(self.table.viewport().mapToGlobal(position))
     
-    def _on_double_click(self, index):
+    def _on_table_clicked(self, proxy_index):
+        """Handler fuer Einfach-Klick: Bei COL_DUPLICATE zum Gegenstueck springen."""
+        if not proxy_index.isValid():
+            return
+        col = proxy_index.column()
+        if col != DocumentTableModel.COL_DUPLICATE:
+            return
+        source_index = self._proxy_model.mapToSource(proxy_index)
+        doc = self._doc_model.get_document(source_index.row())
+        if not doc:
+            return
+        if doc.is_duplicate and doc.previous_version_id:
+            self._jump_to_counterpart(
+                doc.previous_version_id,
+                doc.duplicate_of_box_type or '',
+                doc.duplicate_of_is_archived)
+        elif doc.is_content_duplicate and doc.content_duplicate_of_id:
+            self._jump_to_counterpart(
+                doc.content_duplicate_of_id,
+                doc.content_duplicate_of_box_type or '',
+                doc.content_duplicate_of_is_archived)
+    
+    def _jump_to_counterpart(self, doc_id: int, box_type: str, is_archived: bool):
+        """Springt zum Gegenstueck-Dokument in seiner Box."""
+        target_box = box_type or ''
+        if is_archived and target_box:
+            target_box = f"{target_box}_archived"
+        self.sidebar.select_box(target_box)
+        self._pending_select_doc_id = doc_id
+        QTimer.singleShot(500, self._select_pending_document)
+    
+    def _open_duplicate_compare(self, doc: Document):
+        """Oeffnet den Duplikat-Vergleichsdialog."""
+        counterpart_id = doc.previous_version_id if doc.is_duplicate else doc.content_duplicate_of_id
+        if not counterpart_id:
+            return
+        # Gegenstueck-Dokument laden
+        counterpart = self.docs_api.get_document(counterpart_id)
+        if not counterpart:
+            from ui.toast import ToastManager
+            from i18n.de import DUPLICATE_COMPARE_NOT_FOUND
+            toast = ToastManager.instance()
+            if toast:
+                toast.show_warning(DUPLICATE_COMPARE_NOT_FOUND)
+            return
+        from ui.archive_view import DuplicateCompareDialog
+        dialog = DuplicateCompareDialog(
+            doc, counterpart, self.docs_api,
+            preview_cache_dir=getattr(self, '_preview_cache_dir', None),
+            parent=self)
+        dialog.documents_changed.connect(self._refresh_all)
+        dialog.exec()
+    
+    def _on_double_click(self, proxy_index):
         """Handler fuer Doppelklick."""
-        row = index.row()
-        doc_item = self.table.item(row, 1)
-        if doc_item:
-            doc: Document = doc_item.data(Qt.ItemDataRole.UserRole)
+        if not proxy_index.isValid():
+            return
+        # Proxy-Index auf Source-Model mappen
+        source_index = self._proxy_model.mapToSource(proxy_index)
+        doc = self._doc_model.get_document(source_index.row())
+        if doc:
             if doc.is_gdv:
                 self._open_in_gdv_editor(doc)
             elif self._is_pdf(doc):
@@ -3762,15 +4795,15 @@ class ArchiveBoxesView(QWidget):
         selected_docs = []
         selected_rows = set()
         
-        for item in self.table.selectedItems():
-            selected_rows.add(item.row())
+        for proxy_index in self.table.selectedIndexes():
+            selected_rows.add(proxy_index.row())
         
-        for row in selected_rows:
-            doc_item = self.table.item(row, 1)
-            if doc_item:
-                doc = doc_item.data(Qt.ItemDataRole.UserRole)
-                if doc:
-                    selected_docs.append(doc)
+        for proxy_row in selected_rows:
+            proxy_index = self._proxy_model.index(proxy_row, DocumentTableModel.COL_FILENAME)
+            source_index = self._proxy_model.mapToSource(proxy_index)
+            doc = self._doc_model.get_document(source_index.row())
+            if doc:
+                selected_docs.append(doc)
         
         return selected_docs
     
@@ -3800,10 +4833,11 @@ class ArchiveBoxesView(QWidget):
             if len(selected) == 1:
                 self._load_document_history(selected[0])
     
-    def _on_table_selection_changed(self):
+    def _on_table_selection_changed(self, *args):
         """
         Wird aufgerufen wenn sich die Tabellenauswahl aendert.
         Laedt die Historie fuer das ausgewaehlte Dokument (mit Debounce).
+        Akzeptiert optionale args von selectionModel().selectionChanged(selected, deselected).
         """
         # Toggle muss aktiv sein UND Berechtigung vorhanden
         if not self._history_enabled or not self._history_toggle_btn.isChecked():
@@ -3978,23 +5012,8 @@ class ArchiveBoxesView(QWidget):
     
     def _update_row_colors(self, doc_ids: set, color: Optional[str]):
         """Aktualisiert nur die Hintergrundfarbe der betroffenen Zeilen (kein Full-Rebuild)."""
-        from ui.styles.tokens import DOCUMENT_DISPLAY_COLORS
-        
-        if color and color in DOCUMENT_DISPLAY_COLORS:
-            bg_brush = QBrush(QColor(DOCUMENT_DISPLAY_COLORS[color]))
-        else:
-            bg_brush = QBrush()  # Transparent / Default
-        
-        for row in range(self.table.rowCount()):
-            name_item = self.table.item(row, 1)
-            if not name_item:
-                continue
-            doc = name_item.data(Qt.ItemDataRole.UserRole)
-            if doc and doc.id in doc_ids:
-                for col in range(self.table.columnCount()):
-                    item = self.table.item(row, col)
-                    if item:
-                        item.setBackground(bg_brush)
+        # Model aktualisiert intern die Document-Objekte und emittiert dataChanged
+        self._doc_model.update_colors(doc_ids, color)
     
     def _on_color_error(self, error_msg: str):
         """Callback bei Fehler der Farbmarkierung."""
@@ -4190,7 +5209,8 @@ class ArchiveBoxesView(QWidget):
         self._preview_kind = preview_kind
         
         # Schnell-Check: Datei bereits im Cache?
-        cached_path = os.path.join(self._preview_cache_dir, f"{doc.id}_{doc.original_filename}")
+        from api.documents import safe_cache_filename
+        cached_path = os.path.join(self._preview_cache_dir, safe_cache_filename(doc.id, doc.original_filename))
         if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
             logger.info(f"Vorschau instant aus Cache: {doc.original_filename}")
             self._on_preview_download_finished(cached_path)
@@ -5158,6 +6178,18 @@ class ArchiveBoxesView(QWidget):
         except Exception as e:
             logger.warning(f"Auto-Refresh fortsetzen fehlgeschlagen: {e}")
         
+        # Vorschau-Cache fuer alle verarbeiteten Dokumente invalidieren
+        # (Dokumenten-Regeln koennen PDFs veraendern, z.B. leere Seiten entfernen)
+        if hasattr(self, '_preview_cache_dir') and self._preview_cache_dir:
+            import glob as _glob
+            for result in batch_result.results:
+                pattern = os.path.join(self._preview_cache_dir, f"{result.document_id}_*")
+                for cached_file in _glob.glob(pattern):
+                    try:
+                        os.unlink(cached_file)
+                    except Exception:
+                        pass
+        
         # Fazit im Overlay anzeigen (kein Popup!)
         if hasattr(self, '_processing_overlay'):
             self._processing_overlay.show_completion(batch_result, auto_close_seconds=10)
@@ -5172,8 +6204,12 @@ class ArchiveBoxesView(QWidget):
             except Exception as e:
                 logger.warning(f"Batch-Logging fehlgeschlagen: {e}")
         
-        # Verzoegerten Kosten-Check starten (90 Sekunden warten)
-        if batch_result.credits_before is not None and history_entry_id:
+        # Verzoegerten Kosten-Check starten
+        # Bei OpenAI: Akkumulierte Kosten vorhanden, kuerzere Wartezeit
+        # Bei OpenRouter: Balance-Diff braucht 90s Verzoegerung
+        has_accumulated = batch_result.total_cost_usd and batch_result.total_cost_usd > 0
+        has_credits_before = batch_result.credits_before is not None
+        if history_entry_id and (has_accumulated or has_credits_before):
             self._start_delayed_cost_check(batch_result, history_entry_id)
     
     def _start_delayed_cost_check(self, batch_result, history_entry_id: int):
@@ -5186,9 +6222,15 @@ class ArchiveBoxesView(QWidget):
         """
         from i18n import de as texts
         
-        delay_seconds = 90  # 90 Sekunden Verzoegerung (OpenRouter braucht laenger)
+        has_accumulated = batch_result.total_cost_usd and batch_result.total_cost_usd > 0
+        if has_accumulated and batch_result.provider == 'openai':
+            delay_seconds = 5
+        elif has_accumulated:
+            delay_seconds = 30
+        else:
+            delay_seconds = 90
         
-        logger.info(f"Starte verzoegerten Kosten-Check in {delay_seconds}s")
+        logger.info(f"Starte verzoegerten Kosten-Check in {delay_seconds}s (Provider: {batch_result.provider})")
         
         self._delayed_cost_worker = DelayedCostWorker(
             api_client=self.api_client,
@@ -5214,21 +6256,31 @@ class ArchiveBoxesView(QWidget):
     
     def _on_delayed_cost_finished(self, cost_result):
         """Callback wenn verzoegerter Kosten-Check fertig."""
-        from i18n import de as texts
+        from ui.toast import ToastManager
         
         if cost_result:
             total_cost = cost_result.get('total_cost_usd', 0)
             cost_per_doc = cost_result.get('cost_per_document_usd', 0)
             docs = cost_result.get('successful_documents', 0)
+            provider = cost_result.get('provider', 'unknown')
+            source = cost_result.get('cost_source', 'unknown')
             
             logger.info(
-                f"Verzoegerte Kosten: ${total_cost:.6f} USD "
+                f"Kosten ({provider}, {source}): ${total_cost:.6f} USD "
                 f"(${cost_per_doc:.8f}/Dok, {docs} Dokumente)"
             )
+            
+            if total_cost > 0:
+                try:
+                    ToastManager.instance().show_info(
+                        f"KI-Kosten: ${total_cost:.4f} USD ({docs} Dok., ${cost_per_doc:.6f}/Dok)"
+                    )
+                except Exception:
+                    pass
         else:
             logger.warning("Verzoegerter Kosten-Check: Kein Ergebnis")
         
-        # Credits aktualisieren (zeigt jetzt das aktuelle Guthaben)
+        # Credits aktualisieren
         self._refresh_credits()
     
     def _on_processing_error(self, error: str):

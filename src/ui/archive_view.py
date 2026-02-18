@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QMenu, QProgressDialog, QFrame,
     QSplitter, QGroupBox, QFormLayout, QDialog, QToolBar, QApplication
 )
-from PySide6.QtCore import Qt, Signal, QThread, QUrl
+from PySide6.QtCore import Qt, Signal, QThread, QUrl, QTimer
 from PySide6.QtGui import QAction, QFont, QColor
 
 logger = logging.getLogger(__name__)
@@ -46,11 +46,19 @@ from api.documents import DocumentsAPI, Document
 
 
 def format_date_german(date_str: str) -> str:
-    """Konvertiert ISO-Datum ins deutsche Format (DD.MM.YYYY)."""
+    """Konvertiert ISO-Datum/Datetime ins deutsche Format (DD.MM.YYYY).
+    
+    Unterstuetzt: 'YYYY-MM-DD', 'YYYY-MM-DDTHH:MM:SS', 'YYYY-MM-DD HH:MM:SS'
+    """
     if not date_str:
         return ""
     try:
-        date_part = date_str.split('T')[0] if 'T' in date_str else date_str
+        # Zuerst nur den Datumsteil extrahieren (vor T oder Leerzeichen)
+        date_part = date_str.strip()
+        if 'T' in date_part:
+            date_part = date_part.split('T')[0]
+        elif ' ' in date_part:
+            date_part = date_part.split(' ')[0]
         parts = date_part.split('-')
         if len(parts) == 3:
             year, month, day = parts
@@ -230,6 +238,38 @@ class PDFSaveWorker(QThread):
             self.error.emit(str(e))
 
 
+class PDFRefreshWorker(QThread):
+    """Aktualisiert Leere-Seiten-Daten und Textinhalt nach PDF-Bearbeitung."""
+    finished = Signal(bool)
+    
+    def __init__(self, docs_api, doc_id: int, pdf_path: str, parent=None):
+        super().__init__(parent)
+        self.docs_api = docs_api
+        self.doc_id = doc_id
+        self.pdf_path = pdf_path
+    
+    def run(self):
+        try:
+            from services.empty_page_detector import get_empty_pages
+            empty_indices, total_pages = get_empty_pages(self.pdf_path)
+            if total_pages > 0:
+                self.docs_api.client.put(
+                    f'/documents/{self.doc_id}',
+                    json_data={
+                        'empty_page_count': len(empty_indices),
+                        'total_page_count': total_pages
+                    }
+                )
+            
+            from services.early_text_extract import extract_and_save_text
+            extract_and_save_text(self.docs_api, self.doc_id, self.pdf_path)
+            
+            self.finished.emit(True)
+        except Exception as e:
+            logger.error(f"PDF-Refresh nach Bearbeitung fehlgeschlagen fuer Dokument {self.doc_id}: {e}")
+            self.finished.emit(False)
+
+
 class PDFViewerDialog(QDialog):
     """
     Dialog zur PDF-Vorschau und -Bearbeitung.
@@ -257,6 +297,7 @@ class PDFViewerDialog(QDialog):
         self._fitz_doc = None
         self._change_count = 0
         self._save_worker = None
+        self._refresh_data_worker = None
         self._temp_pdf_path = None
         self.setWindowTitle(title)
         self.setMinimumSize(900, 700)
@@ -420,9 +461,11 @@ class PDFViewerDialog(QDialog):
                 from PySide6.QtWidgets import QSplitter, QListWidget, QListWidgetItem
                 splitter = QSplitter(Qt.Orientation.Horizontal)
                 
-                # Thumbnail-Liste
+                # Thumbnail-Liste mit Mehrfachauswahl (Strg+Klick, Shift+Klick, Strg+A)
                 self._thumbnail_list = QListWidget()
+                from PySide6.QtWidgets import QAbstractItemView
                 from PySide6.QtCore import QSize
+                self._thumbnail_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
                 self._thumbnail_list.setIconSize(QSize(120, 160))
                 self._thumbnail_list.setMinimumWidth(145)
                 self._thumbnail_list.setMaximumWidth(160)
@@ -443,6 +486,7 @@ class PDFViewerDialog(QDialog):
                         border: 2px solid #3b82f6;
                     }
                 """)
+                self._thumbnail_list.itemSelectionChanged.connect(self._on_thumbnail_selection_changed)
                 splitter.addWidget(self._thumbnail_list)
                 
                 # QPdfView
@@ -510,7 +554,15 @@ class PDFViewerDialog(QDialog):
         """Laedt das PDF mit PyMuPDF fuer Bearbeitungsoperationen."""
         try:
             import fitz
-            self._fitz_doc = fitz.open(self.pdf_path)
+            try:
+                self._fitz_doc = fitz.open(self.pdf_path)
+            except Exception:
+                # Fallback: Datei als Bytes laden (Workaround fuer MuPDF-Probleme
+                # mit Sonderzeichen wie '...' in Windows-Pfaden)
+                logger.warning(f"PyMuPDF Pfad-Oeffnung fehlgeschlagen, versuche Bytes-Fallback: {self.pdf_path}")
+                with open(self.pdf_path, 'rb') as f:
+                    data = f.read()
+                self._fitz_doc = fitz.open(stream=data, filetype="pdf")
             self._refresh_thumbnails()
         except Exception as e:
             logger.error(f"PyMuPDF konnte PDF nicht laden: {e}")
@@ -521,7 +573,11 @@ class PDFViewerDialog(QDialog):
             self._status_label.setVisible(True)
     
     def _refresh_thumbnails(self):
-        """Rendert alle Seiten als Thumbnails in die Sidebar."""
+        """Rendert alle Seiten als Thumbnails in die Sidebar.
+        
+        Signale werden waehrend des Rebuilds blockiert, damit der Caller
+        die Auswahl selbst steuern kann (Einzel- oder Mehrfachauswahl).
+        """
         if not self._fitz_doc or not hasattr(self, '_thumbnail_list'):
             return
         
@@ -529,6 +585,7 @@ class PDFViewerDialog(QDialog):
         from PySide6.QtCore import QSize
         from PySide6.QtWidgets import QListWidgetItem
         
+        self._thumbnail_list.blockSignals(True)
         self._thumbnail_list.clear()
         
         for i in range(len(self._fitz_doc)):
@@ -549,19 +606,37 @@ class PDFViewerDialog(QDialog):
             self._thumbnail_list.addItem(item)
         
         self._thumbnail_list.setIconSize(QSize(120, 160))
+        self._thumbnail_list.blockSignals(False)
         
-        # Erste Seite auswaehlen
+        # Erste Seite auswaehlen (wenn kein externer Caller die Auswahl uebernimmt)
         if self._thumbnail_list.count() > 0:
             self._thumbnail_list.setCurrentRow(0)
     
-    def _get_selected_page_index(self) -> int:
-        """Gibt den Index der aktuell ausgewaehlten Seite zurueck (-1 wenn keine)."""
+    def _get_selected_page_indices(self) -> list:
+        """Gibt die Indizes aller ausgewaehlten Seiten zurueck (sortiert)."""
         if not hasattr(self, '_thumbnail_list'):
-            return -1
-        current = self._thumbnail_list.currentItem()
-        if current:
-            return current.data(Qt.ItemDataRole.UserRole)
-        return -1
+            return []
+        indices = []
+        for item in self._thumbnail_list.selectedItems():
+            idx = item.data(Qt.ItemDataRole.UserRole)
+            if idx is not None:
+                indices.append(idx)
+        return sorted(indices)
+    
+    def _on_thumbnail_selection_changed(self):
+        """Scrollt die PDF-Ansicht zur zuletzt ausgewaehlten Seite."""
+        if not hasattr(self, 'pdf_view'):
+            return
+        indices = self._get_selected_page_indices()
+        if not indices:
+            return
+        try:
+            from PySide6.QtCore import QPointF
+            navigator = self.pdf_view.pageNavigator()
+            navigator.jump(indices[-1], QPointF(0, 0))
+        except Exception as e:
+            logger.debug(f"Seiten-Navigation fehlgeschlagen: {e}")
+        self._update_edit_status()
     
     def _rotate_cw(self):
         """Dreht die ausgewaehlte Seite 90 Grad im Uhrzeigersinn."""
@@ -572,43 +647,51 @@ class PDFViewerDialog(QDialog):
         self._rotate_page(-90)
     
     def _rotate_page(self, degrees: int):
-        """Dreht die ausgewaehlte Seite um die angegebenen Grad."""
+        """Dreht alle ausgewaehlten Seiten um die angegebenen Grad."""
         if not self._fitz_doc:
             return
         
-        page_idx = self._get_selected_page_index()
-        if page_idx < 0:
+        page_indices = self._get_selected_page_indices()
+        if not page_indices:
             return
         
-        page = self._fitz_doc[page_idx]
-        page.set_rotation((page.rotation + degrees) % 360)
-        self._change_count += 1
-        self._apply_changes_and_refresh(page_idx)
+        for idx in page_indices:
+            page = self._fitz_doc[idx]
+            page.set_rotation((page.rotation + degrees) % 360)
+        
+        self._change_count += len(page_indices)
+        self._apply_changes_and_refresh(page_indices[0], selected_pages=page_indices)
     
     def _delete_page(self):
-        """Loescht die ausgewaehlte Seite nach Bestaetigung."""
+        """Loescht alle ausgewaehlten Seiten nach Bestaetigung."""
         if not self._fitz_doc:
             return
         
-        from i18n.de import PDF_EDIT_DELETE_CONFIRM, PDF_EDIT_LAST_PAGE
+        from i18n.de import (PDF_EDIT_DELETE_CONFIRM, PDF_EDIT_DELETE_MULTI_CONFIRM,
+                              PDF_EDIT_MIN_ONE_PAGE)
         
-        page_idx = self._get_selected_page_index()
-        if page_idx < 0:
+        page_indices = self._get_selected_page_indices()
+        if not page_indices:
             return
         
-        # Letzte Seite kann nicht geloescht werden
-        if len(self._fitz_doc) <= 1:
-            self._status_label.setText(PDF_EDIT_LAST_PAGE)
+        # Pruefung: Mindestens eine Seite muss verbleiben
+        if len(page_indices) >= len(self._fitz_doc):
+            self._status_label.setText(PDF_EDIT_MIN_ONE_PAGE)
             self._status_label.setStyleSheet(
                 "color: #f59e0b; background: #fffbeb; padding: 6px 12px; border-radius: 4px;"
             )
             self._status_label.setVisible(True)
             return
         
-        # Bestaetigung
+        # Bestaetigung (Einzel- vs. Mehrfachauswahl)
+        if len(page_indices) == 1:
+            confirm_msg = PDF_EDIT_DELETE_CONFIRM.format(page=page_indices[0] + 1)
+        else:
+            confirm_msg = PDF_EDIT_DELETE_MULTI_CONFIRM.format(count=len(page_indices))
+        
         reply = QMessageBox.question(
             self, "Seite loeschen",
-            PDF_EDIT_DELETE_CONFIRM.format(page=page_idx + 1),
+            confirm_msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -616,15 +699,25 @@ class PDFViewerDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
         
-        self._fitz_doc.delete_page(page_idx)
-        self._change_count += 1
+        # Loeschen in umgekehrter Reihenfolge (hoechster Index zuerst),
+        # damit sich die Indizes der noch zu loeschenden Seiten nicht verschieben.
+        for idx in sorted(page_indices, reverse=True):
+            self._fitz_doc.delete_page(idx)
         
-        # Neue Auswahl bestimmen
-        new_idx = min(page_idx, len(self._fitz_doc) - 1)
+        self._change_count += len(page_indices)
+        
+        # Neue Auswahl: erste verbleibende Seite nach der ersten geloeschten
+        new_idx = min(page_indices[0], len(self._fitz_doc) - 1)
         self._apply_changes_and_refresh(new_idx)
     
-    def _apply_changes_and_refresh(self, select_page: int = 0):
-        """Speichert das geaenderte PDF temporaer und aktualisiert die Anzeige."""
+    def _apply_changes_and_refresh(self, select_page: int = 0,
+                                    selected_pages: list = None):
+        """Speichert das geaenderte PDF temporaer und aktualisiert die Anzeige.
+        
+        Args:
+            select_page: Einzelne Seite die ausgewaehlt werden soll (Fallback)
+            selected_pages: Liste von Seiten die nach Refresh selektiert werden sollen
+        """
         if not self._fitz_doc:
             return
         
@@ -666,9 +759,20 @@ class PDFViewerDialog(QDialog):
         # Thumbnails aktualisieren
         self._refresh_thumbnails()
         
-        # Seite auswaehlen
-        if hasattr(self, '_thumbnail_list') and select_page < self._thumbnail_list.count():
-            self._thumbnail_list.setCurrentRow(select_page)
+        # Seiten-Auswahl wiederherstellen
+        if hasattr(self, '_thumbnail_list'):
+            page_count = self._thumbnail_list.count()
+            if selected_pages and len(selected_pages) > 1:
+                # Mehrfachauswahl wiederherstellen
+                self._thumbnail_list.blockSignals(True)
+                self._thumbnail_list.clearSelection()
+                for idx in selected_pages:
+                    if idx < page_count:
+                        self._thumbnail_list.item(idx).setSelected(True)
+                self._thumbnail_list.blockSignals(False)
+                self._on_thumbnail_selection_changed()
+            elif select_page < page_count:
+                self._thumbnail_list.setCurrentRow(select_page)
         
         # UI aktualisieren
         self._update_edit_status()
@@ -679,14 +783,19 @@ class PDFViewerDialog(QDialog):
         if not hasattr(self, '_edit_status_label'):
             return
         
-        from i18n.de import PDF_EDIT_CHANGES, PDF_EDIT_NO_CHANGES, PDF_EDIT_STATUS
+        from i18n.de import (PDF_EDIT_CHANGES, PDF_EDIT_NO_CHANGES, PDF_EDIT_STATUS,
+                              PDF_EDIT_MULTI_SELECTED)
         
         page_count = len(self._fitz_doc) if self._fitz_doc else 0
-        page_idx = self._get_selected_page_index()
+        indices = self._get_selected_page_indices()
         
         parts = []
-        if page_count > 0 and page_idx >= 0:
-            parts.append(PDF_EDIT_STATUS.format(current=page_idx + 1, total=page_count))
+        if page_count > 0 and indices:
+            if len(indices) == 1:
+                parts.append(PDF_EDIT_STATUS.format(current=indices[0] + 1, total=page_count))
+            else:
+                parts.append(PDF_EDIT_MULTI_SELECTED.format(
+                    selected=len(indices), total=page_count))
         
         if self._change_count > 0:
             parts.append(PDF_EDIT_CHANGES.format(count=self._change_count))
@@ -722,7 +831,8 @@ class PDFViewerDialog(QDialog):
     
     def _on_save_finished(self, success: bool):
         """Callback nach dem Speichern."""
-        from i18n.de import PDF_EDIT_SAVE, PDF_EDIT_SAVE_SUCCESS, PDF_EDIT_SAVE_ERROR
+        from i18n.de import (PDF_EDIT_SAVE, PDF_EDIT_SAVE_SUCCESS, PDF_EDIT_SAVE_ERROR,
+                              PDF_EDIT_REFRESHING)
         
         self._save_btn.setText(PDF_EDIT_SAVE)
         
@@ -736,6 +846,18 @@ class PDFViewerDialog(QDialog):
             self._status_label.setVisible(True)
             # Signal fuer Cache-Invalidierung
             self.pdf_saved.emit(self._doc_id)
+            
+            # Leere-Seiten + Textinhalt im Hintergrund aktualisieren
+            if self._docs_api and self._doc_id is not None and self._temp_pdf_path:
+                self._status_label.setText(PDF_EDIT_REFRESHING)
+                self._status_label.setStyleSheet(
+                    "color: #2563eb; background: #eff6ff; padding: 6px 12px; border-radius: 4px;"
+                )
+                self._refresh_data_worker = PDFRefreshWorker(
+                    self._docs_api, self._doc_id, self._temp_pdf_path
+                )
+                self._refresh_data_worker.finished.connect(self._on_refresh_data_finished)
+                self._refresh_data_worker.start()
         else:
             self._save_btn.setEnabled(True)
             self._status_label.setText(PDF_EDIT_SAVE_ERROR.format(error="Server-Fehler"))
@@ -743,6 +865,21 @@ class PDFViewerDialog(QDialog):
                 "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
             )
             self._status_label.setVisible(True)
+    
+    def _on_refresh_data_finished(self, success: bool):
+        """Callback nach dem Aktualisieren von Leere-Seiten und Textinhalt."""
+        from i18n.de import PDF_EDIT_REFRESH_SUCCESS, PDF_EDIT_SAVE_SUCCESS
+        
+        if success:
+            self._status_label.setText(PDF_EDIT_REFRESH_SUCCESS)
+            self._status_label.setStyleSheet(
+                "color: #059669; background: #ecfdf5; padding: 6px 12px; border-radius: 4px;"
+            )
+        else:
+            self._status_label.setText(PDF_EDIT_SAVE_SUCCESS)
+            self._status_label.setStyleSheet(
+                "color: #059669; background: #ecfdf5; padding: 6px 12px; border-radius: 4px;"
+            )
     
     def _on_save_error(self, error_msg: str):
         """Callback bei Speicher-Fehler."""
@@ -820,6 +957,13 @@ class PDFViewerDialog(QDialog):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
+        
+        # Laufende Worker sauber beenden bevor der Dialog zerstoert wird
+        for worker_attr in ('_save_worker', '_refresh_data_worker'):
+            worker = getattr(self, worker_attr, None)
+            if worker and worker.isRunning():
+                worker.quit()
+                worker.wait(3000)
         
         # Cleanup
         if self._fitz_doc:
@@ -1955,3 +2099,575 @@ class ArchiveView(QWidget):
         self._toast_manager.show_error(
             f"KI-Benennung Fehler: {error}"
         )
+
+
+# =============================================================================
+# DuplicateCompareDialog - Side-by-Side Vergleich von Duplikaten
+# =============================================================================
+
+class DuplicateCompareDialog(QDialog):
+    """
+    Dialog zum Side-by-Side-Vergleich zweier Duplikat-Dokumente.
+    
+    Zeigt beide Dokumente nebeneinander mit PDF-Vorschau und
+    Aktions-Buttons (Loeschen, Archivieren, Verschieben, Farbe) pro Seite.
+    """
+    
+    documents_changed = Signal()
+    
+    # Box-Emojis (gleich wie SearchResultCard)
+    _BOX_EMOJIS = {
+        'gdv': '\U0001f4ca', 'courtage': '\U0001f4b0', 'sach': '\U0001f3e0',
+        'leben': '\u2764\ufe0f', 'kranken': '\U0001f3e5', 'sonstige': '\U0001f4c1',
+        'roh': '\U0001f4e6', 'eingang': '\U0001f4ec', 'verarbeitung': '\U0001f4e5',
+        'falsch': '\u26a0\ufe0f'
+    }
+    
+    # Archivierbare Boxen
+    _ARCHIVABLE_BOXES = {'gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige'}
+    
+    def __init__(self, doc_left: Document, doc_right: Document,
+                 docs_api: 'DocumentsAPI', preview_cache_dir: str = None, parent=None):
+        super().__init__(parent)
+        self._doc_left = doc_left
+        self._doc_right = doc_right
+        self._docs_api = docs_api
+        self._preview_cache_dir = preview_cache_dir or os.path.join(
+            tempfile.gettempdir(), 'bipro_preview_cache')
+        self._has_changes = False
+        self._left_disabled = False
+        self._right_disabled = False
+        self._workers = []
+        
+        # PDF-Dokument-Objekte fuer QPdfView
+        self._pdf_doc_left = None
+        self._pdf_doc_right = None
+        
+        # Direkte Widget-Referenzen (statt findChild)
+        self._pdf_views = {}      # side -> QPdfView
+        self._loading_labels = {} # side -> QLabel
+        
+        from i18n.de import DUPLICATE_COMPARE_TITLE
+        self.setWindowTitle(DUPLICATE_COMPARE_TITLE)
+        self.setMinimumSize(1200, 700)
+        self.resize(1400, 900)
+        
+        self._setup_ui()
+        # Previews erst nach show() starten (QPdfView braucht sichtbares Fenster)
+        QTimer.singleShot(100, self._download_previews)
+    
+    def _setup_ui(self):
+        """Baut das Dialog-Layout auf."""
+        from i18n.de import DUPLICATE_COMPARE_CLOSE
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Splitter fuer Links/Rechts
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(2)
+        
+        # Bestimme Labels: Welches ist das "Original"?
+        if self._doc_left.is_duplicate:
+            left_label_key = 'this'
+            right_label_key = 'original'
+        elif self._doc_left.is_content_duplicate:
+            left_label_key = 'this'
+            right_label_key = 'original'
+        else:
+            left_label_key = 'original'
+            right_label_key = 'copy'
+        
+        # Linke Seite
+        self._left_pane = self._build_document_pane(
+            self._doc_left, 'left', left_label_key)
+        splitter.addWidget(self._left_pane)
+        
+        # Rechte Seite
+        self._right_pane = self._build_document_pane(
+            self._doc_right, 'right', right_label_key)
+        splitter.addWidget(self._right_pane)
+        
+        splitter.setSizes([700, 700])
+        main_layout.addWidget(splitter, 1)
+        
+        # Footer mit Schliessen-Button
+        footer = QFrame()
+        footer.setStyleSheet("QFrame { background: #f5f5f5; border-top: 1px solid #e0e0e0; }")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(16, 8, 16, 8)
+        
+        footer_layout.addStretch()
+        close_btn = QPushButton(DUPLICATE_COMPARE_CLOSE)
+        close_btn.setFixedWidth(140)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: #001f3d; color: white; border: none;
+                padding: 8px 16px; border-radius: 4px; font-weight: bold;
+            }
+            QPushButton:hover { background: #002d5c; }
+        """)
+        close_btn.clicked.connect(self.close)
+        footer_layout.addWidget(close_btn)
+        footer_layout.addStretch()
+        
+        main_layout.addWidget(footer)
+    
+    def _build_document_pane(self, doc: Document, side: str, label_key: str) -> QFrame:
+        """Erstellt eine Seite des Vergleichs (Header + Preview + Aktionen)."""
+        from i18n.de import (
+            DUPLICATE_COMPARE_THIS_DOC, DUPLICATE_COMPARE_COUNTERPART,
+            DUPLICATE_COMPARE_COUNTERPART_OF_COPY, DUPLICATE_COMPARE_NO_PREVIEW,
+            DUPLICATE_COMPARE_LOADING, DUPLICATE_COMPARE_ACTION_DELETE,
+            DUPLICATE_COMPARE_ACTION_ARCHIVE, DUPLICATE_COMPARE_ACTION_UNARCHIVE,
+            DUPLICATE_COMPARE_ACTION_MOVE, DUPLICATE_COMPARE_ACTION_COLOR,
+            DUPLICATE_TOOLTIP_ARCHIVED
+        )
+        from api.documents import BOX_DISPLAY_NAMES
+        from html import escape
+        
+        pane = QFrame()
+        pane.setObjectName(f"pane_{side}")
+        border_color = "#fa9939" if side == 'left' else "#3b82f6"
+        pane.setStyleSheet(f"""
+            QFrame#{pane.objectName()} {{
+                background: white;
+                border-top: 3px solid {border_color};
+            }}
+        """)
+        
+        layout = QVBoxLayout(pane)
+        layout.setContentsMargins(12, 12, 12, 8)
+        layout.setSpacing(6)
+        
+        # --- Header ---
+        if label_key == 'this':
+            section_label = DUPLICATE_COMPARE_THIS_DOC
+        elif label_key == 'original':
+            section_label = DUPLICATE_COMPARE_COUNTERPART
+        else:
+            section_label = DUPLICATE_COMPARE_COUNTERPART_OF_COPY
+        
+        header_label = QLabel(section_label)
+        header_label.setStyleSheet(
+            "font-size: 11px; color: #9E9E9E; font-weight: bold; text-transform: uppercase;")
+        layout.addWidget(header_label)
+        
+        # Dateiname
+        name_label = QLabel(escape(doc.original_filename))
+        name_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #001f3d;")
+        name_label.setWordWrap(True)
+        layout.addWidget(name_label)
+        
+        # Meta-Zeile: Box | Datum | Groesse | ggf. Archiviert
+        box_emoji = self._BOX_EMOJIS.get(doc.box_type, '\U0001f4c1')
+        box_name = BOX_DISPLAY_NAMES.get(doc.box_type, doc.box_type or '')
+        date_display = format_date_german(doc.created_at)
+        
+        meta_parts = [f"{box_emoji} {escape(box_name)}"]
+        if date_display:
+            meta_parts.append(date_display)
+        if doc.file_size:
+            size_kb = doc.file_size / 1024
+            if size_kb >= 1024:
+                meta_parts.append(f"{size_kb / 1024:.1f} MB")
+            else:
+                meta_parts.append(f"{size_kb:.0f} KB")
+        if doc.is_archived:
+            meta_parts.append(f"\U0001f4e6 {DUPLICATE_TOOLTIP_ARCHIVED}")
+        
+        meta_label = QLabel(" | ".join(meta_parts))
+        meta_label.setStyleSheet("font-size: 11px; color: #757575;")
+        layout.addWidget(meta_label)
+        
+        # ID
+        id_label = QLabel(f"ID: {doc.id}")
+        id_label.setStyleSheet("font-size: 10px; color: #BDBDBD;")
+        layout.addWidget(id_label)
+        
+        # --- Vorschau-Bereich ---
+        preview_container = QFrame()
+        preview_container.setStyleSheet(
+            "QFrame { background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px; }")
+        preview_layout = QVBoxLayout(preview_container)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        
+        if self._is_pdf(doc) and HAS_PDF_VIEW:
+            # Stacked: Loading-Label wird durch QPdfView ersetzt
+            from PySide6.QtWidgets import QStackedWidget
+            stack = QStackedWidget()
+            
+            # Seite 0: Loading
+            loading_label = QLabel(DUPLICATE_COMPARE_LOADING)
+            loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            loading_label.setStyleSheet("color: #9E9E9E; font-size: 12px; padding: 40px;")
+            stack.addWidget(loading_label)
+            
+            # Seite 1: QPdfView (sichtbar und gelayoutet von Anfang an)
+            pdf_view = QPdfView(stack)
+            pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+            pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+            stack.addWidget(pdf_view)
+            
+            # Loading-Seite zuerst anzeigen
+            stack.setCurrentIndex(0)
+            preview_layout.addWidget(stack)
+            
+            # Direkte Referenzen speichern
+            self._pdf_views[side] = pdf_view
+            self._loading_labels[side] = stack  # Stack statt Label, um umzuschalten
+        else:
+            # Kein PDF oder kein QPdfView
+            no_preview = QLabel(DUPLICATE_COMPARE_NO_PREVIEW)
+            no_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            no_preview.setStyleSheet(
+                "color: #9E9E9E; font-size: 13px; padding: 60px; font-style: italic;")
+            preview_layout.addWidget(no_preview)
+        
+        layout.addWidget(preview_container, 1)
+        
+        # --- Status-Overlay (zunachst versteckt) ---
+        status_label = QLabel("")
+        status_label.setObjectName(f"status_{side}")
+        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_label.setStyleSheet("""
+            font-size: 14px; font-weight: bold; color: #ef4444;
+            padding: 8px; background: #fff5f5; border: 1px solid #fecaca;
+            border-radius: 4px;
+        """)
+        status_label.setVisible(False)
+        layout.addWidget(status_label)
+        
+        # --- Aktions-Buttons ---
+        actions_frame = QFrame()
+        actions_frame.setObjectName(f"actions_{side}")
+        actions_layout = QHBoxLayout(actions_frame)
+        actions_layout.setContentsMargins(0, 4, 0, 0)
+        actions_layout.setSpacing(6)
+        
+        # Loeschen
+        delete_btn = QPushButton(DUPLICATE_COMPARE_ACTION_DELETE)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
+                padding: 6px 12px; border-radius: 3px; font-size: 11px;
+            }
+            QPushButton:hover { background: #fecaca; }
+            QPushButton:disabled { background: #f5f5f5; color: #ccc; border: 1px solid #e0e0e0; }
+        """)
+        delete_btn.clicked.connect(lambda: self._delete_document(side))
+        actions_layout.addWidget(delete_btn)
+        
+        # Archivieren / Entarchivieren
+        if doc.box_type in self._ARCHIVABLE_BOXES:
+            if doc.is_archived:
+                archive_btn = QPushButton(DUPLICATE_COMPARE_ACTION_UNARCHIVE)
+                archive_btn.clicked.connect(lambda: self._unarchive_document(side))
+            else:
+                archive_btn = QPushButton(DUPLICATE_COMPARE_ACTION_ARCHIVE)
+                archive_btn.clicked.connect(lambda: self._archive_document(side))
+            archive_btn.setStyleSheet("""
+                QPushButton {
+                    background: #fef3c7; color: #92400e; border: 1px solid #fde68a;
+                    padding: 6px 12px; border-radius: 3px; font-size: 11px;
+                }
+                QPushButton:hover { background: #fde68a; }
+                QPushButton:disabled { background: #f5f5f5; color: #ccc; border: 1px solid #e0e0e0; }
+            """)
+            actions_layout.addWidget(archive_btn)
+        
+        # Verschieben (mit Dropdown-Menue)
+        move_btn = QPushButton(DUPLICATE_COMPARE_ACTION_MOVE)
+        move_btn.setStyleSheet("""
+            QPushButton {
+                background: #e0f2fe; color: #075985; border: 1px solid #bae6fd;
+                padding: 6px 12px; border-radius: 3px; font-size: 11px;
+            }
+            QPushButton:hover { background: #bae6fd; }
+            QPushButton::menu-indicator { subcontrol-position: right center; }
+            QPushButton:disabled { background: #f5f5f5; color: #ccc; border: 1px solid #e0e0e0; }
+        """)
+        move_menu = QMenu(move_btn)
+        move_targets = ['gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige', 'eingang', 'roh']
+        for box_type in move_targets:
+            if box_type == doc.box_type:
+                continue  # Aktuelle Box ueberspringen
+            emoji = self._BOX_EMOJIS.get(box_type, '\U0001f4c1')
+            display = BOX_DISPLAY_NAMES.get(box_type, box_type)
+            action = move_menu.addAction(f"{emoji} {display}")
+            action.triggered.connect(
+                lambda checked, bt=box_type, s=side: self._move_document(s, bt))
+        move_btn.setMenu(move_menu)
+        actions_layout.addWidget(move_btn)
+        
+        # Farbe (mit Dropdown-Menue)
+        color_btn = QPushButton(DUPLICATE_COMPARE_ACTION_COLOR)
+        color_btn.setStyleSheet("""
+            QPushButton {
+                background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff;
+                padding: 6px 12px; border-radius: 3px; font-size: 11px;
+            }
+            QPushButton:hover { background: #e9d5ff; }
+            QPushButton::menu-indicator { subcontrol-position: right center; }
+            QPushButton:disabled { background: #f5f5f5; color: #ccc; border: 1px solid #e0e0e0; }
+        """)
+        from ui.styles.tokens import DOCUMENT_DISPLAY_COLORS
+        from i18n.de import (DOC_COLOR_GREEN, DOC_COLOR_RED, DOC_COLOR_BLUE,
+                              DOC_COLOR_ORANGE, DOC_COLOR_PURPLE, DOC_COLOR_PINK,
+                              DOC_COLOR_CYAN, DOC_COLOR_YELLOW, DOC_COLOR_REMOVE)
+        color_labels = {
+            'green': DOC_COLOR_GREEN, 'red': DOC_COLOR_RED, 'blue': DOC_COLOR_BLUE,
+            'orange': DOC_COLOR_ORANGE, 'purple': DOC_COLOR_PURPLE, 'pink': DOC_COLOR_PINK,
+            'cyan': DOC_COLOR_CYAN, 'yellow': DOC_COLOR_YELLOW,
+        }
+        color_menu = QMenu(color_btn)
+        for color_key, color_label in color_labels.items():
+            hex_color = DOCUMENT_DISPLAY_COLORS.get(color_key, '#ccc')
+            action = color_menu.addAction(f"\u25cf {color_label}")
+            action.triggered.connect(
+                lambda checked, ck=color_key, s=side: self._color_document(s, ck))
+        color_menu.addSeparator()
+        remove_action = color_menu.addAction(DOC_COLOR_REMOVE)
+        remove_action.triggered.connect(lambda: self._color_document(side, None))
+        color_btn.setMenu(color_menu)
+        actions_layout.addWidget(color_btn)
+        
+        actions_layout.addStretch()
+        layout.addWidget(actions_frame)
+        
+        return pane
+    
+    def _is_pdf(self, doc: Document) -> bool:
+        """Prueft ob ein Dokument ein PDF ist."""
+        if doc.mime_type and 'pdf' in doc.mime_type.lower():
+            return True
+        name = (doc.original_filename or '').lower()
+        return name.endswith('.pdf')
+    
+    def _download_previews(self):
+        """Startet den Download beider PDF-Vorschauen parallel."""
+        os.makedirs(self._preview_cache_dir, exist_ok=True)
+        
+        for side, doc in [('left', self._doc_left), ('right', self._doc_right)]:
+            if not self._is_pdf(doc) or not HAS_PDF_VIEW:
+                continue
+            
+            # Cache-Check (sanitisierter Dateiname fuer Windows-Kompatibilitaet)
+            from api.documents import safe_cache_filename
+            cached = os.path.join(self._preview_cache_dir,
+                                  safe_cache_filename(doc.id, doc.original_filename))
+            if os.path.exists(cached) and os.path.getsize(cached) > 0:
+                self._on_preview_ready(side, cached)
+                continue
+            
+            # Download starten
+            from ui.archive_boxes_view import PreviewDownloadWorker
+            worker = PreviewDownloadWorker(
+                self._docs_api, doc.id, self._preview_cache_dir,
+                filename=doc.original_filename,
+                cache_dir=self._preview_cache_dir)
+            worker.download_finished.connect(
+                lambda path, s=side: self._on_preview_ready(s, path))
+            worker.download_error.connect(
+                lambda err, s=side: self._on_preview_error(s, err))
+            self._workers.append(worker)
+            worker.start()
+    
+    def _on_preview_ready(self, side: str, path):
+        """Callback wenn PDF-Download fertig ist."""
+        if not path or not os.path.exists(path):
+            self._on_preview_error(side, "Datei nicht gefunden")
+            return
+        
+        pdf_view = self._pdf_views.get(side)
+        stack = self._loading_labels.get(side)
+        
+        if pdf_view:
+            pdf_doc = QPdfDocument(self)
+            
+            # QPdfDocument.load() kann fehlschlagen bei Sonderzeichen im Pfad.
+            # Wir pruefen den Status und laden ggf. von QBuffer als Fallback.
+            load_error = pdf_doc.load(path)
+            
+            # Status pruefen (Error = 2 in QPdfDocument.Error enum)
+            if pdf_doc.status() == QPdfDocument.Status.Error:
+                logger.warning(f"QPdfDocument.load() fehlgeschlagen fuer {path}, versuche QBuffer-Fallback")
+                try:
+                    from PySide6.QtCore import QBuffer, QByteArray
+                    with open(path, 'rb') as f:
+                        data = f.read()
+                    # Neues QPdfDocument fuer Buffer-Modus
+                    pdf_doc = QPdfDocument(self)
+                    self._pdf_buffer = QBuffer(self)  # Buffer muss am Leben bleiben
+                    self._pdf_buffer.setData(QByteArray(data))
+                    self._pdf_buffer.open(QBuffer.OpenModeFlag.ReadOnly)
+                    pdf_doc.load(self._pdf_buffer)
+                except Exception as e:
+                    logger.error(f"QBuffer-Fallback fehlgeschlagen ({side}): {e}")
+                    self._on_preview_error(side, str(e))
+                    return
+            
+            pdf_view.setDocument(pdf_doc)
+            
+            # Stack auf QPdfView-Seite (Index 1) umschalten
+            if stack:
+                stack.setCurrentIndex(1)
+            
+            if side == 'left':
+                self._pdf_doc_left = pdf_doc
+            else:
+                self._pdf_doc_right = pdf_doc
+            
+            logger.info(f"PDF-Vorschau geladen ({side}): {path}")
+    
+    def _on_preview_error(self, side: str, error: str):
+        """Callback bei Download-Fehler."""
+        stack = self._loading_labels.get(side)
+        if stack:
+            # Loading-Label (Index 0) mit Fehlermeldung aktualisieren
+            loading = stack.widget(0)
+            if loading:
+                from i18n.de import DUPLICATE_COMPARE_NO_PREVIEW
+                loading.setText(DUPLICATE_COMPARE_NO_PREVIEW)
+                loading.setStyleSheet(
+                    "color: #ef4444; font-size: 12px; padding: 40px; font-style: italic;")
+        logger.warning(f"PDF-Vorschau Fehler ({side}): {error}")
+    
+    def _get_doc(self, side: str) -> Document:
+        """Gibt das Dokument fuer die angegebene Seite zurueck."""
+        return self._doc_left if side == 'left' else self._doc_right
+    
+    def _is_side_disabled(self, side: str) -> bool:
+        """Prueft ob eine Seite bereits deaktiviert ist."""
+        return self._left_disabled if side == 'left' else self._right_disabled
+    
+    def _mark_pane_modified(self, side: str, status_text: str):
+        """Markiert eine Seite als modifiziert (deaktiviert Buttons, zeigt Status)."""
+        pane = self._left_pane if side == 'left' else self._right_pane
+        
+        # Status-Label anzeigen
+        status = pane.findChild(QLabel, f"status_{side}")
+        if status:
+            status.setText(status_text)
+            status.setVisible(True)
+        
+        # Aktions-Buttons deaktivieren
+        actions = pane.findChild(QFrame, f"actions_{side}")
+        if actions:
+            for btn in actions.findChildren(QPushButton):
+                btn.setEnabled(False)
+        
+        # Seite als deaktiviert markieren
+        if side == 'left':
+            self._left_disabled = True
+        else:
+            self._right_disabled = True
+        
+        self._has_changes = True
+    
+    def _delete_document(self, side: str):
+        """Loescht das Dokument auf der angegebenen Seite."""
+        if self._is_side_disabled(side):
+            return
+        
+        doc = self._get_doc(side)
+        from i18n.de import DUPLICATE_COMPARE_CONFIRM_DELETE, DUPLICATE_COMPARE_DELETED
+        
+        reply = QMessageBox.question(
+            self, DUPLICATE_COMPARE_DELETED,
+            DUPLICATE_COMPARE_CONFIRM_DELETE.format(filename=doc.original_filename),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        try:
+            self._docs_api.delete(doc.id)
+            self._mark_pane_modified(side, f"\u274c {DUPLICATE_COMPARE_DELETED}")
+        except Exception as e:
+            from i18n.de import DUPLICATE_COMPARE_ERROR
+            QMessageBox.warning(self, "Fehler",
+                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+    
+    def _archive_document(self, side: str):
+        """Archiviert das Dokument."""
+        if self._is_side_disabled(side):
+            return
+        doc = self._get_doc(side)
+        try:
+            self._docs_api.archive_documents([doc.id])
+            from i18n.de import DUPLICATE_COMPARE_ARCHIVED
+            self._mark_pane_modified(side, f"\U0001f4e6 {DUPLICATE_COMPARE_ARCHIVED}")
+        except Exception as e:
+            from i18n.de import DUPLICATE_COMPARE_ERROR
+            QMessageBox.warning(self, "Fehler",
+                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+    
+    def _unarchive_document(self, side: str):
+        """Entarchiviert das Dokument."""
+        if self._is_side_disabled(side):
+            return
+        doc = self._get_doc(side)
+        try:
+            self._docs_api.unarchive_documents([doc.id])
+            from i18n.de import DUPLICATE_COMPARE_UNARCHIVED
+            self._mark_pane_modified(side, f"\U0001f4e4 {DUPLICATE_COMPARE_UNARCHIVED}")
+        except Exception as e:
+            from i18n.de import DUPLICATE_COMPARE_ERROR
+            QMessageBox.warning(self, "Fehler",
+                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+    
+    def _move_document(self, side: str, target_box: str):
+        """Verschiebt das Dokument in eine andere Box."""
+        if self._is_side_disabled(side):
+            return
+        doc = self._get_doc(side)
+        try:
+            self._docs_api.move_documents([doc.id], target_box)
+            from i18n.de import DUPLICATE_COMPARE_MOVED
+            from api.documents import BOX_DISPLAY_NAMES
+            box_name = BOX_DISPLAY_NAMES.get(target_box, target_box)
+            emoji = self._BOX_EMOJIS.get(target_box, '\U0001f4c1')
+            self._mark_pane_modified(
+                side, f"{emoji} {DUPLICATE_COMPARE_MOVED.format(box=box_name)}")
+        except Exception as e:
+            from i18n.de import DUPLICATE_COMPARE_ERROR
+            QMessageBox.warning(self, "Fehler",
+                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+    
+    def _color_document(self, side: str, color_key):
+        """Setzt die Farbmarkierung des Dokuments."""
+        if self._is_side_disabled(side):
+            return
+        doc = self._get_doc(side)
+        try:
+            self._docs_api.set_documents_color([doc.id], color_key)
+            from i18n.de import DUPLICATE_COMPARE_COLORED, DUPLICATE_COMPARE_COLOR_REMOVED
+            if color_key:
+                self._mark_pane_modified(side, f"\U0001f3a8 {DUPLICATE_COMPARE_COLORED}")
+            else:
+                self._mark_pane_modified(side, DUPLICATE_COMPARE_COLOR_REMOVED)
+        except Exception as e:
+            from i18n.de import DUPLICATE_COMPARE_ERROR
+            QMessageBox.warning(self, "Fehler",
+                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+    
+    def closeEvent(self, event):
+        """Beim Schliessen: Worker stoppen und ggf. Signal senden."""
+        for worker in self._workers:
+            if worker.isRunning():
+                worker.cancel()
+                worker.wait(1000)
+        
+        # PDF-Dokumente freigeben
+        if self._pdf_doc_left:
+            self._pdf_doc_left.close()
+        if self._pdf_doc_right:
+            self._pdf_doc_right.close()
+        
+        if self._has_changes:
+            self.documents_changed.emit()
+        
+        super().closeEvent(event)

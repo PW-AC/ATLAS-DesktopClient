@@ -1,0 +1,324 @@
+Insight Engine
+
+Sie verbindet:
+
+📄 Dokumentenarchiv (KI-Daten + Volltext) 
+ARCHITECTURE
+📦 Box-System + Klassifikation 
+03_Domain_und_Begriffe
+📑 GDV-Domainmodell (Contract, Risk, Coverage) 
+DOMAIN
+🔁 BiPRO-Codes & Lieferungen 
+03_Domain_und_Begriffe
+Und erzeugt daraus strukturierte, verwertbare Erkenntnisse.
+
+#######################
+
+
+Vertrags-Risiko-Scanner
+
+ATLAS erkennt automatisch:
+Verträge mit baldiger Hauptfälligkeit
+Beitragsanstieg durch Dynamik
+Sehr alte Tarife
+Beitragsfreie Verträge
+Widersprüche zwischen GDV-Daten und Dokumenteninhalt
+Beispiel:
+⚠️ Kunde Müller – 3 Verträge mit Dynamik > 5%
+⚠️ Vertrag 4711 – Hauptfälligkeit in 30 Tagen
+💡 Upsell-Potenzial: Deckungssumme deutlich unter Marktstandard
+#######################
+
+Courtage-Intelligence
+Du hast BiPRO-Courtage-Codes (3000xxxx) 
+03_Domain_und_Begriffe
+Du hast Dokumente
+Du hast GDV-Daten
+
+ATLAS könnte:
+Courtage-Entwicklung pro VU analysieren
+Rückgänge erkennen
+Abweichungen melden
+Fehlende Abrechnungen identifizieren
+„VEMA Courtage 12% unter Durchschnitt der letzten 6 Monate.“
+
+Das ist kein Archiv mehr.
+Das ist Controlling.
+
+#######################
+
+Inkonsistenz-Detektor
+
+ATLAS prüft automatisch:
+GDV sagt „lebend“ → Dokument sagt „gekündigt“
+Vertrag existiert im GDV → keine aktuelle Dokumente
+Mehrere Verträge gleiche VSNR aber unterschiedliche Sparte
+
+Das ist Compliance
+
+#######################
+
+Kunden-Heatmap (visuell)
+
+Neue Ansicht:
+Kunde
+Verträge
+Sparte
+Beitragsvolumen
+Dynamik
+Status
+Letztes Dokument
+
+als Farbcodierte Risiko-Heatmap.
+
+#######################
+
+Automatische To-Do-Generierung
+
+Insight Engine erzeugt:
+Follow-Ups
+Beratungshinweise
+Vertriebsimpulse
+Prüfaufgaben
+
+Und schiebt sie in die Mitteilungszentrale
+
+#######################
+
+ATLAS aktuell:
+Holt → speichert → klassifiziert
+
+Mit Insight Engine wird ATLAS:
+Versteht → bewertet → empfiehlt → priorisiert
+
++
+
+„ATLAS Weekly Intelligence Report“
+Einmal pro Woche:
+PDF-Report
+Courtage-Statistik
+Risiko-Verträge
+Auffälligkeiten
+Neue GDV-Bestände
+
+Automatisch generiert.
+Optional per Mail.
+
+
+ATLAS kein Tool mehr
+Sondern ein System mit strategischem Mehrwert.
+
+
+
+########################################################################
+
+
+🧠 ATLAS Insight Engine
+
+Du verbindest vier Ebenen:
+
+Dokumenten-Volltext + AI-Daten
+
+Box-/Klassifikationslogik
+
+GDV-Domainmodell (Contract / Risk / Coverage)
+
+BiPRO-Codes & Lieferungen
+
+Das ist exakt die Datenbasis, die 90 % der Makler NIE konsolidiert haben.
+
+1️⃣ Vertrags-Risiko-Scanner
+
+Das ist brutal stark.
+
+Hier wird’s interessant:
+
+Logik-Ebenen
+
+Regelbasiert (Hauptfälligkeit < 30 Tage)
+
+Schwellenwerte (Dynamik > X %)
+
+Zeitbasiert (Tarif älter als 15 Jahre)
+
+NLP-Erkennung aus Dokumenten („gekündigt“, „beitragsfrei“ etc.)
+
+Das ist technisch:
+
+GDV Daten → strukturierte Felder
++
+Document AI → extrahierte Claims
++
+Business Rule Engine
+
+
+Wichtig:
+Nicht sofort ML. Erst deterministische Logik.
+
+Wenn das sauber läuft, kannst du später Scoring einführen.
+
+2️⃣ Courtage-Intelligence
+
+Hier verlässt du Archiv-Level endgültig.
+
+Das ist Controlling + BI.
+
+Und ehrlich:
+Das ist Geld.
+
+Was ATLAS hier machen kann:
+
+Zeitreihenanalyse pro VU
+
+Courtage pro Sparte
+
+Erwartungswert vs Ist
+
+Abweichungsdetektion (z.B. -15% MoM)
+
+Technisch brauchst du:
+
+Historisierte Courtage-Tabelle
+
+Aggregationslayer
+
+Periodische Snapshot-Engine
+
+Das ist nicht Feature.
+Das ist BI-Modul.
+
+3️⃣ Inkonsistenz-Detektor
+
+Das ist Compliance-Gold.
+
+Regeltypen:
+
+Typ	Beispiel
+Status-Mismatch	GDV = lebend / Dokument = Kündigung
+Existenz-Mismatch	GDV Vertrag ohne Dokument
+Identitäts-Mismatch	gleiche VSNR, andere Sparte
+Datums-Mismatch	Laufzeit endet früher im Dokument
+
+Hier brauchst du:
+
+Mapping-Layer
+
+Konflikt-Priorisierung
+
+Severity-Level
+
+Das wird später Audit-fähig.
+
+4️⃣ Kunden-Heatmap
+
+Das ist UX-Magie.
+
+Du brauchst:
+
+Aggregierte Kennzahlen pro Kunde
+
+Risikoscore
+
+Beitragsvolumen
+
+Statusgewichtung
+
+Dokument-Aktualität
+
+Visuell:
+
+Grün = stabil
+
+Gelb = Beobachtung
+
+Rot = Handlungsbedarf
+
+Das wird dein „Cockpit“.
+
+5️⃣ Automatische To-Do-Generierung
+
+Hier wird’s strategisch.
+
+Insight Engine erzeugt:
+
+System Tasks
+
+Vertriebsimpulse
+
+Prüfaufträge
+
+Renewal-Reminder
+
+Und schiebt sie in deine Mitteilungszentrale.
+
+Wichtig:
+Nicht nur Meldung.
+Sondern strukturierte Task mit:
+
+source = insight_engine
+confidence_score
+related_contract_id
+priority
+
+
+Sonst wird’s Spam.
+
+6️⃣ Weekly Intelligence Report
+
+Das ist extrem smart.
+
+Weil:
+
+Geschäftsführung will Überblick.
+
+Außendienst will Impulse.
+
+Controlling will Zahlen.
+
+Technisch:
+
+Snapshot Job (CRON)
+
+Aggregation
+
+PDF Generator
+
+Optionaler Mail-Versand
+
+Jetzt kommt die unbequeme Wahrheit:
+
+Das hier ist kein Feature.
+
+Das ist eine neue Architektur-Schicht.
+
+Du brauchst:
+
+Insight Engine Layer (eigener Service oder Modul)
+
+Rule Engine
+
+Aggregations- & Snapshot-Tabellen
+
+Severity & Priorisierungssystem
+
+Historisierung
+
+Wenn du das falsch baust (z.B. direkt auf Live-GDV Tabellen ohne Snapshot):
+→ Performance-Desaster.
+→ Unstabile Reports.
+→ Inkonsistenzen.
+
+Strategische Einordnung
+
+ATLAS heute:
+
+Daten-Orchestrator
+
+ATLAS mit Insight Engine:
+
+Entscheidungsmaschine
+
+Und das ist ein Unterschied wie:
+„ERP“ vs „Strategic Intelligence Platform“
+
+

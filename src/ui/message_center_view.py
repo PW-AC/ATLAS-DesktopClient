@@ -612,16 +612,10 @@ class MessageCenterView(QWidget):
         # Ungelesene als gelesen markieren
         unread_ids = [m['id'] for m in messages if not m.get('is_read', True)]
         if unread_ids and self._messages_api:
-            # #region agent log
-            import time as _t; _log_a_start = _t.time()
-            # #endregion
             try:
                 self._messages_api.mark_as_read(unread_ids)
             except Exception:
                 pass
-            # #region agent log
-            _log_a_dur = (_t.time() - _log_a_start) * 1000; import json as _j; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j.dumps({"id":"log_mcv_mark_read","timestamp":int(_t.time()*1000),"location":"message_center_view.py:616","message":"SYNC mark_as_read in main thread","data":{"duration_ms":round(_log_a_dur,1),"unread_count":len(unread_ids)},"hypothesisId":"A"})+'\n')
-            # #endregion
     
     @Slot(str)
     def _on_messages_error(self, error: str):

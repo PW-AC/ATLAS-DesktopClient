@@ -456,6 +456,8 @@ class ToastManager:
         self._toast_manager.show_error("Fehlgeschlagen", action_text="Erneut", action_callback=fn)
     """
     
+    _instance = None
+    
     def __init__(self, parent_widget):
         """
         Args:
@@ -463,6 +465,14 @@ class ToastManager:
         """
         self._parent = parent_widget
         self._active_toasts: list[ToastWidget] = []
+        ToastManager._instance = self
+    
+    @classmethod
+    def instance(cls) -> 'ToastManager':
+        """Gibt die globale ToastManager-Instanz zurueck."""
+        if cls._instance is None:
+            raise RuntimeError("ToastManager wurde noch nicht initialisiert")
+        return cls._instance
     
     def show_success(self, message: str, action_text: str = None,
                      action_callback: callable = None, duration_ms: int = None):

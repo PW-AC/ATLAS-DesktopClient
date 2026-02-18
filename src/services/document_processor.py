@@ -19,6 +19,8 @@ from api.documents import Document, DocumentsAPI, BOX_TYPES
 from api.openrouter import OpenRouterClient, ExtractedDocumentData, DocumentClassification
 from api.client import APIClient
 from api.processing_history import ProcessingHistoryAPI
+from api.processing_settings import ProcessingSettingsAPI
+from api.document_rules import DocumentRulesAPI, DocumentRulesSettings
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ class ProcessingResult:
     category: Optional[str] = None
     new_filename: Optional[str] = None
     error: Optional[str] = None
+    cost_usd: float = 0.0
 
 
 @dataclass
@@ -52,6 +55,7 @@ class BatchProcessingResult:
     total_cost_usd: Optional[float] = None
     cost_per_document_usd: Optional[float] = None
     currency: str = 'USD'
+    provider: str = 'openrouter'
     
     @property
     def success_rate(self) -> float:
@@ -89,11 +93,17 @@ class DocumentProcessor:
         self.api_client = api_client
         self.docs_api = DocumentsAPI(api_client)
         self.history_api = ProcessingHistoryAPI(api_client)
+        self.settings_api = ProcessingSettingsAPI(api_client)
+        self.doc_rules_api = DocumentRulesAPI(api_client)
         self.openrouter: Optional[OpenRouterClient] = None
         # Content-Hash-Cache fuer Deduplizierung (thread-safe)
         # Spart KI-Kosten wenn identische Dokumente mehrfach verarbeitet werden
         self._classification_cache: dict = {}  # hash -> (target_box, category, new_filename, vu_name, classification_source, classification_confidence, classification_reason)
         self._cache_lock = threading.Lock()
+        # KI-Einstellungen (einmal pro Verarbeitungslauf geladen)
+        self._ai_settings: Optional[dict] = None
+        # Dokumenten-Regeln (einmal pro Verarbeitungslauf geladen)
+        self._doc_rules: Optional[DocumentRulesSettings] = None
         
     def _get_openrouter(self) -> OpenRouterClient:
         """Lazy-Init des OpenRouter-Clients."""
@@ -132,6 +142,70 @@ class DocumentProcessor:
             self._classification_cache[content_hash] = result
             logger.debug(f"Klassifikation gecached fuer Hash {content_hash[:12]}...")
     
+    def _load_ai_settings(self) -> dict:
+        """
+        Laedt KI-Einstellungen vom Server (einmal pro Verarbeitungslauf).
+        
+        Cached das Ergebnis in self._ai_settings, damit nicht pro Dokument
+        ein API-Call gemacht wird.
+        
+        Returns:
+            Dict mit stage1_*, stage2_* Feldern oder leeres Dict bei Fehler
+        """
+        if self._ai_settings is not None:
+            return self._ai_settings
+        
+        try:
+            self._ai_settings = self.settings_api.get_ai_settings()
+            if self._ai_settings:
+                logger.info(
+                    f"KI-Settings geladen: S1={self._ai_settings.get('stage1_model')}, "
+                    f"S2={'aktiv' if self._ai_settings.get('stage2_enabled') else 'deaktiviert'} "
+                    f"({self._ai_settings.get('stage2_model')})"
+                )
+            else:
+                logger.warning("KI-Settings leer, verwende Defaults")
+                self._ai_settings = {}
+        except Exception as e:
+            logger.warning(f"KI-Settings konnten nicht geladen werden, verwende Defaults: {e}")
+            self._ai_settings = {}
+        
+        return self._ai_settings
+    
+    def _get_classify_kwargs(self) -> dict:
+        """
+        Erstellt die kwargs fuer classify_sparte_with_date() aus den geladenen Settings.
+        
+        Returns:
+            Dict mit stage1_*, stage2_* Parametern oder leeres Dict (Defaults)
+        """
+        settings = self._load_ai_settings()
+        if not settings:
+            return {}
+        
+        kwargs = {}
+        
+        # Stufe 1
+        if settings.get('stage1_prompt'):
+            kwargs['stage1_prompt'] = settings['stage1_prompt']
+        if settings.get('stage1_model'):
+            kwargs['stage1_model'] = settings['stage1_model']
+        if settings.get('stage1_max_tokens'):
+            kwargs['stage1_max_tokens'] = int(settings['stage1_max_tokens'])
+        
+        # Stufe 2
+        kwargs['stage2_enabled'] = bool(settings.get('stage2_enabled', True))
+        if settings.get('stage2_prompt'):
+            kwargs['stage2_prompt'] = settings['stage2_prompt']
+        if settings.get('stage2_model'):
+            kwargs['stage2_model'] = settings['stage2_model']
+        if settings.get('stage2_max_tokens'):
+            kwargs['stage2_max_tokens'] = int(settings['stage2_max_tokens'])
+        if settings.get('stage2_trigger'):
+            kwargs['stage2_trigger'] = settings['stage2_trigger']
+        
+        return kwargs
+    
     def process_inbox(self, 
                       progress_callback: Optional[Callable[[int, int, str], None]] = None,
                       max_workers: int = DEFAULT_MAX_WORKERS
@@ -153,6 +227,14 @@ class DocumentProcessor:
         """
         results = []
         start_time = datetime.now()
+        
+        # KI-Settings fuer diesen Lauf laden (einmalig, nicht pro Dokument)
+        self._ai_settings = None  # Cache zuruecksetzen
+        self._load_ai_settings()
+        
+        # Dokumenten-Regeln fuer diesen Lauf laden (einmalig)
+        self._doc_rules = None
+        self._load_document_rules()
         
         # Dokumente aus Eingangsbox holen
         inbox_docs = self.docs_api.list_by_box('eingang')
@@ -181,12 +263,23 @@ class DocumentProcessor:
         # KOSTEN-TRACKING: Guthaben VOR Verarbeitung
         # ============================================
         credits_before = None
+        credits_provider = 'openrouter'
         try:
             openrouter = self._get_openrouter()
             credits_info = openrouter.get_credits()
             if credits_info:
-                credits_before = credits_info.get('balance', 0.0)
-                logger.info(f"OpenRouter-Guthaben vor Verarbeitung: ${credits_before:.6f} USD")
+                credits_provider = credits_info.get('provider', 'openrouter')
+                if credits_provider == 'openai':
+                    usage_usd = credits_info.get('total_usage')
+                    period = credits_info.get('period', '')
+                    if usage_usd is not None:
+                        logger.info(f"OpenAI-Kosten im Zeitraum {period}: ${usage_usd:.4f} USD")
+                    else:
+                        logger.info("OpenAI aktiv (Billing-API nicht verfuegbar fuer Service-Accounts)")
+                    credits_before = usage_usd
+                else:
+                    credits_before = credits_info.get('balance', 0.0)
+                    logger.info(f"OpenRouter-Guthaben vor Verarbeitung: ${credits_before:.6f} USD")
         except Exception as e:
             logger.warning(f"Konnte Guthaben nicht abrufen: {e}")
         
@@ -206,7 +299,12 @@ class DocumentProcessor:
                 current = completed_count[0]
             
             if progress_callback:
-                status = "OK" if result.success else "FEHLER"
+                if result.success:
+                    status = "OK"
+                elif result.error:
+                    status = "FEHLER"
+                else:
+                    status = "SONSTIGE"
                 progress_callback(current, total, f"{status}: {doc.original_filename}")
             
             return result
@@ -228,8 +326,10 @@ class DocumentProcessor:
                     
                     if result.success:
                         logger.info(f"Dokument {doc.id} -> {result.target_box}: {result.new_filename or doc.original_filename}")
-                    else:
+                    elif result.error:
                         logger.error(f"Dokument {doc.id} Fehler: {result.error}")
+                    else:
+                        logger.info(f"Dokument {doc.id} -> {result.target_box}: nicht zugeordnet ({result.category or 'unbekannt'})")
                         
                 except Exception as e:
                     logger.exception(f"Unerwarteter Fehler bei Dokument {doc.id}")
@@ -256,9 +356,17 @@ class DocumentProcessor:
         successful_count = sum(1 for r in results if r.success)
         failed_count = total - successful_count
         
-        logger.info(f"Verarbeitung abgeschlossen: {successful_count}/{total} erfolgreich in {duration:.1f}s")
+        # Akkumulierte Kosten aus den Einzel-Ergebnissen
+        accumulated_cost = sum(r.cost_usd for r in results)
+        cost_per_doc = accumulated_cost / total if total > 0 else 0.0
         
-        if credits_before is not None:
+        logger.info(f"Verarbeitung abgeschlossen: {successful_count}/{total} erfolgreich in {duration:.1f}s")
+        logger.info(f"Akkumulierte KI-Kosten: ${accumulated_cost:.6f} USD (${cost_per_doc:.6f}/Dok)")
+        
+        if credits_provider == 'openai':
+            if credits_before is not None:
+                logger.info(f"OpenAI-Usage vor Verarbeitung: ${credits_before:.6f} USD")
+        elif credits_before is not None:
             logger.info(f"Guthaben vor Verarbeitung: ${credits_before:.6f} USD")
             logger.info("Kosten-Berechnung erfolgt verzoegert (OpenRouter-Guthaben braucht 1-3 Min)")
         
@@ -269,9 +377,10 @@ class DocumentProcessor:
             failed_documents=failed_count,
             duration_seconds=duration,
             credits_before=credits_before,
-            credits_after=None,  # Wird spaeter per Timer ermittelt
-            total_cost_usd=None,  # Wird spaeter berechnet
-            cost_per_document_usd=None  # Wird spaeter berechnet
+            credits_after=None,
+            total_cost_usd=accumulated_cost,
+            cost_per_document_usd=cost_per_doc,
+            provider=credits_provider
         )
     
     def log_batch_complete(self,
@@ -293,12 +402,15 @@ class DocumentProcessor:
                 'failed_documents': batch_result.failed_documents,
                 'duration_seconds': round(batch_result.duration_seconds, 2),
                 'timestamp': datetime.now().isoformat(),
-                'cost_pending': True  # Kosten werden spaeter nachgetragen
+                'provider': batch_result.provider,
+                'cost_pending': True
             }
             
-            # Credits-Before schon mal speichern
             if batch_result.credits_before is not None:
                 action_details['credits_before_usd'] = round(batch_result.credits_before, 6)
+            if batch_result.total_cost_usd is not None and batch_result.total_cost_usd > 0:
+                action_details['accumulated_cost_usd'] = round(batch_result.total_cost_usd, 6)
+                action_details['cost_per_document_usd'] = round(batch_result.cost_per_document_usd or 0, 8)
             
             entry_id = self.history_api.create(
                 document_id=None,
@@ -322,46 +434,64 @@ class DocumentProcessor:
     def log_delayed_costs(self,
                           history_entry_id: int,
                           batch_result: 'BatchProcessingResult',
-                          credits_after: float) -> Optional[dict]:
+                          credits_after: float,
+                          provider: str = 'openrouter') -> Optional[dict]:
         """
         Traegt die Kosten nachtraeglich in einen bestehenden History-Eintrag ein.
         
-        Wird aufgerufen, nachdem der verzoegerte Guthaben-Check abgeschlossen ist
-        (typischerweise 90 Sekunden nach Verarbeitung).
+        Kosten-Quellen (nach Prioritaet):
+        1. Akkumulierte Server-Kosten aus ai_requests (praezise, provider-unabhaengig)
+        2. OpenRouter Balance-Diff (Fallback fuer OpenRouter)
         
         Args:
             history_entry_id: ID des batch_complete History-Eintrags
-            batch_result: Das BatchProcessingResult mit credits_before
+            batch_result: Das BatchProcessingResult mit akkumulierten Kosten
             credits_after: Das Guthaben NACH der Verarbeitung (verzoegert abgefragt)
+            provider: Aktiver Provider ('openrouter' oder 'openai')
             
         Returns:
             Dict mit berechneten Kosten oder None bei Fehler
         """
         try:
-            credits_before = batch_result.credits_before
-            if credits_before is None:
-                logger.warning("Kein credits_before vorhanden, Kosten-Berechnung nicht moeglich")
-                return None
-            
-            total_cost = credits_before - credits_after
             successful_count = batch_result.successful_documents
-            cost_per_doc = total_cost / successful_count if successful_count > 0 else 0.0
             
-            logger.info(f"=== VERZOEGERTE KOSTEN-ZUSAMMENFASSUNG ===")
-            logger.info(f"Guthaben vorher:  ${credits_before:.6f} USD")
-            logger.info(f"Guthaben nachher: ${credits_after:.6f} USD")
+            # Primaere Quelle: akkumulierte Server-Kosten (aus model_pricing)
+            accumulated_cost = batch_result.total_cost_usd
+            
+            if accumulated_cost and accumulated_cost > 0:
+                total_cost = accumulated_cost
+                cost_source = 'accumulated'
+            elif provider == 'openrouter' and batch_result.credits_before is not None:
+                total_cost = batch_result.credits_before - (credits_after or 0)
+                cost_source = 'balance_diff'
+            else:
+                total_cost = accumulated_cost or 0
+                cost_source = 'accumulated_fallback'
+            
+            cost_per_doc = total_cost / successful_count if successful_count > 0 else (
+                total_cost / batch_result.total_documents if batch_result.total_documents > 0 else 0
+            )
+            
+            logger.info(f"=== KOSTEN-ZUSAMMENFASSUNG ({provider.upper()}, {cost_source}) ===")
+            if provider == 'openrouter' and batch_result.credits_before is not None:
+                logger.info(f"Guthaben vorher:  ${batch_result.credits_before:.6f} USD")
+                logger.info(f"Guthaben nachher: ${credits_after:.6f} USD")
+                balance_diff = batch_result.credits_before - (credits_after or 0)
+                logger.info(f"Balance-Diff:     ${balance_diff:.6f} USD")
+            logger.info(f"Server-Kosten:    ${accumulated_cost or 0:.6f} USD (aus model_pricing)")
             logger.info(f"Gesamtkosten:     ${total_cost:.6f} USD")
             if cost_per_doc:
-                logger.info(f"Kosten/Dokument:  ${cost_per_doc:.8f} USD ({successful_count} Dokumente)")
+                logger.info(f"Kosten/Dokument:  ${cost_per_doc:.8f} USD ({batch_result.total_documents} Dokumente)")
             logger.info(f"==========================================")
             
-            # Neuen History-Eintrag fuer die Kosten erstellen
-            # (Update des bestehenden Eintrags ist komplexer, daher neuer Eintrag)
             cost_details = {
                 'batch_type': 'cost_update',
                 'reference_entry_id': history_entry_id,
-                'credits_before_usd': round(credits_before, 6),
-                'credits_after_usd': round(credits_after, 6),
+                'provider': provider,
+                'cost_source': cost_source,
+                'accumulated_cost_usd': round(accumulated_cost or 0, 6),
+                'credits_before_usd': round(batch_result.credits_before or 0, 6),
+                'credits_after_usd': round(credits_after or 0, 6),
                 'total_cost_usd': round(total_cost, 6),
                 'cost_per_document_usd': round(cost_per_doc, 8),
                 'total_documents': batch_result.total_documents,
@@ -385,11 +515,13 @@ class DocumentProcessor:
             )
             
             return {
-                'credits_before': credits_before,
+                'credits_before': batch_result.credits_before,
                 'credits_after': credits_after,
                 'total_cost_usd': total_cost,
                 'cost_per_document_usd': cost_per_doc,
-                'successful_documents': successful_count
+                'successful_documents': successful_count,
+                'provider': provider,
+                'cost_source': cost_source
             }
             
         except Exception as e:
@@ -400,23 +532,25 @@ class DocumentProcessor:
         """
         Verarbeitet ein einzelnes Dokument.
         
-        LOGIK (BiPRO-Code-basiert, optimiert, v1.0.4):
+        LOGIK (BiPRO-Code-basiert, optimiert, v2.0.5):
         1. In Verarbeitungsbox verschieben
         1b. Content-Hash-Deduplizierung (spart 100% KI-Kosten bei Duplikaten)
         2. XML-Rohdateien -> Roh Archiv (keine KI)
         3. GDV per BiPRO-Code (999xxx) + Content-Verifikation -> GDV Box (KEINE KI!)
-           Bei fehlgeschlagener Verifikation: Fallback nach Dateiendung
+           Bei fehlgeschlagener Verifikation: PDF validieren + KI-Klassifikation
         4. GDV per Dateiendung/Content -> GDV Box + Metadaten aus Datensatz (KEINE KI!)
         5. PDF mit BiPRO-Code + PDF-Validierung vor KI:
            a) Courtage (300xxx) -> Courtage Box + KI nur fuer VU+Datum (~200 Token)
            b) VU-Dokumente -> Sparten-KI + minimale Benennung
         6. PDF ohne BiPRO-Code + PDF-Validierung vor KI -> Sparten-KI
-        7. Rest -> Sonstige
+        7. Tabellarische Dateien (CSV/TSV/Excel) -> KI-Klassifikation per Text
+        8. Rest -> Sonstige
         
         KOSTENOPTIMIERUNGEN:
         - Content-Hash-Cache: Duplikate werden ohne KI klassifiziert
         - PDF-Validierung: Korrupte PDFs ueberspringen KI (-> Beschaedigte_Datei)
-        - GDV-Verifikation: 999er-Codes mit nicht-GDV-Inhalt werden als korrupt behandelt
+        - Verschluesselungserkennung: Versuch mit bekannten Passwoertern zu entsperren
+        - GDV-Verifikation: 999er-Codes mit nicht-GDV-Inhalt -> KI-Klassifikation fuer gueltige PDFs
         
         Args:
             doc: Das zu verarbeitende Dokument
@@ -426,6 +560,7 @@ class DocumentProcessor:
         """
         start_time = datetime.now()
         previous_status = doc.processing_status or 'pending'
+        _doc_cost_usd = 0.0
         
         try:
             # 0. Re-Verifikation: Dokument nochmal frisch vom Server holen
@@ -465,6 +600,14 @@ class DocumentProcessor:
             classification_source = None      # ki_gpt4o, rule_bipro, fallback, etc.
             classification_confidence = None  # high, medium, low
             classification_reason = None      # Begruendung
+            
+            # AI-Data Persistierung: Volltext und ki_result werden in den
+            # Verarbeitungszweigen gesetzt und nach Archive gespeichert.
+            # WICHTIG: Volltext muss INNERHALB des tempfile-Blocks extrahiert werden,
+            # da der pdf_path danach nicht mehr existiert!
+            _ai_extracted_text = None   # Volltext aller Seiten (String)
+            _ai_page_count = None       # Anzahl Seiten mit Text
+            _ki_result_for_ai = None    # KI-Ergebnis mit _usage/_raw_response/_prompt_text
             
             # 1b. Content-Hash-Deduplizierung: Wenn identisches Dokument bereits
             #     klassifiziert wurde, KI ueberspringen (spart 100% Token-Kosten)
@@ -532,24 +675,109 @@ class DocumentProcessor:
                 except Exception as e:
                     logger.warning(f"GDV-Verifikation fehlgeschlagen (BiPRO): {e}")
                 
-                # Wenn GDV-Content NICHT verifiziert: Datei nach Endung weiterverarbeiten
-                # (z.B. korrupte PDFs mit 999xxx-Code die kein GDV sind)
+                # Wenn GDV-Content NICHT verifiziert: PDF validieren und ggf. KI-Klassifikation
+                # VEMA und andere VUs liefern unter 999xxx-Codes teilweise echte PDFs
+                # (z.B. Concordia Lebensversicherung Beispielrechnungen), die NICHT GDV sind.
+                # Diese PDFs sind NICHT beschaedigt - der BiPRO-Code war nur falsch.
                 if not gdv_verified:
-                    logger.warning(
-                        f"BiPRO-Code {doc.bipro_category} behauptet GDV, aber Content-Verifikation fehlgeschlagen: "
-                        f"{doc.original_filename} -> Behandlung nach Dateiendung"
-                    )
-                    # Fallback: nach Dateiendung behandeln (wird in Schritt 4-7 aufgefangen)
                     ext = doc.file_extension.lower()
                     if ext == '.pdf' or doc.is_pdf:
-                        # Korruptes PDF -> Sonstige mit Beschaedigte_Datei
-                        target_box = 'sonstige'
-                        category = 'pdf_corrupt_bipro'
-                        new_filename = "Beschaedigte_Datei.pdf"
-                        classification_source = 'rule_validation'
-                        classification_confidence = 'high'
-                        classification_reason = f'BiPRO-Code {doc.bipro_category} aber kein gueltiger GDV/PDF-Inhalt'
+                        logger.info(
+                            f"BiPRO-Code {doc.bipro_category} ist kein GDV: "
+                            f"{doc.original_filename} -> Pruefe PDF und starte KI-Klassifikation"
+                        )
+                        try:
+                            with tempfile.TemporaryDirectory() as tmpdir_fallback:
+                                local_path_fb = self.docs_api.download(doc.id, tmpdir_fallback)
+                                if local_path_fb:
+                                    is_valid, repaired_path = self._validate_pdf(local_path_fb)
+                                    if not is_valid:
+                                        # PDF korrupt oder verschluesselt (kein Passwort bekannt)
+                                        target_box = 'sonstige'
+                                        # Verschluesselt vs. korrupt unterscheiden
+                                        try:
+                                            import fitz as _fitz_check
+                                            _doc_check = _fitz_check.open(local_path_fb)
+                                            _is_enc = _doc_check.is_encrypted and _doc_check.needs_pass
+                                            _doc_check.close()
+                                        except Exception:
+                                            _is_enc = False
+                                        if _is_enc:
+                                            category = 'pdf_encrypted'
+                                            # Original-Dateiname beibehalten bei verschluesselten PDFs
+                                            new_filename = None
+                                            classification_source = 'rule_validation'
+                                            classification_confidence = 'high'
+                                            classification_reason = f'BiPRO-Code {doc.bipro_category} + PDF verschluesselt (kein Passwort)'
+                                        else:
+                                            category = 'pdf_corrupt_bipro'
+                                            new_filename = "Beschaedigte_Datei.pdf"
+                                            classification_source = 'rule_validation'
+                                            classification_confidence = 'high'
+                                            classification_reason = f'BiPRO-Code {doc.bipro_category} + PDF korrupt/nicht lesbar'
+                                    else:
+                                        # PDF ist gueltig -> KI-Klassifikation (wie Schritt 5b/6)
+                                        pdf_path = repaired_path or local_path_fb
+                                        self._check_and_log_empty_pages(doc, pdf_path)
+                                        openrouter = self._get_openrouter()
+                                        ki_result = openrouter.classify_sparte_with_date(pdf_path, **self._get_classify_kwargs())
+                                        if ki_result:
+                                            _doc_cost_usd += ki_result.get('_server_cost_usd', 0) or 0
+                                        
+                                        _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                        _ki_result_for_ai = ki_result
+                                        
+                                        if ki_result is None:
+                                            ki_result = {}
+                                        
+                                        sparte = ki_result.get('sparte', 'sonstige')
+                                        date_iso = ki_result.get('document_date_iso')
+                                        ki_vu_name = ki_result.get('vu_name')
+                                        ki_confidence = ki_result.get('confidence', 'medium')
+                                        ki_doc_name = ki_result.get('document_name')
+                                        
+                                        target_box = sparte
+                                        category = f'sparte_{sparte}'
+                                        
+                                        classification_source = 'ki_gpt4o_mini' if ki_confidence == 'high' else 'ki_gpt4o_zweistufig'
+                                        classification_confidence = ki_confidence
+                                        classification_reason = (
+                                            f'KI-Klassifikation (BiPRO 999xxx nicht-GDV PDF): '
+                                            f'{sparte} ({ki_confidence})'
+                                        )
+                                        
+                                        logger.info(
+                                            f"999xxx-Fallback KI: {doc.original_filename} -> "
+                                            f"{sparte} (confidence: {ki_confidence})"
+                                        )
+                                        
+                                        # Benennung (analog Schritt 6)
+                                        vu_slug = self._slugify(ki_vu_name) if ki_vu_name else 'Unbekannt'
+                                        if sparte == 'courtage':
+                                            if date_iso:
+                                                new_filename = f"{vu_slug}_Courtage_{date_iso}.pdf"
+                                            else:
+                                                new_filename = f"{vu_slug}_Courtage.pdf"
+                                        elif sparte == 'sonstige' and ki_doc_name:
+                                            doc_slug = self._slugify(ki_doc_name)
+                                            new_filename = f"{vu_slug}_{doc_slug}.pdf"
+                                        elif sparte in ['sach', 'leben', 'kranken']:
+                                            new_filename = f"{vu_slug}_{sparte.capitalize()}.pdf"
+                                        elif date_iso:
+                                            new_filename = f"{vu_slug}_{sparte.capitalize()}_{date_iso}.pdf"
+                        except Exception as e:
+                            logger.warning(f"999xxx-Fallback KI-Klassifikation fehlgeschlagen: {e}")
+                            target_box = 'sonstige'
+                            category = 'pdf_error'
+                            new_filename = "Beschaedigte_Datei.pdf"
+                            classification_source = 'fallback'
+                            classification_confidence = 'low'
+                            classification_reason = f'BiPRO 999xxx Fallback KI fehlgeschlagen: {str(e)[:100]}'
                     else:
+                        logger.warning(
+                            f"BiPRO-Code {doc.bipro_category} behauptet GDV, aber Content-Verifikation fehlgeschlagen: "
+                            f"{doc.original_filename} -> kein PDF, nicht klassifizierbar"
+                        )
                         target_box = 'sonstige'
                         category = 'unknown_bipro'
                         classification_source = 'fallback'
@@ -623,8 +851,15 @@ class DocumentProcessor:
                                     new_filename = "Beschaedigte_Datei_Courtage.pdf"
                                 else:
                                     pdf_path = repaired_path or local_path
+                                    # Leere-Seiten-Erkennung (informativ, blockiert nicht)
+                                    self._check_and_log_empty_pages(doc, pdf_path)
                                     openrouter = self._get_openrouter()
                                     result = openrouter.classify_courtage_minimal(pdf_path)
+                                    
+                                    # AI-Data: Volltext extrahieren + ki_result merken
+                                    # (muss im tempfile-Block passieren, da pdf_path danach geloescht wird)
+                                    _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                    _ki_result_for_ai = result
                                     
                                     if result:
                                         insurer = result.get('insurer') or 'Unbekannt'
@@ -660,17 +895,41 @@ class DocumentProcessor:
                                 # PDF-Validierung vor KI-Call (spart Tokens bei korrupten PDFs)
                                 is_valid, repaired_path = self._validate_pdf(local_path)
                                 if not is_valid:
-                                    logger.warning(f"VU-PDF korrupt, ueberspringe KI: {doc.original_filename}")
                                     target_box = 'sonstige'
-                                    category = 'pdf_corrupt'
-                                    new_filename = "Beschaedigte_Datei.pdf"
-                                    classification_source = 'rule_validation'
-                                    classification_confidence = 'high'
-                                    classification_reason = f'PDF korrupt/nicht lesbar, KI uebersprungen'
+                                    # Verschluesselt vs. korrupt unterscheiden
+                                    try:
+                                        import fitz as _fitz_vu
+                                        _doc_vu = _fitz_vu.open(local_path)
+                                        _enc_vu = _doc_vu.is_encrypted and _doc_vu.needs_pass
+                                        _doc_vu.close()
+                                    except Exception:
+                                        _enc_vu = False
+                                    if _enc_vu:
+                                        logger.warning(f"VU-PDF verschluesselt, kein Passwort: {doc.original_filename}")
+                                        category = 'pdf_encrypted'
+                                        new_filename = None
+                                        classification_source = 'rule_validation'
+                                        classification_confidence = 'high'
+                                        classification_reason = f'PDF verschluesselt (kein Passwort), KI uebersprungen'
+                                    else:
+                                        logger.warning(f"VU-PDF korrupt, ueberspringe KI: {doc.original_filename}")
+                                        category = 'pdf_corrupt'
+                                        new_filename = "Beschaedigte_Datei.pdf"
+                                        classification_source = 'rule_validation'
+                                        classification_confidence = 'high'
+                                        classification_reason = f'PDF korrupt/nicht lesbar, KI uebersprungen'
                                 else:
                                     pdf_path = repaired_path or local_path
+                                    # Leere-Seiten-Erkennung (informativ, blockiert nicht)
+                                    self._check_and_log_empty_pages(doc, pdf_path)
                                     openrouter = self._get_openrouter()
-                                    ki_result = openrouter.classify_sparte_with_date(pdf_path)
+                                    ki_result = openrouter.classify_sparte_with_date(pdf_path, **self._get_classify_kwargs())
+                                    if ki_result:
+                                        _doc_cost_usd += ki_result.get('_server_cost_usd', 0) or 0
+                                    
+                                    # AI-Data: Volltext extrahieren + ki_result merken
+                                    _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                    _ki_result_for_ai = ki_result
                                     
                                     # Schutz gegen None-Rueckgabe bei KI-Fehler
                                     if ki_result is None:
@@ -733,17 +992,41 @@ class DocumentProcessor:
                             # PDF-Validierung vor KI-Call (spart Tokens bei korrupten PDFs)
                             is_valid, repaired_path = self._validate_pdf(local_path)
                             if not is_valid:
-                                logger.warning(f"PDF korrupt, ueberspringe KI: {doc.original_filename}")
                                 target_box = 'sonstige'
-                                category = 'pdf_corrupt'
-                                new_filename = "Beschaedigte_Datei.pdf"
-                                classification_source = 'rule_validation'
-                                classification_confidence = 'high'
-                                classification_reason = f'PDF korrupt/nicht lesbar, KI uebersprungen'
+                                # Verschluesselt vs. korrupt unterscheiden
+                                try:
+                                    import fitz as _fitz_s6
+                                    _doc_s6 = _fitz_s6.open(local_path)
+                                    _enc_s6 = _doc_s6.is_encrypted and _doc_s6.needs_pass
+                                    _doc_s6.close()
+                                except Exception:
+                                    _enc_s6 = False
+                                if _enc_s6:
+                                    logger.warning(f"PDF verschluesselt, kein Passwort: {doc.original_filename}")
+                                    category = 'pdf_encrypted'
+                                    new_filename = None
+                                    classification_source = 'rule_validation'
+                                    classification_confidence = 'high'
+                                    classification_reason = f'PDF verschluesselt (kein Passwort), KI uebersprungen'
+                                else:
+                                    logger.warning(f"PDF korrupt, ueberspringe KI: {doc.original_filename}")
+                                    category = 'pdf_corrupt'
+                                    new_filename = "Beschaedigte_Datei.pdf"
+                                    classification_source = 'rule_validation'
+                                    classification_confidence = 'high'
+                                    classification_reason = f'PDF korrupt/nicht lesbar, KI uebersprungen'
                             else:
                                 pdf_path = repaired_path or local_path
+                                # Leere-Seiten-Erkennung (informativ, blockiert nicht)
+                                self._check_and_log_empty_pages(doc, pdf_path)
                                 openrouter = self._get_openrouter()
-                                ki_result = openrouter.classify_sparte_with_date(pdf_path)
+                                ki_result = openrouter.classify_sparte_with_date(pdf_path, **self._get_classify_kwargs())
+                                if ki_result:
+                                    _doc_cost_usd += ki_result.get('_server_cost_usd', 0) or 0
+                                
+                                # AI-Data: Volltext extrahieren + ki_result merken
+                                _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                _ki_result_for_ai = ki_result
                                 
                                 # Schutz gegen None-Rueckgabe bei KI-Fehler
                                 if ki_result is None:
@@ -788,7 +1071,52 @@ class DocumentProcessor:
                     classification_confidence = 'low'
                     classification_reason = f'KI-Klassifikation fehlgeschlagen: {str(e)[:100]}'
             
-            # 7. Rest (unbekannte Dateitypen) -> Sonstige
+            # 7. Tabellarische Dateien (CSV/TSV/Excel) -> KI-Klassifikation per Text
+            elif self._is_spreadsheet(doc):
+                logger.debug(f"Tabellendatei erkannt: {doc.original_filename}")
+                try:
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        local_path = self.docs_api.download(doc.id, tmpdir)
+                        if local_path:
+                            # Erste Zeilen als Text extrahieren fuer KI
+                            csv_text = self._extract_spreadsheet_text(local_path)
+                            if csv_text and csv_text.strip():
+                                openrouter = self._get_openrouter()
+                                ki_result = openrouter._classify_sparte_request(csv_text[:2500])
+                                
+                                _ai_extracted_text = csv_text
+                                _ai_page_count = 1
+                                _ki_result_for_ai = ki_result
+                                
+                                if ki_result is None:
+                                    ki_result = {}
+                                
+                                sparte = ki_result.get('sparte', 'sonstige')
+                                ki_vu_name = ki_result.get('vu_name')
+                                ki_confidence = ki_result.get('confidence', 'medium')
+                                
+                                target_box = sparte
+                                category = f'spreadsheet_{sparte}'
+                                classification_source = 'ki_spreadsheet'
+                                classification_confidence = ki_confidence
+                                classification_reason = f'Tabellendatei KI-klassifiziert: {sparte} ({ki_confidence})'
+                                
+                                logger.info(f"Tabelle klassifiziert: {doc.original_filename} -> {sparte} ({ki_confidence})")
+                            else:
+                                target_box = 'sonstige'
+                                category = 'spreadsheet_empty'
+                                classification_source = 'rule_pattern'
+                                classification_confidence = 'low'
+                                classification_reason = 'Tabellendatei ohne lesbaren Text'
+                except Exception as e:
+                    logger.warning(f"Tabellen-Klassifikation fehlgeschlagen: {e}")
+                    target_box = 'sonstige'
+                    category = 'spreadsheet_error'
+                    classification_source = 'fallback'
+                    classification_confidence = 'low'
+                    classification_reason = f'Tabellen-Klassifikation fehlgeschlagen: {str(e)[:100]}'
+            
+            # 8. Rest (unbekannte Dateitypen) -> Sonstige
             else:
                 target_box = 'sonstige'
                 category = 'unknown'
@@ -872,6 +1200,21 @@ class DocumentProcessor:
                               previous_status=current_status,
                               action_details={'final_box': target_box, 'new_filename': new_filename})
             
+            # Nachgelagerter Schritt: AI-Daten persistieren (Volltext + KI-Response)
+            # Fehler hier brechen die Verarbeitung NICHT ab
+            if _ai_extracted_text is not None or _ki_result_for_ai is not None:
+                try:
+                    self._persist_ai_data(doc, _ai_extracted_text, _ai_page_count, _ki_result_for_ai)
+                except Exception as ai_err:
+                    logger.warning(f"AI-Daten-Persistierung fehlgeschlagen fuer Dokument {doc.id}: {ai_err}")
+            
+            # Dokumenten-Regeln anwenden (Duplikate, leere Seiten)
+            # Fehler hier brechen die Verarbeitung NICHT ab
+            try:
+                self._apply_document_rules(doc)
+            except Exception as rule_err:
+                logger.warning(f"Dokumenten-Regeln fehlgeschlagen fuer Dokument {doc.id}: {rule_err}")
+            
             # Erfolg-Logik:
             # - Erfolgreich = GDV, Courtage, Sach, Leben, Kranken, Roh
             # - Nicht zugeordnet = Sonstige (wird als "failed" gezaehlt)
@@ -883,7 +1226,8 @@ class DocumentProcessor:
                 success=is_success,
                 target_box=target_box,
                 category=category,
-                new_filename=new_filename
+                new_filename=new_filename,
+                cost_usd=_doc_cost_usd
             )
             
         except Exception as e:
@@ -917,16 +1261,17 @@ class DocumentProcessor:
     
     def _validate_pdf(self, pdf_path: str) -> Tuple[bool, Optional[str]]:
         """
-        Validiert ein PDF und versucht bei Fehler eine Reparatur.
+        Validiert ein PDF, erkennt Verschluesselung und versucht bei Fehler Reparatur.
         
         Kostenoptimiert: Verhindert teure KI-Aufrufe fuer korrupte PDFs.
+        Verschluesselte PDFs werden automatisch mit bekannten Passwoertern entsperrt.
         
         Args:
             pdf_path: Pfad zur PDF-Datei
             
         Returns:
-            (is_valid, repaired_path) - is_valid=True wenn OK oder repariert,
-            repaired_path = Pfad zur reparierten Datei (oder None wenn original OK)
+            (is_valid, repaired_path) - is_valid=True wenn OK oder repariert/entsperrt,
+            repaired_path = Pfad zur reparierten/entsperrten Datei (oder None wenn original OK)
         """
         try:
             import fitz  # PyMuPDF
@@ -937,7 +1282,28 @@ class DocumentProcessor:
         try:
             doc = fitz.open(pdf_path)
             page_count = len(doc)
+            is_encrypted = doc.is_encrypted
+            needs_pass = doc.needs_pass if is_encrypted else False
             doc.close()
+            
+            # Verschluesselte PDF: Versuche mit bekannten Passwoertern zu entsperren
+            if is_encrypted and needs_pass:
+                logger.info(f"PDF ist verschluesselt, versuche Entsperrung: {pdf_path}")
+                try:
+                    from services.pdf_unlock import unlock_pdf_if_needed
+                    # api_client aus self holen (DocumentProcessor hat self.docs_api.client)
+                    api_client = getattr(self.docs_api, 'client', None)
+                    unlocked = unlock_pdf_if_needed(pdf_path, api_client=api_client)
+                    if unlocked:
+                        logger.info(f"PDF erfolgreich entsperrt: {pdf_path}")
+                        return (True, None)  # Original wurde in-place ueberschrieben
+                except ValueError as ve:
+                    # Kein Passwort passt - PDF bleibt verschluesselt
+                    logger.warning(f"PDF-Entsperrung fehlgeschlagen: {ve}")
+                    return (False, None)
+                except Exception as unlock_err:
+                    logger.warning(f"PDF-Entsperrung Fehler: {unlock_err}")
+                    return (False, None)
             
             if page_count > 0:
                 return (True, None)  # PDF OK
@@ -983,6 +1349,359 @@ class DocumentProcessor:
                     pass
                 return (False, None)
     
+    def _check_and_log_empty_pages(self, doc: Document, pdf_path: str) -> None:
+        """
+        Prueft ein PDF auf leere Seiten und speichert das Ergebnis in der DB.
+        
+        Dieser Schritt ist rein informativ und blockiert NICHT die weitere
+        Verarbeitung (KI-Klassifikation, Benennung, Box-Zuweisung laufen
+        danach ganz normal weiter).
+        
+        Wirkung:
+            - Speichert empty_page_count + total_page_count via PUT /documents/{id}
+              (direkter API-Call, da DocumentsAPI.update() diese Felder nicht kennt)
+            - Legt bei Fund einen Activity-Log-Eintrag 'empty_pages_detected' an
+            - Bei Fehler: Warnung loggen, Pipeline laeuft weiter (kein Abbruch)
+        
+        Args:
+            doc: Das Document-Objekt
+            pdf_path: Pfad zur (ggf. reparierten) PDF-Datei
+        """
+        try:
+            from services.empty_page_detector import get_empty_pages
+            
+            empty_indices, total_pages = get_empty_pages(pdf_path)
+            empty_count = len(empty_indices)
+            
+            if total_pages == 0:
+                # Kein sinnvolles Ergebnis (z.B. PyMuPDF nicht installiert)
+                return
+            
+            # In DB speichern (direkter API-Call, da update() diese Felder nicht kennt)
+            try:
+                self.docs_api.client.put(
+                    f'/documents/{doc.id}',
+                    json_data={
+                        'empty_page_count': empty_count,
+                        'total_page_count': total_pages
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Leere-Seiten-Werte konnten nicht gespeichert werden fuer Dokument {doc.id}: {e}")
+            
+            # History loggen wenn leere Seiten gefunden
+            if empty_count > 0:
+                if empty_count == total_pages:
+                    detail_msg = f"PDF komplett leer ({total_pages} Seiten)"
+                else:
+                    detail_msg = f"Leere Seiten erkannt: {empty_count} von {total_pages} (Indizes: {empty_indices})"
+                
+                self._log_history(
+                    document_id=doc.id,
+                    action='empty_pages_detected',
+                    new_status='processing',
+                    success=True,
+                    action_details={
+                        'empty_page_count': empty_count,
+                        'total_page_count': total_pages,
+                        'empty_page_indices': empty_indices,
+                        'detail': detail_msg
+                    }
+                )
+                logger.info(f"[Leere Seiten] {doc.original_filename}: {detail_msg}")
+                
+        except Exception as e:
+            # Fehler in der Leere-Seiten-Erkennung darf die Pipeline NICHT blockieren
+            logger.warning(f"Leere-Seiten-Erkennung fehlgeschlagen fuer {doc.original_filename}: {e}")
+    
+    def _extract_full_text(self, pdf_path: str) -> tuple:
+        """
+        Extrahiert Volltext ueber ALLE Seiten einer PDF.
+        
+        Muss INNERHALB des tempfile-Blocks aufgerufen werden,
+        da pdf_path danach nicht mehr existiert.
+        
+        Args:
+            pdf_path: Lokaler Pfad zur PDF-Datei
+            
+        Returns:
+            Tuple (extracted_text: str, pages_with_text: int)
+        """
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            logger.warning("PyMuPDF nicht verfuegbar fuer Volltext-Extraktion")
+            return ("", 0)
+        
+        extracted_text = ""
+        pages_with_text = 0
+        
+        try:
+            pdf_doc = fitz.open(pdf_path)
+            for page in pdf_doc:
+                page_text = page.get_text("text")
+                if page_text and page_text.strip():
+                    extracted_text += page_text + "\n"
+                    pages_with_text += 1
+            pdf_doc.close()
+        except Exception as e:
+            logger.warning(f"Volltext-Extraktion fehlgeschlagen: {e}")
+        
+        return (extracted_text, pages_with_text)
+    
+    def _persist_ai_data(self, doc: Document, extracted_text: str,
+                         extracted_page_count: int, ki_result: dict) -> None:
+        """
+        Persistiert Volltext + KI-Daten in document_ai_data Tabelle.
+        
+        Laeuft NACH der Klassifikation/Rename/Archive. Ein Fehler hier
+        bricht die Verarbeitung NICHT ab (wird im Aufrufer gefangen).
+        
+        Args:
+            doc: Das verarbeitete Dokument
+            extracted_text: Bereits extrahierter Volltext (alle Seiten)
+            extracted_page_count: Anzahl Seiten mit tatsaechlichem Text
+            ki_result: KI-Ergebnis mit optionalen _usage/_raw_response/_prompt_text
+        """
+        import hashlib
+        
+        # 1. Extraction-Method bestimmen
+        extraction_method = 'text' if (extracted_text and extracted_text.strip()) else 'none'
+        
+        # 2. SHA256 des Textes berechnen
+        text_sha256 = None
+        if extracted_text and extracted_text.strip():
+            text_sha256 = hashlib.sha256(extracted_text.encode('utf-8')).hexdigest()
+        
+        # 3. KI-Metadaten aus ki_result extrahieren
+        ai_full_response = None
+        ai_prompt_text = None
+        ai_model = None
+        ai_stage = None
+        prompt_tokens = None
+        completion_tokens = None
+        total_tokens = None
+        
+        if ki_result and isinstance(ki_result, dict):
+            # Raw-Response (kann String oder Dict sein bei zweistufig)
+            raw_resp = ki_result.get('_raw_response')
+            if raw_resp is not None:
+                import json as _json
+                if isinstance(raw_resp, dict):
+                    ai_full_response = _json.dumps(raw_resp, ensure_ascii=False)
+                else:
+                    ai_full_response = str(raw_resp)
+            
+            # Prompt-Text (kann String oder Dict sein bei zweistufig)
+            prompt = ki_result.get('_prompt_text')
+            if prompt is not None:
+                import json as _json
+                if isinstance(prompt, dict):
+                    ai_prompt_text = _json.dumps(prompt, ensure_ascii=False)
+                else:
+                    ai_prompt_text = str(prompt)
+            
+            ai_model = ki_result.get('_ai_model')
+            ai_stage = ki_result.get('_ai_stage')
+            
+            # Token-Verbrauch
+            usage = ki_result.get('_usage', {})
+            if usage:
+                prompt_tokens = usage.get('prompt_tokens')
+                completion_tokens = usage.get('completion_tokens')
+                total_tokens = usage.get('total_tokens')
+        
+        # 4. Zeichenzaehler berechnen (schnelle Groessenanalyse ohne Text laden)
+        text_char_count = len(extracted_text) if extracted_text else 0
+        ai_response_char_count = len(ai_full_response) if ai_full_response else 0
+        
+        # 5. API-Call: POST /documents/{id}/ai-data
+        data = {
+            'extracted_text': extracted_text if (extracted_text and extracted_text.strip()) else None,
+            'extracted_text_sha256': text_sha256,
+            'extraction_method': extraction_method,
+            'extracted_page_count': extracted_page_count or 0,
+            'ai_full_response': ai_full_response,
+            'ai_prompt_text': ai_prompt_text,
+            'ai_model': ai_model,
+            'ai_prompt_version': 'v2.0.2',  # Aktuelle Prompt-Version
+            'ai_stage': ai_stage,
+            'text_char_count': text_char_count if text_char_count > 0 else None,
+            'ai_response_char_count': ai_response_char_count if ai_response_char_count > 0 else None,
+            'prompt_tokens': prompt_tokens,
+            'completion_tokens': completion_tokens,
+            'total_tokens': total_tokens,
+        }
+        
+        result = self.docs_api.save_ai_data(doc.id, data)
+        if result:
+            # Inhaltsduplikat-Info wird bereits von save_ai_data geloggt
+            logger.debug(
+                f"AI-Daten gespeichert fuer Dokument {doc.id} ({doc.original_filename}): "
+                f"method={extraction_method}, pages={extracted_page_count}, "
+                f"tokens={total_tokens}, stage={ai_stage}"
+            )
+        else:
+            from src.i18n.de import AI_DATA_SAVE_FAILED
+            logger.warning(AI_DATA_SAVE_FAILED.format(doc_id=doc.id))
+    
+    # ================================================================
+    # Dokumenten-Regeln
+    # ================================================================
+    
+    def _load_document_rules(self) -> None:
+        """Laedt Dokumenten-Regeln vom Server (einmal pro Verarbeitungslauf)."""
+        try:
+            self._doc_rules = self.doc_rules_api.get_rules()
+            if self._doc_rules and self._doc_rules.has_any_rule():
+                logger.info(
+                    f"Dokumenten-Regeln geladen: "
+                    f"Datei-Dup={self._doc_rules.file_dup_action}, "
+                    f"Content-Dup={self._doc_rules.content_dup_action}, "
+                    f"Partial-Empty={self._doc_rules.partial_empty_action}, "
+                    f"Full-Empty={self._doc_rules.full_empty_action}"
+                )
+            else:
+                logger.debug("Dokumenten-Regeln: Keine aktiven Regeln konfiguriert")
+        except Exception as e:
+            logger.warning(f"Dokumenten-Regeln konnten nicht geladen werden: {e}")
+            self._doc_rules = None
+    
+    def _apply_document_rules(self, doc: Document) -> None:
+        """
+        Wendet konfigurierte Dokumenten-Regeln an.
+        
+        Wird nach _persist_ai_data() aufgerufen. Zu diesem Zeitpunkt sind
+        alle relevanten Informationen verfuegbar:
+        - doc.is_duplicate / doc.previous_version_id (Datei-Duplikat)
+        - doc.content_duplicate_of_id (Inhaltsduplikat, nach _persist_ai_data)
+        - doc.empty_page_count / doc.total_page_count (nach _check_and_log_empty_pages)
+        """
+        if not self._doc_rules or not self._doc_rules.has_any_rule():
+            return
+        
+        rules = self._doc_rules
+        
+        # Dokument-Daten aktualisieren (content_duplicate_of_id wird erst bei
+        # _persist_ai_data gesetzt, doc-Objekt hat evtl. noch den alten Wert)
+        try:
+            fresh_doc_data = self.docs_api.get_document(doc.id)
+            if fresh_doc_data:
+                doc = fresh_doc_data
+        except Exception:
+            pass
+        
+        # 1. Komplett leere Datei
+        if doc.is_completely_empty:
+            if rules.full_empty_action == 'delete':
+                logger.info(f"Dokumenten-Regel: Komplett leere Datei {doc.id} wird geloescht")
+                self.docs_api.delete_documents([doc.id])
+                return
+            elif rules.full_empty_action == 'color_file' and rules.full_empty_color:
+                logger.info(f"Dokumenten-Regel: Komplett leere Datei {doc.id} wird markiert ({rules.full_empty_color})")
+                self.docs_api.set_document_color(doc.id, rules.full_empty_color)
+        
+        # 2. Teilweise leere Seiten
+        elif doc.has_empty_pages and not doc.is_completely_empty:
+            if rules.partial_empty_action == 'remove_pages':
+                logger.info(f"Dokumenten-Regel: Leere Seiten entfernen bei Dokument {doc.id}")
+                self._remove_empty_pages(doc)
+            elif rules.partial_empty_action == 'color_file' and rules.partial_empty_color:
+                logger.info(f"Dokumenten-Regel: Datei {doc.id} mit leeren Seiten markiert ({rules.partial_empty_color})")
+                self.docs_api.set_document_color(doc.id, rules.partial_empty_color)
+        
+        # 3. Datei-Duplikat (gleiche SHA256-Pruefsumme)
+        if doc.is_duplicate and doc.previous_version_id:
+            self._apply_duplicate_rule(
+                doc, rules.file_dup_action, rules.file_dup_color,
+                doc.previous_version_id, 'Datei-Duplikat')
+        
+        # 4. Inhaltsduplikat (gleicher Text-Hash)
+        if doc.is_content_duplicate and doc.content_duplicate_of_id:
+            self._apply_duplicate_rule(
+                doc, rules.content_dup_action, rules.content_dup_color,
+                doc.content_duplicate_of_id, 'Inhaltsduplikat')
+    
+    def _apply_duplicate_rule(self, doc: Document, action: str, color: Optional[str],
+                              original_id: int, rule_type: str) -> None:
+        """Wendet eine Duplikat-Regel auf ein Dokument an."""
+        if action == 'none':
+            return
+        
+        if action == 'color_both' and color:
+            logger.info(f"Dokumenten-Regel: {rule_type} - Beide markieren ({color}): {doc.id} + {original_id}")
+            self.docs_api.set_documents_color([doc.id, original_id], color)
+        
+        elif action == 'color_new' and color:
+            logger.info(f"Dokumenten-Regel: {rule_type} - Neue Datei markieren ({color}): {doc.id}")
+            self.docs_api.set_document_color(doc.id, color)
+        
+        elif action == 'delete_new':
+            logger.info(f"Dokumenten-Regel: {rule_type} - Neue Datei loeschen: {doc.id}")
+            self.docs_api.delete_documents([doc.id])
+        
+        elif action == 'delete_old':
+            logger.info(f"Dokumenten-Regel: {rule_type} - Alte Datei loeschen: {original_id}")
+            self.docs_api.delete_documents([original_id])
+    
+    def _remove_empty_pages(self, doc: Document) -> None:
+        """
+        Entfernt leere Seiten aus dem PDF und laedt es neu hoch.
+        
+        Laed das Dokument herunter, entfernt leere Seiten mit PyMuPDF,
+        speichert die bereinigte Version und ersetzt die Datei auf dem Server.
+        """
+        try:
+            import fitz
+        except ImportError:
+            logger.warning("PyMuPDF nicht installiert, kann leere Seiten nicht entfernen")
+            return
+        
+        from services.empty_page_detector import get_empty_pages
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local_path = self.docs_api.download(doc.id, tmpdir)
+            if not local_path:
+                logger.warning(f"Dokument {doc.id} konnte nicht heruntergeladen werden")
+                return
+            
+            empty_indices, total = get_empty_pages(local_path)
+            if not empty_indices or len(empty_indices) >= total:
+                return
+            
+            fitz_doc = fitz.open(local_path)
+            for idx in sorted(empty_indices, reverse=True):
+                fitz_doc.delete_page(idx)
+            
+            cleaned_path = os.path.join(tmpdir, 'cleaned.pdf')
+            fitz_doc.save(cleaned_path, garbage=4, deflate=True)
+            fitz_doc.close()
+            
+            self.docs_api.replace_document_file(doc.id, cleaned_path)
+            
+            new_total = total - len(empty_indices)
+            try:
+                self.docs_api.client.put(
+                    f'/documents/{doc.id}',
+                    json_data={'empty_page_count': 0, 'total_page_count': new_total})
+            except Exception:
+                logger.debug(f"Leere-Seiten-Zaehler Update fehlgeschlagen fuer {doc.id}")
+            
+            # Vorschau-Cache invalidieren (persistiert ueber App-Neustarts)
+            try:
+                import glob as _glob
+                cache_dir = os.path.join(tempfile.gettempdir(), 'bipro_preview_cache')
+                for cached in _glob.glob(os.path.join(cache_dir, f"{doc.id}_*")):
+                    os.unlink(cached)
+                    logger.debug(f"Vorschau-Cache invalidiert: {cached}")
+            except Exception:
+                pass
+            
+            logger.info(
+                f"Dokument {doc.id}: {len(empty_indices)} leere Seiten entfernt "
+                f"({total} -> {new_total} Seiten)"
+            )
+
     def _slugify(self, text: str) -> str:
         """
         Konvertiert Text in sicheren Dateinamen.
@@ -1265,6 +1984,59 @@ class DocumentProcessor:
             return True
         
         return False
+    
+    def _is_spreadsheet(self, doc: Document) -> bool:
+        """Prueft ob es sich um eine tabellarische Datei handelt (CSV, TSV, Excel)."""
+        ext = doc.file_extension.lower()
+        return ext in ['.csv', '.tsv', '.xlsx', '.xls']
+    
+    def _extract_spreadsheet_text(self, file_path: str, max_lines: int = 50) -> str:
+        """
+        Extrahiert Text aus einer Tabellendatei fuer KI-Klassifikation.
+        
+        Args:
+            file_path: Pfad zur Datei
+            max_lines: Maximale Anzahl Zeilen
+            
+        Returns:
+            Extrahierter Text (Zeilen getrennt durch Newline)
+        """
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        if ext in ['.csv', '.tsv']:
+            # CSV/TSV: Als Text lesen mit Encoding-Fallback
+            for encoding in ['utf-8', 'cp1252', 'latin-1']:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        lines = []
+                        for i, line in enumerate(f):
+                            if i >= max_lines:
+                                break
+                            lines.append(line.rstrip())
+                        return '\n'.join(lines)
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            return ''
+        
+        elif ext == '.xlsx':
+            # Excel: Erste Zeilen mit openpyxl
+            try:
+                from openpyxl import load_workbook
+                wb = load_workbook(file_path, read_only=True, data_only=True)
+                ws = wb.active
+                lines = []
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i >= max_lines:
+                        break
+                    cells = [str(c) if c is not None else '' for c in row]
+                    lines.append(' | '.join(cells))
+                wb.close()
+                return '\n'.join(lines)
+            except Exception as e:
+                logger.warning(f"Excel-Extraktion fehlgeschlagen: {e}")
+                return ''
+        
+        return ''
     
     def _is_gdv_file(self, doc: Document) -> bool:
         """

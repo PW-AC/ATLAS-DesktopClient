@@ -106,6 +106,19 @@ try {
             handlePasswordsPublicRequest($method);
             break;
         
+        case 'processing-settings':
+            // KI-Klassifikation Einstellungen (oeffentlich: GET)
+            // /processing-settings/ai
+            require_once __DIR__ . '/processing_settings.php';
+            handleProcessingSettingsRequest($action ?: '', $method);
+            break;
+        
+        case 'document-rules':
+            // Dokumenten-Regeln (oeffentlich: GET)
+            require_once __DIR__ . '/document_rules.php';
+            handleDocumentRulesRequest($method);
+            break;
+        
         case 'smartscan':
             // SmartScan Versand + Historie
             // /smartscan/settings, /smartscan/send, /smartscan/jobs, /smartscan/jobs/{id}, /smartscan/jobs/{id}/process
@@ -148,6 +161,40 @@ try {
             if ($action === 'smartscan') {
                 require_once __DIR__ . '/smartscan.php';
                 handleAdminSmartScanRequest($id ?: null, $method);
+                break;
+            }
+            
+            // /admin/processing-settings → KI-Klassifikation Einstellungen
+            // /admin/processing-settings/ai, /admin/processing-settings/prompt-versions, 
+            // /admin/processing-settings/prompt-versions/{id}/activate
+            if ($action === 'processing-settings') {
+                require_once __DIR__ . '/processing_settings.php';
+                $psSub = $parts[3] ?? null;
+                handleAdminProcessingSettingsRequest($id ?: null, $method, $psSub);
+                break;
+            }
+            
+            // /admin/ai-providers → KI-Provider-Verwaltung
+            // /admin/ai-providers/{id}, /admin/ai-providers/{id}/activate, /admin/ai-providers/{id}/test
+            if ($action === 'ai-providers') {
+                require_once __DIR__ . '/ai_providers.php';
+                $apSub = $parts[3] ?? null;
+                handleAdminAiProvidersRequest($id ?: null, $method, $apSub);
+                break;
+            }
+            
+            // /admin/model-pricing → Modell-Preise
+            // /admin/model-pricing/{id}
+            if ($action === 'model-pricing') {
+                require_once __DIR__ . '/model_pricing.php';
+                handleAdminModelPricingRequest($id ?: null, $method);
+                break;
+            }
+            
+            // /admin/document-rules → Dokumenten-Regeln
+            if ($action === 'document-rules') {
+                require_once __DIR__ . '/document_rules.php';
+                handleAdminDocumentRulesRequest($method);
                 break;
             }
             

@@ -1,7 +1,7 @@
 """
 ACENCIA ATLAS - Administrations-Ansicht
 
-Vollbild-Layout mit eigener Sidebar-Navigation (11 Bereiche):
+Vollbild-Layout mit eigener Sidebar-Navigation (14 Bereiche):
 
 VERWALTUNG:
 1. Nutzerverwaltung (CRUD)
@@ -10,17 +10,22 @@ VERWALTUNG:
 
 MONITORING:
 4. Aktivitaetslog (Filter + Pagination)
-5. KI-Kosten (Verarbeitungshistorie + Kosten-Statistiken)
+5. KI-Kosten (Verarbeitungshistorie + Kosten-Statistiken + Request-Details)
 6. Releases (Auto-Update Verwaltung)
 
+VERARBEITUNG:
+7. KI-Klassifikation (Prompts, Modelle, Pipeline-Visualisierung)
+8. KI-Provider (API-Key-Verwaltung OpenRouter/OpenAI)
+9. Modell-Preise (Kostenberechnung pro Modell)
+
 E-MAIL:
-7. E-Mail-Konten (SMTP/IMAP Verwaltung)
-8. Smart!Scan (Einstellungen)
-9. Smart!Scan Historie
-10. E-Mail Posteingang
+10. E-Mail-Konten (SMTP/IMAP Verwaltung)
+11. Smart!Scan (Einstellungen)
+12. Smart!Scan Historie
+13. E-Mail Posteingang
 
 KOMMUNIKATION:
-11. Mitteilungen (System + Admin-Mitteilungen verwalten)
+14. Mitteilungen (System + Admin-Mitteilungen verwalten)
 """
 
 from typing import Optional, List, Dict
@@ -30,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QComboBox, QCheckBox,
     QGroupBox, QMessageBox, QHeaderView, QAbstractItemView, QFrame, QDateEdit,
-    QSizePolicy, QSpacerItem, QTextEdit, QFileDialog, QProgressBar,
+    QSizePolicy, QSpacerItem, QTextEdit, QPlainTextEdit, QFileDialog, QProgressBar,
     QSpinBox, QMenu, QRadioButton, QButtonGroup, QScrollArea, QStackedWidget
 )
 from PySide6.QtCore import Qt, QThread, Signal, QDate, QTimer
@@ -41,6 +46,9 @@ from api.auth import AuthAPI
 from api.admin import AdminAPI
 from api.releases import ReleasesAPI
 from api.passwords import PasswordsAPI
+from api.processing_settings import ProcessingSettingsAPI
+from api.ai_providers import AIProvidersAPI
+from api.model_pricing import ModelPricingAPI
 from i18n import de as texts
 
 from ui.styles.tokens import (
@@ -753,6 +761,13 @@ class AdminView(QWidget):
         self._smartscan_api = SmartScanAPI(api_client)
         self._email_accounts_api = EmailAccAPI(api_client)
         
+        # Processing Settings API
+        self._processing_settings_api = ProcessingSettingsAPI(api_client)
+        
+        # KI-Provider + Modell-Preise APIs
+        self._ai_providers_api = AIProvidersAPI(api_client)
+        self._model_pricing_api = ModelPricingAPI(api_client)
+        
         # Worker-Referenzen (fuer Cleanup)
         self._active_workers = []
         
@@ -869,16 +884,23 @@ class AdminView(QWidget):
         self._btn_costs    = add_nav("›", texts.ADMIN_TAB_COSTS, 4)
         self._btn_releases = add_nav("›", texts.ADMIN_TAB_RELEASES, 5)
         
+        # === VERARBEITUNG ===
+        add_section(texts.ADMIN_SECTION_PROCESSING)
+        self._btn_ai_classification = add_nav("›", texts.ADMIN_TAB_AI_CLASSIFICATION, 6)
+        self._btn_ai_providers      = add_nav("›", texts.ADMIN_TAB_AI_PROVIDERS, 7)
+        self._btn_model_pricing     = add_nav("›", texts.ADMIN_TAB_MODEL_PRICING, 8)
+        self._btn_document_rules    = add_nav("›", texts.ADMIN_TAB_DOCUMENT_RULES, 9)
+        
         # === E-MAIL ===
         add_section(texts.ADMIN_SECTION_EMAIL)
-        self._btn_email_accounts     = add_nav("›", texts.ADMIN_TAB_EMAIL_ACCOUNTS, 6)
-        self._btn_smartscan_settings = add_nav("›", texts.ADMIN_TAB_SMARTSCAN_SETTINGS, 7)
-        self._btn_smartscan_history  = add_nav("›", texts.ADMIN_TAB_SMARTSCAN_HISTORY, 8)
-        self._btn_email_inbox        = add_nav("›", texts.ADMIN_TAB_EMAIL_INBOX, 9)
+        self._btn_email_accounts     = add_nav("›", texts.ADMIN_TAB_EMAIL_ACCOUNTS, 10)
+        self._btn_smartscan_settings = add_nav("›", texts.ADMIN_TAB_SMARTSCAN_SETTINGS, 11)
+        self._btn_smartscan_history  = add_nav("›", texts.ADMIN_TAB_SMARTSCAN_HISTORY, 12)
+        self._btn_email_inbox        = add_nav("›", texts.ADMIN_TAB_EMAIL_INBOX, 13)
         
         # === KOMMUNIKATION ===
         add_section("KOMMUNIKATION")
-        self._btn_messages           = add_nav("›", texts.ADMIN_MSG_TAB, 10)
+        self._btn_messages           = add_nav("›", texts.ADMIN_MSG_TAB, 14)
         
         sb_layout.addStretch()
         root.addWidget(admin_sidebar)
@@ -908,22 +930,35 @@ class AdminView(QWidget):
         self._releases_tab = self._create_releases_tab()
         self._content_stack.addWidget(self._releases_tab)           # 5
         
+        # VERARBEITUNG
+        self._ai_classification_tab = self._create_ai_classification_tab()
+        self._content_stack.addWidget(self._ai_classification_tab)  # 6
+        
+        self._ai_providers_tab = self._create_ai_providers_tab()
+        self._content_stack.addWidget(self._ai_providers_tab)       # 7
+        
+        self._model_pricing_tab = self._create_model_pricing_tab()
+        self._content_stack.addWidget(self._model_pricing_tab)      # 8
+        
+        self._document_rules_tab = self._create_document_rules_tab()
+        self._content_stack.addWidget(self._document_rules_tab)     # 9
+        
         # E-MAIL
         self._email_accounts_tab = self._create_email_accounts_tab()
-        self._content_stack.addWidget(self._email_accounts_tab)     # 6
+        self._content_stack.addWidget(self._email_accounts_tab)     # 10
         
         self._smartscan_settings_tab = self._create_smartscan_settings_tab()
-        self._content_stack.addWidget(self._smartscan_settings_tab) # 7
+        self._content_stack.addWidget(self._smartscan_settings_tab)  # 11
         
         self._smartscan_history_tab = self._create_smartscan_history_tab()
-        self._content_stack.addWidget(self._smartscan_history_tab)  # 8
+        self._content_stack.addWidget(self._smartscan_history_tab)   # 12
         
         self._email_inbox_tab = self._create_email_inbox_tab()
-        self._content_stack.addWidget(self._email_inbox_tab)        # 9
+        self._content_stack.addWidget(self._email_inbox_tab)         # 13
         
         # KOMMUNIKATION
         self._messages_tab = self._create_messages_tab()
-        self._content_stack.addWidget(self._messages_tab)           # 10
+        self._content_stack.addWidget(self._messages_tab)            # 14
         
         root.addWidget(self._content_stack)
         
@@ -1761,6 +1796,49 @@ class AdminView(QWidget):
         """)
         layout.addWidget(self._costs_status)
         
+        # --- Einzelne Requests (NEU) ---
+        requests_header = QHBoxLayout()
+        requests_label = QLabel(texts.AI_COSTS_REQUESTS_TITLE)
+        requests_label.setStyleSheet(f"""
+            font-family: {FONT_HEADLINE};
+            font-size: 14px;
+            color: {PRIMARY_900};
+            font-weight: bold;
+        """)
+        requests_header.addWidget(requests_label)
+        requests_header.addStretch()
+        
+        export_btn = QPushButton(texts.AI_COSTS_REQUESTS_EXPORT)
+        export_btn.setStyleSheet(get_button_secondary_style())
+        export_btn.setCursor(Qt.PointingHandCursor)
+        export_btn.clicked.connect(self._export_ai_requests_csv)
+        requests_header.addWidget(export_btn)
+        layout.addLayout(requests_header)
+        
+        self._ai_requests_table = QTableWidget()
+        self._ai_requests_table.setColumnCount(8)
+        self._ai_requests_table.setHorizontalHeaderLabels([
+            texts.AI_COSTS_REQUESTS_TIME, texts.AI_COSTS_REQUESTS_USER,
+            texts.AI_COSTS_REQUESTS_PROVIDER, texts.AI_COSTS_REQUESTS_MODEL,
+            texts.AI_COSTS_REQUESTS_PROMPT_TOKENS, texts.AI_COSTS_REQUESTS_COMPLETION_TOKENS,
+            texts.AI_COSTS_REQUESTS_ESTIMATED, texts.AI_COSTS_REQUESTS_COST
+        ])
+        self._ai_requests_table.setAlternatingRowColors(True)
+        self._ai_requests_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._ai_requests_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._ai_requests_table.verticalHeader().setVisible(False)
+        self._ai_requests_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self._ai_requests_table.setColumnWidth(0, 130)   # Zeit
+        self._ai_requests_table.setColumnWidth(4, 110)   # Prompt Tokens
+        self._ai_requests_table.setColumnWidth(5, 130)   # Completion Tokens
+        self._ai_requests_table.setColumnWidth(6, 110)   # Geschaetzt
+        self._ai_requests_table.setColumnWidth(7, 110)   # Echte Kosten
+        layout.addWidget(self._ai_requests_table, stretch=1)
+        
+        self._ai_requests_status = QLabel("")
+        self._ai_requests_status.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION}; color: {PRIMARY_500};")
+        layout.addWidget(self._ai_requests_status)
+        
         return widget
     
     def _load_cost_data(self):
@@ -1806,6 +1884,9 @@ class AdminView(QWidget):
             self._costs_status.setText(texts.COSTS_NO_DATA)
         else:
             self._costs_status.setText(f"{count} Verarbeitungslauf/-laeufe")
+        
+        # Einzelne Requests laden
+        self._load_ai_requests()
     
     def _on_cost_data_error(self, error: str):
         """Callback bei Kosten-Daten Fehler."""
@@ -1934,6 +2015,107 @@ class AdminView(QWidget):
             self._costs_table.setItem(row, 7, QTableWidgetItem(user))
         
         self._costs_table.setSortingEnabled(True)
+    
+    def _load_ai_requests(self):
+        """Laedt die einzelnen KI-Requests."""
+        period = self._costs_period_combo.currentData() or 'all'
+        
+        def _do_load():
+            return self._model_pricing_api.get_ai_requests(limit=200, period=period)
+        
+        worker = AdminWriteWorker(_do_load)
+        worker.finished.connect(self._on_ai_requests_loaded)
+        worker.error.connect(lambda e: (
+            self._ai_requests_status.setText(texts.AI_COSTS_REQUESTS_LOAD_ERROR),
+            logger.error(f"AI-Requests laden: {e}")
+        ))
+        self._active_workers.append(worker)
+        worker.start()
+    
+    def _on_ai_requests_loaded(self, result):
+        """Befuellt die AI-Requests Tabelle."""
+        if not result:
+            return
+        requests = result if isinstance(result, list) else result.get('requests', [])
+        table = self._ai_requests_table
+        table.setRowCount(len(requests))
+        
+        for row, req in enumerate(requests):
+            # Zeit
+            created = req.get('created_at', '')
+            try:
+                from datetime import datetime as dt_cls
+                dt = dt_cls.fromisoformat(created.replace('Z', '+00:00') if 'Z' in created else created)
+                time_str = dt.strftime('%d.%m. %H:%M:%S')
+            except (ValueError, TypeError):
+                time_str = created[:19] if created else '-'
+            table.setItem(row, 0, QTableWidgetItem(time_str))
+            
+            # User
+            table.setItem(row, 1, QTableWidgetItem(req.get('username', '-')))
+            
+            # Provider
+            table.setItem(row, 2, QTableWidgetItem(req.get('provider', '-')))
+            
+            # Modell
+            table.setItem(row, 3, QTableWidgetItem(req.get('model', '-')))
+            
+            # Prompt Tokens
+            pt = QTableWidgetItem(str(req.get('prompt_tokens', 0)))
+            pt.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(row, 4, pt)
+            
+            # Completion Tokens
+            ct = QTableWidgetItem(str(req.get('completion_tokens', 0)))
+            ct.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(row, 5, ct)
+            
+            # Geschaetzte Kosten
+            est = req.get('estimated_cost_usd')
+            est_str = f"${float(est):.6f}" if est is not None else "-"
+            est_item = QTableWidgetItem(est_str)
+            est_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(row, 6, est_item)
+            
+            # Echte Kosten
+            real = float(req.get('real_cost_usd', 0))
+            real_item = QTableWidgetItem(f"${real:.6f}")
+            real_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(row, 7, real_item)
+        
+        total_count = len(requests)
+        total_cost = sum(float(r.get('real_cost_usd', 0)) for r in requests)
+        self._ai_requests_status.setText(
+            texts.AI_COSTS_REQUESTS_TOTAL.format(count=total_count, cost=f"{total_cost:.4f}")
+        )
+    
+    def _export_ai_requests_csv(self):
+        """Exportiert die AI-Requests als CSV."""
+        from ui.toast import ToastManager
+        path, _ = QFileDialog.getSaveFileName(
+            self, texts.AI_COSTS_REQUESTS_EXPORT, "ai_requests.csv", "CSV (*.csv)"
+        )
+        if not path:
+            return
+        
+        try:
+            table = self._ai_requests_table
+            with open(path, 'w', encoding='utf-8-sig') as f:
+                headers = []
+                for col in range(table.columnCount()):
+                    headers.append(table.horizontalHeaderItem(col).text())
+                f.write(';'.join(headers) + '\n')
+                
+                for row in range(table.rowCount()):
+                    cells = []
+                    for col in range(table.columnCount()):
+                        item = table.item(row, col)
+                        cells.append(item.text() if item else '')
+                    f.write(';'.join(cells) + '\n')
+            
+            ToastManager.instance().show_success(f"CSV exportiert: {path}")
+        except Exception as e:
+            ToastManager.instance().show_error(f"Export fehlgeschlagen: {e}")
     
     # ================================================================
     # Tab 5: Releases
@@ -2729,18 +2911,22 @@ class AdminView(QWidget):
     def _on_panel_changed(self, index: int):
         """Laedt Daten beim Panel-Wechsel.
         
-        Neue Index-Zuordnung (nach Sidebar-Reihenfolge):
+        Index-Zuordnung (nach Sidebar-Reihenfolge):
         0 = Nutzerverwaltung
         1 = Sessions
         2 = Passwoerter
         3 = Aktivitaetslog
         4 = KI-Kosten
         5 = Releases
-        6 = E-Mail-Konten
-        7 = SmartScan Einstellungen
-        8 = SmartScan Historie
-        9 = E-Mail Posteingang
-        10 = Mitteilungen
+        6 = KI-Klassifikation (Verarbeitung)
+        7 = KI-Provider
+        8 = Modell-Preise
+        9 = Dokumenten-Regeln
+        10 = E-Mail-Konten
+        11 = SmartScan Einstellungen
+        12 = SmartScan Historie
+        13 = E-Mail Posteingang
+        14 = Mitteilungen
         """
         # Sessions-Timer nur wenn Sessions aktiv
         if index == 1:
@@ -2763,22 +2949,1440 @@ class AdminView(QWidget):
             self._load_releases()
         
         if index == 6:
-            self._load_email_accounts()
+            self._load_ai_classification_settings()
         
         if index == 7:
-            self._load_smartscan_settings()
+            self._load_ai_providers()
         
         if index == 8:
-            self._load_smartscan_history()
+            self._load_model_pricing()
         
         if index == 9:
-            self._load_email_inbox()
+            self._load_document_rules()
         
         if index == 10:
+            self._load_email_accounts()
+        
+        if index == 11:
+            self._load_smartscan_settings()
+        
+        if index == 12:
+            self._load_smartscan_history()
+        
+        if index == 13:
+            self._load_email_inbox()
+        
+        if index == 14:
             self._load_admin_messages()
 
     # ================================================================
-    # Tab 7: E-Mail-Konten
+    # Tab: Dokumenten-Regeln (Verarbeitung)
+    # ================================================================
+    
+    def _create_document_rules_tab(self) -> QWidget:
+        """Erstellt das Dokumenten-Regeln Panel mit 4 Regel-Sektionen."""
+        from i18n import de as texts
+        from ui.styles.tokens import ACCENT_500
+        
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+        
+        # Titel
+        title = QLabel(texts.DOC_RULES_TITLE)
+        title.setFont(QFont("Open Sans", 16, QFont.Weight.Bold))
+        layout.addWidget(title)
+        
+        desc = QLabel(texts.DOC_RULES_DESCRIPTION)
+        desc.setFont(QFont("Open Sans", 10))
+        desc.setStyleSheet(f"color: #64748b;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        
+        # Scroll-Bereich fuer die 4 Sektionen
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setSpacing(16)
+        
+        # Farb-Optionen fuer Dropdowns
+        color_items = [
+            ('green', texts.DOC_RULES_COLOR_GREEN),
+            ('red', texts.DOC_RULES_COLOR_RED),
+            ('blue', texts.DOC_RULES_COLOR_BLUE),
+            ('orange', texts.DOC_RULES_COLOR_ORANGE),
+            ('purple', texts.DOC_RULES_COLOR_PURPLE),
+            ('pink', texts.DOC_RULES_COLOR_PINK),
+            ('cyan', texts.DOC_RULES_COLOR_CYAN),
+            ('yellow', texts.DOC_RULES_COLOR_YELLOW),
+        ]
+        
+        def create_rule_section(title_text: str, desc_text: str,
+                                action_items: list, color_items_list: list):
+            """Erstellt eine Regel-Sektion mit Aktion-Dropdown + Farb-Dropdown."""
+            group = QGroupBox(title_text)
+            group.setFont(QFont("Open Sans", 11, QFont.Weight.DemiBold))
+            group.setStyleSheet(f"""
+                QGroupBox {{
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    margin-top: 12px;
+                    padding: 16px 12px 12px 12px;
+                    background: white;
+                }}
+                QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    left: 12px;
+                    padding: 0 6px;
+                }}
+            """)
+            g_layout = QVBoxLayout(group)
+            g_layout.setSpacing(8)
+            
+            desc_label = QLabel(desc_text)
+            desc_label.setFont(QFont("Open Sans", 9))
+            desc_label.setStyleSheet("color: #64748b; border: none;")
+            desc_label.setWordWrap(True)
+            g_layout.addWidget(desc_label)
+            
+            # Aktion
+            action_row = QHBoxLayout()
+            action_label = QLabel(texts.DOC_RULES_ACTION_LABEL)
+            action_label.setFixedWidth(80)
+            action_label.setStyleSheet("border: none;")
+            action_combo = QComboBox()
+            for value, display in action_items:
+                action_combo.addItem(display, value)
+            action_combo.setMinimumWidth(250)
+            action_row.addWidget(action_label)
+            action_row.addWidget(action_combo)
+            action_row.addStretch()
+            g_layout.addLayout(action_row)
+            
+            # Farbe (initial versteckt)
+            color_row = QHBoxLayout()
+            color_label = QLabel(texts.DOC_RULES_COLOR_LABEL)
+            color_label.setFixedWidth(80)
+            color_label.setStyleSheet("border: none;")
+            color_combo = QComboBox()
+            for value, display in color_items_list:
+                color_combo.addItem(display, value)
+            color_combo.setMinimumWidth(250)
+            color_row.addWidget(color_label)
+            color_row.addWidget(color_combo)
+            color_row.addStretch()
+            
+            color_container = QWidget()
+            color_container.setLayout(color_row)
+            color_container.setStyleSheet("border: none;")
+            color_container.setVisible(False)
+            g_layout.addWidget(color_container)
+            
+            def on_action_changed(idx):
+                val = action_combo.itemData(idx)
+                needs_color = val in ('color_both', 'color_new', 'color_file')
+                color_container.setVisible(needs_color)
+            
+            action_combo.currentIndexChanged.connect(on_action_changed)
+            
+            return group, action_combo, color_combo, color_container
+        
+        # 1. Datei-Duplikate
+        dup_actions = [
+            ('none', texts.DOC_RULES_ACTION_NONE),
+            ('color_both', texts.DOC_RULES_ACTION_COLOR_BOTH),
+            ('color_new', texts.DOC_RULES_ACTION_COLOR_NEW),
+            ('delete_new', texts.DOC_RULES_ACTION_DELETE_NEW),
+            ('delete_old', texts.DOC_RULES_ACTION_DELETE_OLD),
+        ]
+        
+        grp1, self._dr_file_dup_action, self._dr_file_dup_color, _ = create_rule_section(
+            texts.DOC_RULES_FILE_DUP_TITLE, texts.DOC_RULES_FILE_DUP_DESC,
+            dup_actions, color_items)
+        scroll_layout.addWidget(grp1)
+        
+        # 2. Inhaltsduplikate
+        grp2, self._dr_content_dup_action, self._dr_content_dup_color, _ = create_rule_section(
+            texts.DOC_RULES_CONTENT_DUP_TITLE, texts.DOC_RULES_CONTENT_DUP_DESC,
+            dup_actions, color_items)
+        scroll_layout.addWidget(grp2)
+        
+        # 3. Teilweise leere Seiten
+        partial_actions = [
+            ('none', texts.DOC_RULES_ACTION_NONE),
+            ('remove_pages', texts.DOC_RULES_ACTION_REMOVE_PAGES),
+            ('color_file', texts.DOC_RULES_ACTION_COLOR_FILE),
+        ]
+        
+        grp3, self._dr_partial_empty_action, self._dr_partial_empty_color, _ = create_rule_section(
+            texts.DOC_RULES_PARTIAL_EMPTY_TITLE, texts.DOC_RULES_PARTIAL_EMPTY_DESC,
+            partial_actions, color_items)
+        scroll_layout.addWidget(grp3)
+        
+        # 4. Komplett leere Dateien
+        full_actions = [
+            ('none', texts.DOC_RULES_ACTION_NONE),
+            ('delete', texts.DOC_RULES_ACTION_DELETE),
+            ('color_file', texts.DOC_RULES_ACTION_COLOR_FILE),
+        ]
+        
+        grp4, self._dr_full_empty_action, self._dr_full_empty_color, _ = create_rule_section(
+            texts.DOC_RULES_FULL_EMPTY_TITLE, texts.DOC_RULES_FULL_EMPTY_DESC,
+            full_actions, color_items)
+        scroll_layout.addWidget(grp4)
+        
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+        
+        # Speichern-Button
+        save_btn = QPushButton(texts.DOC_RULES_SAVE)
+        save_btn.setMinimumHeight(36)
+        save_btn.setMaximumWidth(200)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_500};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ background-color: #e67e22; }}
+        """)
+        save_btn.clicked.connect(self._save_document_rules)
+        layout.addWidget(save_btn)
+        
+        # Status-Label
+        self._dr_status = QLabel("")
+        self._dr_status.setVisible(False)
+        self._dr_status.setWordWrap(True)
+        layout.addWidget(self._dr_status)
+        
+        return widget
+    
+    def _load_document_rules(self):
+        """Laedt die Dokumenten-Regeln vom Server und setzt die UI-Werte."""
+        from api.document_rules import DocumentRulesAPI
+        try:
+            api = DocumentRulesAPI(self._api_client)
+            settings = api.get_rules()
+            
+            self._set_combo_by_data(self._dr_file_dup_action, settings.file_dup_action)
+            self._set_combo_by_data(self._dr_file_dup_color, settings.file_dup_color or 'green')
+            self._set_combo_by_data(self._dr_content_dup_action, settings.content_dup_action)
+            self._set_combo_by_data(self._dr_content_dup_color, settings.content_dup_color or 'green')
+            self._set_combo_by_data(self._dr_partial_empty_action, settings.partial_empty_action)
+            self._set_combo_by_data(self._dr_partial_empty_color, settings.partial_empty_color or 'orange')
+            self._set_combo_by_data(self._dr_full_empty_action, settings.full_empty_action)
+            self._set_combo_by_data(self._dr_full_empty_color, settings.full_empty_color or 'red')
+        except Exception as e:
+            from i18n.de import DOC_RULES_LOAD_ERROR
+            logger.error(f"Dokumenten-Regeln laden fehlgeschlagen: {e}")
+            self._dr_status.setText(DOC_RULES_LOAD_ERROR)
+            self._dr_status.setStyleSheet(
+                "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;")
+            self._dr_status.setVisible(True)
+    
+    def _set_combo_by_data(self, combo: QComboBox, value: str):
+        """Setzt eine QComboBox auf den Eintrag mit dem gegebenen Data-Wert."""
+        for i in range(combo.count()):
+            if combo.itemData(i) == value:
+                combo.setCurrentIndex(i)
+                return
+    
+    def _save_document_rules(self):
+        """Speichert die Dokumenten-Regeln auf dem Server."""
+        from api.document_rules import DocumentRulesAPI, DocumentRulesSettings
+        from i18n.de import DOC_RULES_SAVE_SUCCESS, DOC_RULES_SAVE_ERROR
+        
+        settings = DocumentRulesSettings(
+            file_dup_action=self._dr_file_dup_action.currentData() or 'none',
+            file_dup_color=self._dr_file_dup_color.currentData() if self._dr_file_dup_action.currentData() in ('color_both', 'color_new') else None,
+            content_dup_action=self._dr_content_dup_action.currentData() or 'none',
+            content_dup_color=self._dr_content_dup_color.currentData() if self._dr_content_dup_action.currentData() in ('color_both', 'color_new') else None,
+            partial_empty_action=self._dr_partial_empty_action.currentData() or 'none',
+            partial_empty_color=self._dr_partial_empty_color.currentData() if self._dr_partial_empty_action.currentData() == 'color_file' else None,
+            full_empty_action=self._dr_full_empty_action.currentData() or 'none',
+            full_empty_color=self._dr_full_empty_color.currentData() if self._dr_full_empty_action.currentData() == 'color_file' else None,
+        )
+        
+        try:
+            api = DocumentRulesAPI(self._api_client)
+            success = api.save_rules(settings)
+            if success:
+                self._dr_status.setText(DOC_RULES_SAVE_SUCCESS)
+                self._dr_status.setStyleSheet(
+                    "color: #059669; background: #ecfdf5; padding: 6px 12px; border-radius: 4px;")
+            else:
+                self._dr_status.setText(DOC_RULES_SAVE_ERROR.format(error="Server-Fehler"))
+                self._dr_status.setStyleSheet(
+                    "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;")
+        except Exception as e:
+            self._dr_status.setText(DOC_RULES_SAVE_ERROR.format(error=str(e)))
+            self._dr_status.setStyleSheet(
+                "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;")
+        self._dr_status.setVisible(True)
+
+    # ================================================================
+    # Tab: KI-Klassifikation (Verarbeitung)
+    # ================================================================
+    
+    def _create_ai_classification_tab(self) -> QWidget:
+        """Erstellt das KI-Klassifikation Panel mit Pipeline-Visualisierung + Prompt-Editor."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(SPACING_MD)
+        
+        # Toolbar
+        toolbar = QHBoxLayout()
+        title = QLabel(texts.PROCESSING_AI_TITLE)
+        title.setFont(QFont(FONT_HEADLINE, 18))
+        title.setStyleSheet(f"color: {PRIMARY_900};")
+        toolbar.addWidget(title)
+        toolbar.addStretch()
+        
+        self._btn_ai_save = QPushButton(texts.PROCESSING_AI_SAVE)
+        self._btn_ai_save.setStyleSheet(get_button_primary_style())
+        self._btn_ai_save.setCursor(Qt.PointingHandCursor)
+        self._btn_ai_save.clicked.connect(self._save_ai_classification_settings)
+        toolbar.addWidget(self._btn_ai_save)
+        
+        layout.addLayout(toolbar)
+        
+        subtitle = QLabel(texts.PROCESSING_AI_SUBTITLE)
+        subtitle.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_BODY};")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+        
+        # Provider-Info-Banner
+        self._ai_provider_banner = QLabel(texts.AI_CLASSIFICATION_NO_PROVIDER)
+        self._ai_provider_banner.setWordWrap(True)
+        self._ai_provider_banner.setStyleSheet(f"""
+            QLabel {{
+                background-color: {ACCENT_100};
+                border: 1px solid {ACCENT_500};
+                border-radius: {RADIUS_SM};
+                padding: 8px 12px;
+                color: {PRIMARY_900};
+                font-size: {FONT_SIZE_BODY};
+            }}
+        """)
+        layout.addWidget(self._ai_provider_banner)
+        
+        # Scrollbarer Inhalt
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(SPACING_MD)
+        
+        # ---- Bereich A: Statische Pipeline-Visualisierung ----
+        pipeline_group = QFrame()
+        pipeline_group.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PRIMARY_100};
+                border-radius: {RADIUS_MD};
+                padding: 16px;
+            }}
+        """)
+        pipeline_layout = QVBoxLayout(pipeline_group)
+        pipeline_layout.setSpacing(SPACING_SM)
+        
+        pipeline_title = QLabel(texts.PROCESSING_AI_PIPELINE_TITLE)
+        pipeline_title.setFont(QFont(FONT_HEADLINE, 14))
+        pipeline_title.setStyleSheet(f"color: {PRIMARY_900}; background: transparent;")
+        pipeline_layout.addWidget(pipeline_title)
+        
+        # Pipeline-Schritte als Flow-Karten
+        steps = [
+            (texts.PROCESSING_AI_STEP_XML, texts.PROCESSING_AI_STEP_XML_DESC, "Roh-Archiv"),
+            (texts.PROCESSING_AI_STEP_GDV_BIPRO, texts.PROCESSING_AI_STEP_GDV_BIPRO_DESC, "GDV-Box"),
+            (texts.PROCESSING_AI_STEP_GDV_EXT, texts.PROCESSING_AI_STEP_GDV_EXT_DESC, "GDV-Box"),
+            (texts.PROCESSING_AI_STEP_PDF_VALIDATE, texts.PROCESSING_AI_STEP_PDF_VALIDATE_DESC, None),
+            (texts.PROCESSING_AI_STEP_COURTAGE, texts.PROCESSING_AI_STEP_COURTAGE_DESC, "Courtage-Box"),
+        ]
+        
+        for step_title, step_desc, target in steps:
+            step_frame = QFrame()
+            step_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {PRIMARY_0};
+                    border: 1px solid {PRIMARY_500};
+                    border-radius: {RADIUS_SM};
+                    padding: 8px 12px;
+                }}
+            """)
+            step_row = QHBoxLayout(step_frame)
+            step_row.setContentsMargins(8, 4, 8, 4)
+            
+            step_lbl = QLabel(f"<b>{step_title}</b>")
+            step_lbl.setStyleSheet(f"color: {PRIMARY_900}; background: transparent; border: none;")
+            step_row.addWidget(step_lbl)
+            
+            desc_lbl = QLabel(step_desc)
+            desc_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent; border: none;")
+            step_row.addWidget(desc_lbl)
+            step_row.addStretch()
+            
+            if target:
+                target_lbl = QLabel(f"→ {target}")
+                target_lbl.setStyleSheet(f"color: {ACCENT_500}; font-weight: bold; background: transparent; border: none;")
+                step_row.addWidget(target_lbl)
+            
+            pipeline_layout.addWidget(step_frame)
+        
+        # Uebergangs-Pfeil
+        transition = QLabel(f"▼  {texts.PROCESSING_AI_STEP_KI_TRANSITION} → {texts.PROCESSING_AI_ARROW_LABEL}")
+        transition.setAlignment(Qt.AlignCenter)
+        transition.setStyleSheet(f"color: {ACCENT_500}; font-size: 14px; font-weight: bold; padding: 8px; background: transparent;")
+        pipeline_layout.addWidget(transition)
+        
+        scroll_layout.addWidget(pipeline_group)
+        
+        # ---- Bereich B: Stufe 1 ----
+        stage1_group = QFrame()
+        stage1_group.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PRIMARY_0};
+                border: 2px solid {ACCENT_500};
+                border-radius: {RADIUS_MD};
+                padding: 16px;
+            }}
+        """)
+        stage1_layout = QVBoxLayout(stage1_group)
+        stage1_layout.setSpacing(SPACING_SM)
+        
+        s1_header = QHBoxLayout()
+        s1_title = QLabel(texts.PROCESSING_AI_STAGE1_TITLE)
+        s1_title.setFont(QFont(FONT_HEADLINE, 14))
+        s1_title.setStyleSheet(f"color: {PRIMARY_900}; border: none;")
+        s1_header.addWidget(s1_title)
+        s1_header.addStretch()
+        s1_badge = QLabel(texts.PROCESSING_AI_STAGE1_ALWAYS_ACTIVE)
+        s1_badge.setStyleSheet(f"color: {SUCCESS}; font-size: {FONT_SIZE_CAPTION}; border: none;")
+        s1_header.addWidget(s1_badge)
+        stage1_layout.addLayout(s1_header)
+        
+        s1_desc = QLabel(texts.PROCESSING_AI_STAGE1_DESC)
+        s1_desc.setStyleSheet(f"color: {TEXT_SECONDARY}; border: none;")
+        stage1_layout.addWidget(s1_desc)
+        
+        # Model + Max Tokens
+        s1_row = QHBoxLayout()
+        s1_row.addWidget(QLabel(texts.PROCESSING_AI_STAGE_MODEL))
+        self._ai_s1_model = QComboBox()
+        self._ai_s1_model.setMinimumWidth(250)
+        self._ai_s1_model.setStyleSheet("border: 1px solid #ccc; padding: 4px;")
+        s1_row.addWidget(self._ai_s1_model)
+        s1_row.addSpacing(20)
+        s1_row.addWidget(QLabel(texts.PROCESSING_AI_STAGE_MAX_TOKENS))
+        self._ai_s1_max_tokens = QSpinBox()
+        self._ai_s1_max_tokens.setRange(50, 4096)
+        self._ai_s1_max_tokens.setValue(150)
+        self._ai_s1_max_tokens.setStyleSheet("border: 1px solid #ccc; padding: 4px;")
+        s1_row.addWidget(self._ai_s1_max_tokens)
+        s1_row.addStretch()
+        stage1_layout.addLayout(s1_row)
+        
+        # Version Dropdown + Save As
+        s1_version_row = QHBoxLayout()
+        s1_version_row.addWidget(QLabel(texts.PROCESSING_AI_STAGE_VERSION))
+        self._ai_s1_version = QComboBox()
+        self._ai_s1_version.setMinimumWidth(300)
+        self._ai_s1_version.setStyleSheet("border: 1px solid #ccc; padding: 4px;")
+        self._ai_s1_version.currentIndexChanged.connect(self._on_s1_version_changed)
+        s1_version_row.addWidget(self._ai_s1_version)
+        self._btn_s1_save_version = QPushButton(texts.PROCESSING_AI_VERSION_SAVE_AS)
+        self._btn_s1_save_version.setStyleSheet(get_button_secondary_style())
+        self._btn_s1_save_version.setCursor(Qt.PointingHandCursor)
+        self._btn_s1_save_version.clicked.connect(lambda: self._save_prompt_version('stage1'))
+        s1_version_row.addWidget(self._btn_s1_save_version)
+        s1_version_row.addStretch()
+        stage1_layout.addLayout(s1_version_row)
+        
+        # Prompt Editor
+        prompt_label = QLabel(texts.PROCESSING_AI_STAGE_PROMPT)
+        prompt_label.setStyleSheet("border: none;")
+        stage1_layout.addWidget(prompt_label)
+        self._ai_s1_prompt = QPlainTextEdit()
+        self._ai_s1_prompt.setMinimumHeight(200)
+        self._ai_s1_prompt.setMaximumHeight(400)
+        self._ai_s1_prompt.setFont(QFont("Consolas", 10))
+        self._ai_s1_prompt.setStyleSheet(f"border: 1px solid #ccc; border-radius: {RADIUS_SM}; padding: 8px;")
+        stage1_layout.addWidget(self._ai_s1_prompt)
+        
+        scroll_layout.addWidget(stage1_group)
+        
+        # ---- Uebergang: Confidence -> Stufe 2 ----
+        transition2 = QLabel(f"▼  {texts.PROCESSING_AI_TRANSITION_LABEL.format(trigger='low')}")
+        transition2.setAlignment(Qt.AlignCenter)
+        transition2.setStyleSheet(f"color: {ACCENT_500}; font-size: 14px; font-weight: bold; padding: 8px;")
+        self._ai_transition_label = transition2
+        scroll_layout.addWidget(transition2)
+        
+        # ---- Bereich C: Stufe 2 ----
+        stage2_group = QFrame()
+        stage2_group.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PRIMARY_0};
+                border: 2px solid {PRIMARY_500};
+                border-radius: {RADIUS_MD};
+                padding: 16px;
+            }}
+        """)
+        self._ai_stage2_group = stage2_group
+        stage2_layout = QVBoxLayout(stage2_group)
+        stage2_layout.setSpacing(SPACING_SM)
+        
+        s2_header = QHBoxLayout()
+        s2_title = QLabel(texts.PROCESSING_AI_STAGE2_TITLE)
+        s2_title.setFont(QFont(FONT_HEADLINE, 14))
+        s2_title.setStyleSheet(f"color: {PRIMARY_900}; border: none;")
+        s2_header.addWidget(s2_title)
+        s2_header.addStretch()
+        self._ai_s2_enabled = QCheckBox(texts.PROCESSING_AI_STAGE2_ENABLED)
+        self._ai_s2_enabled.setChecked(True)
+        self._ai_s2_enabled.setStyleSheet("border: none;")
+        self._ai_s2_enabled.toggled.connect(self._on_s2_enabled_toggled)
+        s2_header.addWidget(self._ai_s2_enabled)
+        stage2_layout.addLayout(s2_header)
+        
+        s2_desc = QLabel(texts.PROCESSING_AI_STAGE2_DESC)
+        s2_desc.setStyleSheet(f"color: {TEXT_SECONDARY}; border: none;")
+        stage2_layout.addWidget(s2_desc)
+        
+        # Disabled-Info (nur sichtbar wenn deaktiviert)
+        self._ai_s2_disabled_info = QLabel(texts.PROCESSING_AI_STAGE2_DISABLED_INFO)
+        self._ai_s2_disabled_info.setStyleSheet(f"color: {STATUS_COLORS['denied']}; font-style: italic; padding: 8px; border: none;")
+        self._ai_s2_disabled_info.setWordWrap(True)
+        self._ai_s2_disabled_info.setVisible(False)
+        stage2_layout.addWidget(self._ai_s2_disabled_info)
+        
+        # Container fuer editierbare Felder (ein/ausblendbar)
+        self._ai_s2_fields = QWidget()
+        s2_fields_layout = QVBoxLayout(self._ai_s2_fields)
+        s2_fields_layout.setContentsMargins(0, 0, 0, 0)
+        s2_fields_layout.setSpacing(SPACING_SM)
+        
+        # Trigger
+        s2_trigger_row = QHBoxLayout()
+        s2_trigger_row.addWidget(QLabel(texts.PROCESSING_AI_STAGE2_TRIGGER))
+        self._ai_s2_trigger = QComboBox()
+        self._ai_s2_trigger.addItem(texts.PROCESSING_AI_STAGE2_TRIGGER_LOW, "low")
+        self._ai_s2_trigger.addItem(texts.PROCESSING_AI_STAGE2_TRIGGER_LOW_MEDIUM, "low_medium")
+        self._ai_s2_trigger.setStyleSheet("border: 1px solid #ccc; padding: 4px;")
+        self._ai_s2_trigger.currentIndexChanged.connect(self._on_s2_trigger_changed)
+        s2_trigger_row.addWidget(self._ai_s2_trigger)
+        s2_trigger_row.addStretch()
+        s2_fields_layout.addLayout(s2_trigger_row)
+        
+        # Model + Max Tokens
+        s2_row = QHBoxLayout()
+        s2_row.addWidget(QLabel(texts.PROCESSING_AI_STAGE_MODEL))
+        self._ai_s2_model = QComboBox()
+        self._ai_s2_model.setMinimumWidth(250)
+        self._ai_s2_model.setStyleSheet("border: 1px solid #ccc; padding: 4px;")
+        s2_row.addWidget(self._ai_s2_model)
+        s2_row.addSpacing(20)
+        s2_row.addWidget(QLabel(texts.PROCESSING_AI_STAGE_MAX_TOKENS))
+        self._ai_s2_max_tokens = QSpinBox()
+        self._ai_s2_max_tokens.setRange(50, 4096)
+        self._ai_s2_max_tokens.setValue(200)
+        self._ai_s2_max_tokens.setStyleSheet("border: 1px solid #ccc; padding: 4px;")
+        s2_row.addWidget(self._ai_s2_max_tokens)
+        s2_row.addStretch()
+        s2_fields_layout.addLayout(s2_row)
+        
+        # Version Dropdown + Save As
+        s2_version_row = QHBoxLayout()
+        s2_version_row.addWidget(QLabel(texts.PROCESSING_AI_STAGE_VERSION))
+        self._ai_s2_version = QComboBox()
+        self._ai_s2_version.setMinimumWidth(300)
+        self._ai_s2_version.setStyleSheet("border: 1px solid #ccc; padding: 4px;")
+        self._ai_s2_version.currentIndexChanged.connect(self._on_s2_version_changed)
+        s2_version_row.addWidget(self._ai_s2_version)
+        self._btn_s2_save_version = QPushButton(texts.PROCESSING_AI_VERSION_SAVE_AS)
+        self._btn_s2_save_version.setStyleSheet(get_button_secondary_style())
+        self._btn_s2_save_version.setCursor(Qt.PointingHandCursor)
+        self._btn_s2_save_version.clicked.connect(lambda: self._save_prompt_version('stage2'))
+        s2_version_row.addWidget(self._btn_s2_save_version)
+        s2_version_row.addStretch()
+        s2_fields_layout.addLayout(s2_version_row)
+        
+        # Prompt Editor
+        prompt2_label = QLabel(texts.PROCESSING_AI_STAGE_PROMPT)
+        prompt2_label.setStyleSheet("border: none;")
+        s2_fields_layout.addWidget(prompt2_label)
+        self._ai_s2_prompt = QPlainTextEdit()
+        self._ai_s2_prompt.setMinimumHeight(200)
+        self._ai_s2_prompt.setMaximumHeight(400)
+        self._ai_s2_prompt.setFont(QFont("Consolas", 10))
+        self._ai_s2_prompt.setStyleSheet(f"border: 1px solid #ccc; border-radius: {RADIUS_SM}; padding: 8px;")
+        s2_fields_layout.addWidget(self._ai_s2_prompt)
+        
+        stage2_layout.addWidget(self._ai_s2_fields)
+        
+        scroll_layout.addWidget(stage2_group)
+        
+        # ---- Bereich D: Ergebnis ----
+        result_label = QLabel(f"▼  {texts.PROCESSING_AI_RESULT_TITLE}: {texts.PROCESSING_AI_RESULT_DESC}")
+        result_label.setAlignment(Qt.AlignCenter)
+        result_label.setStyleSheet(f"color: {SUCCESS}; font-size: 13px; padding: 12px;")
+        result_label.setWordWrap(True)
+        scroll_layout.addWidget(result_label)
+        
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll)
+        
+        # Prompt-Versionen Cache
+        self._ai_s1_versions: List[Dict] = []
+        self._ai_s2_versions: List[Dict] = []
+        
+        return widget
+    
+    def _on_s2_enabled_toggled(self, checked: bool):
+        """Toggle Stufe 2 aktiv/deaktiviert."""
+        self._ai_s2_fields.setVisible(checked)
+        self._ai_s2_disabled_info.setVisible(not checked)
+        # Border-Farbe aendern
+        if checked:
+            self._ai_stage2_group.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {PRIMARY_0};
+                    border: 2px solid {PRIMARY_500};
+                    border-radius: {RADIUS_MD};
+                    padding: 16px;
+                }}
+            """)
+        else:
+            self._ai_stage2_group.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {PRIMARY_100};
+                    border: 2px dashed {PRIMARY_500};
+                    border-radius: {RADIUS_MD};
+                    padding: 16px;
+                }}
+            """)
+    
+    def _on_s2_trigger_changed(self, index: int):
+        """Aktualisiert das Transition-Label wenn der Trigger geaendert wird."""
+        trigger = self._ai_s2_trigger.currentData()
+        if trigger == 'low_medium':
+            self._ai_transition_label.setText(
+                f"▼  {texts.PROCESSING_AI_TRANSITION_LABEL.format(trigger='low oder medium')}")
+        else:
+            self._ai_transition_label.setText(
+                f"▼  {texts.PROCESSING_AI_TRANSITION_LABEL.format(trigger='low')}")
+    
+    def _on_s1_version_changed(self, index: int):
+        """Laedt einen Stufe-1-Prompt aus der Version."""
+        if index <= 0 or index > len(self._ai_s1_versions):
+            return
+        version = self._ai_s1_versions[index - 1]  # -1 wegen "Aktuell" Eintrag
+        self._ai_s1_prompt.setPlainText(version.get('prompt_text', ''))
+        model = version.get('model', '')
+        idx = self._ai_s1_model.findText(model)
+        if idx >= 0:
+            self._ai_s1_model.setCurrentIndex(idx)
+        mt = version.get('max_tokens', 150)
+        self._ai_s1_max_tokens.setValue(int(mt))
+    
+    def _on_s2_version_changed(self, index: int):
+        """Laedt einen Stufe-2-Prompt aus der Version."""
+        if index <= 0 or index > len(self._ai_s2_versions):
+            return
+        version = self._ai_s2_versions[index - 1]
+        self._ai_s2_prompt.setPlainText(version.get('prompt_text', ''))
+        model = version.get('model', '')
+        idx = self._ai_s2_model.findText(model)
+        if idx >= 0:
+            self._ai_s2_model.setCurrentIndex(idx)
+        mt = version.get('max_tokens', 200)
+        self._ai_s2_max_tokens.setValue(int(mt))
+    
+    def _load_ai_classification_settings(self):
+        """Laedt KI-Einstellungen und Prompt-Versionen vom Server."""
+        # Zuerst Provider-Info laden und Modell-Dropdowns aktualisieren
+        self._refresh_ai_classification_provider_info()
+        
+        try:
+            data = self._processing_settings_api.get_ai_settings_admin()
+            settings = data.get('settings', {})
+            
+            if not settings:
+                return
+            
+            # Stufe 1 befuellen
+            s1_model = settings.get('stage1_model', 'openai/gpt-4o-mini')
+            self._restore_model_selection(self._ai_s1_model, s1_model)
+            
+            self._ai_s1_max_tokens.setValue(int(settings.get('stage1_max_tokens', 150)))
+            self._ai_s1_prompt.setPlainText(settings.get('stage1_prompt', ''))
+            
+            # Stufe 2 befuellen
+            s2_enabled = settings.get('stage2_enabled')
+            if isinstance(s2_enabled, str):
+                s2_enabled = s2_enabled == '1'
+            self._ai_s2_enabled.setChecked(bool(s2_enabled))
+            
+            s2_model = settings.get('stage2_model', 'openai/gpt-4o-mini')
+            self._restore_model_selection(self._ai_s2_model, s2_model)
+            
+            self._ai_s2_max_tokens.setValue(int(settings.get('stage2_max_tokens', 200)))
+            self._ai_s2_prompt.setPlainText(settings.get('stage2_prompt', ''))
+            
+            trigger = settings.get('stage2_trigger', 'low')
+            trigger_idx = self._ai_s2_trigger.findData(trigger)
+            if trigger_idx >= 0:
+                self._ai_s2_trigger.setCurrentIndex(trigger_idx)
+            
+            # Versionen laden
+            self._load_prompt_versions()
+            
+        except Exception as e:
+            logger.error(f"KI-Settings laden fehlgeschlagen: {e}")
+            from ui.toast import ToastManager
+            ToastManager.instance().show_error(texts.PROCESSING_AI_LOAD_ERROR)
+    
+    def _refresh_ai_classification_provider_info(self):
+        """Laedt aktiven Provider und aktualisiert Banner + Modell-Dropdowns."""
+        try:
+            provider_info = self._ai_providers_api.get_active_provider()
+            if provider_info and provider_info.get('provider'):
+                provider = provider_info['provider']
+                name = provider_info.get('name', '')
+                
+                banner_text = texts.AI_CLASSIFICATION_PROVIDER_INFO.format(
+                    provider=provider.capitalize(), name=name
+                )
+                if provider == 'openrouter':
+                    banner_text += "\n" + texts.AI_CLASSIFICATION_PROVIDER_ALL_MODELS
+                else:
+                    banner_text += "\n" + texts.AI_CLASSIFICATION_PROVIDER_OPENAI_ONLY
+                self._ai_provider_banner.setText(banner_text)
+                
+                self._update_model_dropdowns(provider)
+            else:
+                self._ai_provider_banner.setText(texts.AI_CLASSIFICATION_NO_PROVIDER)
+                self._update_model_dropdowns('openrouter')
+        except Exception as e:
+            logger.warning(f"Provider-Info laden fehlgeschlagen: {e}")
+            self._update_model_dropdowns('openrouter')
+    
+    def _update_model_dropdowns(self, provider: str):
+        """Aktualisiert Modell-Auswahl basierend auf Provider."""
+        from config.ai_models import get_models_for_provider
+        
+        models = get_models_for_provider(provider)
+        
+        current_s1 = self._ai_s1_model.currentText()
+        current_s2 = self._ai_s2_model.currentText()
+        
+        for combo in [self._ai_s1_model, self._ai_s2_model]:
+            combo.blockSignals(True)
+            combo.clear()
+            for m in models:
+                combo.addItem(m["name"], m["id"])
+            combo.blockSignals(False)
+        
+        if current_s1:
+            self._restore_model_selection(self._ai_s1_model, current_s1)
+        if current_s2:
+            self._restore_model_selection(self._ai_s2_model, current_s2)
+    
+    def _restore_model_selection(self, combo: QComboBox, model_id: str):
+        """Stellt Modell-Auswahl wieder her oder mappt auf Aequivalent."""
+        from config.ai_models import find_equivalent_model
+        
+        # Direkte Uebereinstimmung nach data (id)
+        idx = combo.findData(model_id)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+            return
+        
+        # Direkte Uebereinstimmung nach Text (name)
+        idx = combo.findText(model_id)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+            return
+        
+        # Aequivalent suchen
+        provider = 'openrouter'
+        if combo.count() > 0:
+            first_id = combo.itemData(0) or ''
+            if '/' not in str(first_id):
+                provider = 'openai'
+        
+        equivalent = find_equivalent_model(model_id, provider)
+        idx = combo.findData(equivalent)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+            return
+        
+        # Fallback: Modell hinzufuegen falls es ein Custom-Modell ist
+        if model_id:
+            combo.addItem(model_id, model_id)
+            combo.setCurrentIndex(combo.count() - 1)
+    
+    def _load_prompt_versions(self):
+        """Laedt Prompt-Versionen fuer beide Stufen."""
+        try:
+            # Stage 1
+            self._ai_s1_versions = self._processing_settings_api.get_prompt_versions('stage1')
+            self._ai_s1_version.blockSignals(True)
+            self._ai_s1_version.clear()
+            self._ai_s1_version.addItem(texts.PROCESSING_AI_VERSION_CURRENT)
+            for v in self._ai_s1_versions:
+                label = v.get('label') or f"v{v.get('version_number', '?')}"
+                is_default = v.get('is_default')
+                if is_default:
+                    label = f"{label} ({texts.PROCESSING_AI_VERSION_SYSTEM_DEFAULT})"
+                self._ai_s1_version.addItem(label)
+            self._ai_s1_version.setCurrentIndex(0)
+            self._ai_s1_version.blockSignals(False)
+            
+            # Stage 2
+            self._ai_s2_versions = self._processing_settings_api.get_prompt_versions('stage2')
+            self._ai_s2_version.blockSignals(True)
+            self._ai_s2_version.clear()
+            self._ai_s2_version.addItem(texts.PROCESSING_AI_VERSION_CURRENT)
+            for v in self._ai_s2_versions:
+                label = v.get('label') or f"v{v.get('version_number', '?')}"
+                is_default = v.get('is_default')
+                if is_default:
+                    label = f"{label} ({texts.PROCESSING_AI_VERSION_SYSTEM_DEFAULT})"
+                self._ai_s2_version.addItem(label)
+            self._ai_s2_version.setCurrentIndex(0)
+            self._ai_s2_version.blockSignals(False)
+            
+        except Exception as e:
+            logger.error(f"Prompt-Versionen laden fehlgeschlagen: {e}")
+    
+    def _save_ai_classification_settings(self):
+        """Speichert KI-Einstellungen auf dem Server."""
+        try:
+            s1_model = self._ai_s1_model.currentData() or self._ai_s1_model.currentText()
+            s2_model = self._ai_s2_model.currentData() or self._ai_s2_model.currentText()
+            data = {
+                'stage1_model': s1_model,
+                'stage1_prompt': self._ai_s1_prompt.toPlainText(),
+                'stage1_max_tokens': self._ai_s1_max_tokens.value(),
+                'stage2_enabled': self._ai_s2_enabled.isChecked(),
+                'stage2_model': s2_model,
+                'stage2_prompt': self._ai_s2_prompt.toPlainText(),
+                'stage2_max_tokens': self._ai_s2_max_tokens.value(),
+                'stage2_trigger': self._ai_s2_trigger.currentData() or 'low',
+            }
+            
+            self._processing_settings_api.save_ai_settings(data)
+            
+            from ui.toast import ToastManager
+            ToastManager.instance().show_success(texts.PROCESSING_AI_SAVE_SUCCESS)
+            
+            # Versionen neu laden (neue Version koennte erstellt worden sein)
+            self._load_prompt_versions()
+            
+        except Exception as e:
+            logger.error(f"KI-Settings speichern fehlgeschlagen: {e}")
+            from ui.toast import ToastManager
+            ToastManager.instance().show_error(texts.PROCESSING_AI_SAVE_ERROR)
+    
+    def _save_prompt_version(self, stage: str):
+        """Speichert den aktuellen Prompt als benannte Version."""
+        from PySide6.QtWidgets import QInputDialog
+        label, ok = QInputDialog.getText(
+            self,
+            texts.PROCESSING_AI_VERSION_SAVE_AS,
+            texts.PROCESSING_AI_VERSION_LABEL,
+        )
+        if not ok:
+            return
+        
+        try:
+            if stage == 'stage1':
+                prompt = self._ai_s1_prompt.toPlainText()
+                model = self._ai_s1_model.currentData() or self._ai_s1_model.currentText()
+                max_tokens = self._ai_s1_max_tokens.value()
+            else:
+                prompt = self._ai_s2_prompt.toPlainText()
+                model = self._ai_s2_model.currentData() or self._ai_s2_model.currentText()
+                max_tokens = self._ai_s2_max_tokens.value()
+            
+            # Speichern mit optionalem Label
+            data = {
+                f'{stage}_prompt': prompt,
+                f'{stage}_model': model,
+                f'{stage}_max_tokens': max_tokens,
+                f'{stage}_version_label': label.strip() if label.strip() else None,
+            }
+            
+            self._processing_settings_api.save_ai_settings(data)
+            
+            from ui.toast import ToastManager
+            ToastManager.instance().show_success(texts.PROCESSING_AI_SAVE_SUCCESS)
+            
+            self._load_prompt_versions()
+            
+        except Exception as e:
+            logger.error(f"Prompt-Version speichern fehlgeschlagen: {e}")
+            from ui.toast import ToastManager
+            ToastManager.instance().show_error(texts.PROCESSING_AI_SAVE_ERROR)
+    
+    # ================================================================
+    # Tab 7: KI-Provider
+    # ================================================================
+    
+    def _create_ai_providers_tab(self) -> QWidget:
+        """Erstellt das KI-Provider-Panel (API-Key-Verwaltung)."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
+        layout.setSpacing(SPACING_MD)
+        
+        # Header
+        header = QHBoxLayout()
+        title = QLabel(texts.AI_PROVIDER_TITLE)
+        title.setFont(QFont(FONT_HEADLINE, 18))
+        header.addWidget(title)
+        header.addStretch()
+        
+        add_btn = QPushButton(texts.AI_PROVIDER_ADD)
+        add_btn.setStyleSheet(get_button_primary_style())
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.clicked.connect(self._show_add_provider_dialog)
+        header.addWidget(add_btn)
+        layout.addLayout(header)
+        
+        # Hint
+        hint_label = QLabel(texts.AI_PROVIDER_HINT)
+        hint_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION}; padding: 4px 0;")
+        layout.addWidget(hint_label)
+        
+        # Tabelle
+        self._providers_table = QTableWidget()
+        self._providers_table.setColumnCount(6)
+        self._providers_table.setHorizontalHeaderLabels([
+            texts.AI_PROVIDER_NAME, texts.AI_PROVIDER_TYPE, texts.AI_PROVIDER_KEY,
+            texts.AI_PROVIDER_STATUS, "", texts.AI_PROVIDER_ACTIONS
+        ])
+        self._providers_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._providers_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self._providers_table.setColumnWidth(4, 10)
+        self._providers_table.setColumnWidth(5, 340)
+        self._providers_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._providers_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._providers_table.verticalHeader().setVisible(False)
+        self._providers_table.setAlternatingRowColors(True)
+        layout.addWidget(self._providers_table)
+        
+        return widget
+    
+    def _load_ai_providers(self):
+        """Laedt alle Provider-Keys vom Server."""
+        def _do_load():
+            return self._ai_providers_api.list_keys()
+        
+        worker = AdminWriteWorker(_do_load)
+        worker.finished.connect(self._on_providers_loaded)
+        worker.error.connect(lambda e: self._show_toast_error(f"Provider laden: {e}"))
+        self._active_workers.append(worker)
+        worker.start()
+    
+    def _on_providers_loaded(self, providers):
+        """Aktualisiert die Provider-Tabelle."""
+        from ui.toast import ToastManager
+        self._providers_data = providers if providers else []
+        table = self._providers_table
+        table.setRowCount(len(self._providers_data))
+        
+        for row, p in enumerate(self._providers_data):
+            table.setItem(row, 0, QTableWidgetItem(p.name))
+            
+            type_label = texts.AI_PROVIDER_OPENROUTER if p.provider_type == 'openrouter' else texts.AI_PROVIDER_OPENAI
+            table.setItem(row, 1, QTableWidgetItem(type_label))
+            
+            table.setItem(row, 2, QTableWidgetItem(p.api_key_masked))
+            
+            status_text = texts.AI_PROVIDER_ACTIVE if p.is_active else texts.AI_PROVIDER_INACTIVE
+            status_item = QTableWidgetItem(status_text)
+            if p.is_active:
+                status_item.setForeground(QColor(STATUS_COLORS['success']))
+            table.setItem(row, 3, status_item)
+            
+            # Leer-Spalte (Platz fuer Test)
+            table.setItem(row, 4, QTableWidgetItem(""))
+            
+            # Aktions-Buttons
+            actions = QWidget()
+            actions_layout = QHBoxLayout(actions)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+            actions_layout.setSpacing(4)
+            
+            if not p.is_active:
+                activate_btn = QPushButton(texts.AI_PROVIDER_ACTIVATE)
+                activate_btn.setStyleSheet(get_button_primary_style())
+                activate_btn.setCursor(Qt.PointingHandCursor)
+                activate_btn.setFixedHeight(28)
+                activate_btn.clicked.connect(lambda _, pid=p.id, pname=p.name: self._activate_provider(pid, pname))
+                actions_layout.addWidget(activate_btn)
+            
+            test_btn = QPushButton(texts.AI_PROVIDER_TEST)
+            test_btn.setStyleSheet(get_button_secondary_style())
+            test_btn.setCursor(Qt.PointingHandCursor)
+            test_btn.setFixedHeight(28)
+            test_btn.clicked.connect(lambda _, pid=p.id: self._test_provider(pid))
+            actions_layout.addWidget(test_btn)
+            
+            edit_btn = QPushButton(texts.AI_PROVIDER_EDIT)
+            edit_btn.setStyleSheet(get_button_ghost_style())
+            edit_btn.setCursor(Qt.PointingHandCursor)
+            edit_btn.setFixedHeight(28)
+            edit_btn.clicked.connect(lambda _, pid=p.id: self._show_edit_provider_dialog(pid))
+            actions_layout.addWidget(edit_btn)
+            
+            if not p.is_active:
+                del_btn = QPushButton(texts.AI_PROVIDER_DELETE)
+                del_btn.setStyleSheet(get_button_ghost_style())
+                del_btn.setCursor(Qt.PointingHandCursor)
+                del_btn.setFixedHeight(28)
+                del_btn.clicked.connect(lambda _, pid=p.id, pname=p.name: self._delete_provider(pid, pname))
+                actions_layout.addWidget(del_btn)
+            
+            table.setCellWidget(row, 5, actions)
+        
+        table.resizeRowsToContents()
+    
+    def _show_add_provider_dialog(self):
+        """Dialog zum Anlegen eines neuen Providers."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(texts.AI_PROVIDER_DIALOG_TITLE_NEW)
+        dialog.setMinimumWidth(450)
+        form = QFormLayout(dialog)
+        
+        name_edit = QLineEdit()
+        name_edit.setPlaceholderText(texts.AI_PROVIDER_NAME)
+        form.addRow(texts.AI_PROVIDER_NAME + ":", name_edit)
+        
+        type_combo = QComboBox()
+        type_combo.addItem(texts.AI_PROVIDER_OPENROUTER, "openrouter")
+        type_combo.addItem(texts.AI_PROVIDER_OPENAI, "openai")
+        form.addRow(texts.AI_PROVIDER_TYPE + ":", type_combo)
+        
+        key_edit = QLineEdit()
+        key_edit.setPlaceholderText(texts.AI_PROVIDER_KEY_PLACEHOLDER)
+        key_edit.setEchoMode(QLineEdit.Password)
+        form.addRow(texts.AI_PROVIDER_KEY + ":", key_edit)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        
+        if dialog.exec() == QDialog.Accepted:
+            from ui.toast import ToastManager
+            name = name_edit.text().strip()
+            provider_type = type_combo.currentData()
+            api_key = key_edit.text().strip()
+            
+            if not name or not api_key:
+                return
+            
+            def _do_create():
+                return self._ai_providers_api.create_key(provider_type, name, api_key)
+            
+            worker = AdminWriteWorker(_do_create)
+            worker.finished.connect(lambda _: (
+                ToastManager.instance().show_success(texts.AI_PROVIDER_CREATED.format(name=name)),
+                self._load_ai_providers()
+            ))
+            worker.error.connect(lambda e: ToastManager.instance().show_error(str(e)))
+            self._active_workers.append(worker)
+            worker.start()
+    
+    def _show_edit_provider_dialog(self, provider_id: int):
+        """Dialog zum Bearbeiten eines Providers."""
+        provider = None
+        for p in getattr(self, '_providers_data', []):
+            if p.id == provider_id:
+                provider = p
+                break
+        if not provider:
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle(texts.AI_PROVIDER_DIALOG_TITLE_EDIT)
+        dialog.setMinimumWidth(450)
+        form = QFormLayout(dialog)
+        
+        name_edit = QLineEdit(provider.name)
+        form.addRow(texts.AI_PROVIDER_NAME + ":", name_edit)
+        
+        key_edit = QLineEdit()
+        key_edit.setPlaceholderText(texts.AI_PROVIDER_KEY_UNCHANGED)
+        key_edit.setEchoMode(QLineEdit.Password)
+        form.addRow(texts.AI_PROVIDER_KEY + ":", key_edit)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        
+        if dialog.exec() == QDialog.Accepted:
+            from ui.toast import ToastManager
+            name = name_edit.text().strip()
+            api_key = key_edit.text().strip() or None
+            
+            def _do_update():
+                return self._ai_providers_api.update_key(provider_id, name=name, api_key=api_key)
+            
+            worker = AdminWriteWorker(_do_update)
+            worker.finished.connect(lambda _: (
+                ToastManager.instance().show_success(texts.AI_PROVIDER_UPDATED),
+                self._load_ai_providers()
+            ))
+            worker.error.connect(lambda e: ToastManager.instance().show_error(str(e)))
+            self._active_workers.append(worker)
+            worker.start()
+    
+    def _activate_provider(self, provider_id: int, name: str):
+        """Provider aktivieren nach Bestaetigung."""
+        from ui.toast import ToastManager
+        reply = QMessageBox.question(
+            self, texts.AI_PROVIDER_ACTIVATE,
+            texts.AI_PROVIDER_CONFIRM_ACTIVATE.format(name=name),
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        
+        def _do_activate():
+            return self._ai_providers_api.activate_key(provider_id)
+        
+        worker = AdminWriteWorker(_do_activate)
+        worker.finished.connect(lambda _: (
+            ToastManager.instance().show_success(texts.AI_PROVIDER_ACTIVATED.format(name=name)),
+            self._load_ai_providers()
+        ))
+        worker.error.connect(lambda e: ToastManager.instance().show_error(str(e)))
+        self._active_workers.append(worker)
+        worker.start()
+    
+    def _test_provider(self, provider_id: int):
+        """Provider-Key testen."""
+        from ui.toast import ToastManager
+        
+        def _do_test():
+            return self._ai_providers_api.test_key(provider_id)
+        
+        worker = AdminWriteWorker(_do_test)
+        worker.finished.connect(lambda result: (
+            ToastManager.instance().show_success(texts.AI_PROVIDER_TEST_SUCCESS)
+            if result and result.get('success')
+            else ToastManager.instance().show_error(
+                texts.AI_PROVIDER_TEST_FAILED.format(error=result.get('error', ''))
+            )
+        ))
+        worker.error.connect(lambda e: ToastManager.instance().show_error(
+            texts.AI_PROVIDER_TEST_FAILED.format(error=e)
+        ))
+        self._active_workers.append(worker)
+        worker.start()
+    
+    def _delete_provider(self, provider_id: int, name: str):
+        """Provider loeschen nach Bestaetigung."""
+        from ui.toast import ToastManager
+        reply = QMessageBox.question(
+            self, texts.AI_PROVIDER_DELETE,
+            texts.AI_PROVIDER_CONFIRM_DELETE.format(name=name),
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        
+        def _do_delete():
+            return self._ai_providers_api.delete_key(provider_id)
+        
+        worker = AdminWriteWorker(_do_delete)
+        worker.finished.connect(lambda _: (
+            ToastManager.instance().show_success(texts.AI_PROVIDER_DELETED),
+            self._load_ai_providers()
+        ))
+        worker.error.connect(lambda e: ToastManager.instance().show_error(str(e)))
+        self._active_workers.append(worker)
+        worker.start()
+    
+    # ================================================================
+    # Tab 8: Modell-Preise
+    # ================================================================
+    
+    def _create_model_pricing_tab(self) -> QWidget:
+        """Erstellt das Modell-Preise-Panel."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
+        layout.setSpacing(SPACING_MD)
+        
+        # Header
+        header = QHBoxLayout()
+        title = QLabel(texts.MODEL_PRICING_TITLE)
+        title.setFont(QFont(FONT_HEADLINE, 18))
+        header.addWidget(title)
+        header.addStretch()
+        
+        add_btn = QPushButton(texts.MODEL_PRICING_ADD)
+        add_btn.setStyleSheet(get_button_primary_style())
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.clicked.connect(self._show_add_pricing_dialog)
+        header.addWidget(add_btn)
+        layout.addLayout(header)
+        
+        # Hint
+        hint_label = QLabel(texts.MODEL_PRICING_HINT)
+        hint_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION}; padding: 4px 0;")
+        hint_label.setOpenExternalLinks(True)
+        layout.addWidget(hint_label)
+        
+        # Tabelle
+        self._pricing_table = QTableWidget()
+        self._pricing_table.setColumnCount(7)
+        self._pricing_table.setHorizontalHeaderLabels([
+            texts.MODEL_PRICING_PROVIDER, texts.MODEL_PRICING_MODEL,
+            texts.MODEL_PRICING_INPUT, texts.MODEL_PRICING_OUTPUT,
+            texts.MODEL_PRICING_VALID_FROM, texts.MODEL_PRICING_IS_ACTIVE,
+            texts.MODEL_PRICING_ACTIONS
+        ])
+        self._pricing_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._pricing_table.setColumnWidth(6, 220)
+        self._pricing_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._pricing_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._pricing_table.verticalHeader().setVisible(False)
+        self._pricing_table.setAlternatingRowColors(True)
+        layout.addWidget(self._pricing_table)
+        
+        return widget
+    
+    def _load_model_pricing(self):
+        """Laedt alle Modell-Preise vom Server."""
+        def _do_load():
+            return self._model_pricing_api.list_prices_admin()
+        
+        worker = AdminWriteWorker(_do_load)
+        worker.finished.connect(self._on_pricing_loaded)
+        worker.error.connect(lambda e: self._show_toast_error(f"Modell-Preise laden: {e}"))
+        self._active_workers.append(worker)
+        worker.start()
+    
+    def _on_pricing_loaded(self, prices):
+        """Aktualisiert die Preise-Tabelle."""
+        self._pricing_data = prices if prices else []
+        table = self._pricing_table
+        table.setRowCount(len(self._pricing_data))
+        
+        for row, p in enumerate(self._pricing_data):
+            type_label = texts.AI_PROVIDER_OPENROUTER if p.provider == 'openrouter' else texts.AI_PROVIDER_OPENAI
+            table.setItem(row, 0, QTableWidgetItem(type_label))
+            table.setItem(row, 1, QTableWidgetItem(p.model_name))
+            table.setItem(row, 2, QTableWidgetItem(f"${p.input_price_per_million:.4f}"))
+            table.setItem(row, 3, QTableWidgetItem(f"${p.output_price_per_million:.4f}"))
+            table.setItem(row, 4, QTableWidgetItem(p.valid_from))
+            
+            active_text = texts.AI_PROVIDER_ACTIVE if p.is_active else texts.AI_PROVIDER_INACTIVE
+            active_item = QTableWidgetItem(active_text)
+            if p.is_active:
+                active_item.setForeground(QColor(STATUS_COLORS['success']))
+            else:
+                active_item.setForeground(QColor(STATUS_COLORS['error']))
+            table.setItem(row, 5, active_item)
+            
+            # Aktions-Buttons
+            actions = QWidget()
+            actions_layout = QHBoxLayout(actions)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+            actions_layout.setSpacing(4)
+            
+            edit_btn = QPushButton(texts.MODEL_PRICING_EDIT)
+            edit_btn.setStyleSheet(get_button_ghost_style())
+            edit_btn.setCursor(Qt.PointingHandCursor)
+            edit_btn.setFixedHeight(28)
+            edit_btn.clicked.connect(lambda _, pid=p.id: self._show_edit_pricing_dialog(pid))
+            actions_layout.addWidget(edit_btn)
+            
+            if p.is_active:
+                deact_btn = QPushButton(texts.MODEL_PRICING_DEACTIVATE)
+                deact_btn.setStyleSheet(get_button_ghost_style())
+                deact_btn.setCursor(Qt.PointingHandCursor)
+                deact_btn.setFixedHeight(28)
+                deact_btn.clicked.connect(lambda _, pid=p.id, pmodel=p.model_name: self._deactivate_pricing(pid, pmodel))
+                actions_layout.addWidget(deact_btn)
+            
+            table.setCellWidget(row, 6, actions)
+        
+        table.resizeRowsToContents()
+    
+    def _show_add_pricing_dialog(self):
+        """Dialog zum Anlegen eines neuen Modell-Preises."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(texts.MODEL_PRICING_DIALOG_TITLE_NEW)
+        dialog.setMinimumWidth(450)
+        form = QFormLayout(dialog)
+        
+        provider_combo = QComboBox()
+        provider_combo.addItem(texts.AI_PROVIDER_OPENROUTER, "openrouter")
+        provider_combo.addItem(texts.AI_PROVIDER_OPENAI, "openai")
+        form.addRow(texts.MODEL_PRICING_PROVIDER + ":", provider_combo)
+        
+        model_edit = QLineEdit()
+        model_edit.setPlaceholderText("z.B. gpt-4o oder openai/gpt-4o")
+        form.addRow(texts.MODEL_PRICING_MODEL + ":", model_edit)
+        
+        input_spin = QLineEdit()
+        input_spin.setPlaceholderText("z.B. 2.50")
+        form.addRow(texts.MODEL_PRICING_INPUT + ":", input_spin)
+        
+        output_spin = QLineEdit()
+        output_spin.setPlaceholderText("z.B. 10.00")
+        form.addRow(texts.MODEL_PRICING_OUTPUT + ":", output_spin)
+        
+        date_edit = QDateEdit()
+        date_edit.setDate(QDate.currentDate())
+        date_edit.setCalendarPopup(True)
+        form.addRow(texts.MODEL_PRICING_VALID_FROM + ":", date_edit)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        
+        if dialog.exec() == QDialog.Accepted:
+            from ui.toast import ToastManager
+            provider = provider_combo.currentData()
+            model_name = model_edit.text().strip()
+            try:
+                input_price = float(input_spin.text().replace(',', '.'))
+                output_price = float(output_spin.text().replace(',', '.'))
+            except ValueError:
+                ToastManager.instance().show_error("Ungueltige Preiseingabe")
+                return
+            valid_from = date_edit.date().toString("yyyy-MM-dd")
+            
+            if not model_name:
+                return
+            
+            def _do_create():
+                return self._model_pricing_api.create_price(
+                    provider, model_name, input_price, output_price, valid_from
+                )
+            
+            worker = AdminWriteWorker(_do_create)
+            worker.finished.connect(lambda _: (
+                ToastManager.instance().show_success(texts.MODEL_PRICING_CREATED.format(model=model_name)),
+                self._load_model_pricing()
+            ))
+            worker.error.connect(lambda e: ToastManager.instance().show_error(str(e)))
+            self._active_workers.append(worker)
+            worker.start()
+    
+    def _show_edit_pricing_dialog(self, price_id: int):
+        """Dialog zum Bearbeiten eines Modell-Preises."""
+        price = None
+        for p in getattr(self, '_pricing_data', []):
+            if p.id == price_id:
+                price = p
+                break
+        if not price:
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle(texts.MODEL_PRICING_DIALOG_TITLE_EDIT)
+        dialog.setMinimumWidth(450)
+        form = QFormLayout(dialog)
+        
+        model_edit = QLineEdit(price.model_name)
+        form.addRow(texts.MODEL_PRICING_MODEL + ":", model_edit)
+        
+        input_edit = QLineEdit(str(price.input_price_per_million))
+        form.addRow(texts.MODEL_PRICING_INPUT + ":", input_edit)
+        
+        output_edit = QLineEdit(str(price.output_price_per_million))
+        form.addRow(texts.MODEL_PRICING_OUTPUT + ":", output_edit)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        
+        if dialog.exec() == QDialog.Accepted:
+            from ui.toast import ToastManager
+            data = {}
+            new_model = model_edit.text().strip()
+            if new_model and new_model != price.model_name:
+                data['model_name'] = new_model
+            try:
+                new_input = float(input_edit.text().replace(',', '.'))
+                if new_input != price.input_price_per_million:
+                    data['input_price_per_million'] = new_input
+                new_output = float(output_edit.text().replace(',', '.'))
+                if new_output != price.output_price_per_million:
+                    data['output_price_per_million'] = new_output
+            except ValueError:
+                ToastManager.instance().show_error("Ungueltige Preiseingabe")
+                return
+            
+            if not data:
+                return
+            
+            def _do_update():
+                return self._model_pricing_api.update_price(price_id, **data)
+            
+            worker = AdminWriteWorker(_do_update)
+            worker.finished.connect(lambda _: (
+                ToastManager.instance().show_success(texts.MODEL_PRICING_UPDATED),
+                self._load_model_pricing()
+            ))
+            worker.error.connect(lambda e: ToastManager.instance().show_error(str(e)))
+            self._active_workers.append(worker)
+            worker.start()
+    
+    def _deactivate_pricing(self, price_id: int, model_name: str):
+        """Modell-Preis deaktivieren nach Bestaetigung."""
+        from ui.toast import ToastManager
+        reply = QMessageBox.question(
+            self, texts.MODEL_PRICING_DEACTIVATE,
+            texts.MODEL_PRICING_CONFIRM_DELETE.format(model=model_name),
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        
+        def _do_deactivate():
+            return self._model_pricing_api.delete_price(price_id)
+        
+        worker = AdminWriteWorker(_do_deactivate)
+        worker.finished.connect(lambda _: (
+            ToastManager.instance().show_success(texts.MODEL_PRICING_DEACTIVATED),
+            self._load_model_pricing()
+        ))
+        worker.error.connect(lambda e: ToastManager.instance().show_error(str(e)))
+        self._active_workers.append(worker)
+        worker.start()
+    
+    def _show_toast_error(self, msg: str):
+        """Zeigt eine Fehler-Toast-Benachrichtigung."""
+        from ui.toast import ToastManager
+        ToastManager.instance().show_error(msg)
+    
+    # ================================================================
+    # Tab 9: E-Mail-Konten (war Tab 8)
     # ================================================================
     
     def _create_email_accounts_tab(self) -> QWidget:
@@ -3852,9 +5456,6 @@ class AdminView(QWidget):
     
     def _load_admin_messages(self):
         """Laedt alle Mitteilungen fuer die Admin-Tabelle."""
-        # #region agent log
-        import time as _t; _log_c_start = _t.time()
-        # #endregion
         try:
             from api.messages import MessagesAPI
             api = MessagesAPI(self._api_client)
@@ -3865,9 +5466,6 @@ class AdminView(QWidget):
             logger.error(f"Admin-Mitteilungen laden: {e}")
             if hasattr(self, '_toast_manager') and self._toast_manager:
                 self._toast_manager.show_error(texts.ADMIN_MSG_LOAD_ERROR)
-        # #region agent log
-        _log_c_dur = (_t.time() - _log_c_start) * 1000; import json as _j; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j.dumps({"id":"log_admin_msg_load","timestamp":int(_t.time()*1000),"location":"admin_view.py:3858","message":"SYNC get_messages in main thread (admin tab)","data":{"duration_ms":round(_log_c_dur,1),"msg_count":len(self._msg_data)},"hypothesisId":"C"})+'\n')
-        # #endregion
     
     def _populate_msg_table(self):
         """Fuellt die Mitteilungen-Tabelle."""

@@ -1,8 +1,183 @@
-# Architektur - ACENCIA ATLAS v2.0.0
+# Architektur - ACENCIA ATLAS v2.1.3
 
-**Stand:** 11. Februar 2026
+**Stand:** 18. Februar 2026
 
 **Primaere Referenz: `AGENTS.md`** - Dieses Dokument enthaelt ergaenzende Architektur-Details. Fuer den aktuellen Feature-Stand und Debugging-Tipps siehe `AGENTS.md`.
+
+## Neue Features in v2.1.3 (Dokumenten-Regeln + PDF Multi-Selection)
+
+### Dokumenten-Regeln (Admin-konfigurierbar)
+- **Zweck**: Automatische Aktionen bei Duplikaten und leeren Seiten waehrend der Dokumentenverarbeitung
+- **Admin-Panel**: Panel 9 in Sektion VERARBEITUNG (nach KI-Klassifikation, KI-Provider, Modell-Preise)
+- **4 Regel-Kategorien**: Datei-Duplikate, Inhaltsduplikate, teilweise leere PDFs, komplett leere Dateien
+- **Aktionen**: Farbmarkierung (8 Farben), Loeschen, Leere-Seiten-Entfernung
+- **Integration**: `document_processor._apply_document_rules()` nach `_persist_ai_data()`
+- **DB-Tabelle**: `document_rules_settings` (Single-Row, id=1)
+
+### PDF-Vorschau Multi-Selection
+- **Thumbnail-Sidebar**: `ExtendedSelection` Modus (Strg+Klick, Shift+Klick, Strg+A)
+- **Bulk-Operationen**: Mehrere Seiten gleichzeitig drehen oder loeschen
+- **Auto-Refresh**: `PDFRefreshWorker` aktualisiert Leere-Seiten + Text nach Speichern
+
+### Cache-Wipe bei ungültiger Session
+- **Trigger**: `_try_auto_login()` stellt fest, dass Token ungueltig/nicht vorhanden
+- **Aktion**: `_clear_local_caches()` loescht `%TEMP%/bipro_preview_cache/`
+
+### Neue Endpunkte
+| Endpunkt | Datei | Beschreibung |
+|----------|-------|--------------|
+| GET /document-rules | document_rules.php | Dokumenten-Regeln laden (Public, JWT) |
+| PUT /admin/document-rules | document_rules.php | Regeln speichern (Admin) |
+
+### Neue Python-Klassen
+| Klasse | Datei | Beschreibung |
+|--------|-------|--------------|
+| `DocumentRulesSettings` | `src/api/document_rules.py` | Dataclass fuer Regel-Konfiguration |
+| `DocumentRulesAPI` | `src/api/document_rules.py` | API Client (get_rules, save_rules) |
+| `PDFRefreshWorker` | `src/ui/archive_view.py` | QThread: Leere-Seiten + Text nach Speichern aktualisieren |
+
+### Neue DB-Tabelle (Migration 021)
+| Tabelle | Beschreibung |
+|---------|--------------|
+| `document_rules_settings` | Single-Row: file_dup_action/color, content_dup_action/color, partial_empty_action/color, full_empty_action/color |
+
+---
+
+## Neue Features in v2.1.2 (KI-Provider-System)
+
+### Dynamisches KI-Routing (OpenRouter ↔ OpenAI)
+- **Zweck**: Provider-unabhaengige KI-Nutzung mit dynamischer Umschaltung im Admin
+- **Architektur**: PHP-Proxy (`ai.php`) routet Requests je nach aktivem Provider
+- **Modell-Mapping**: `mapModelName()` konvertiert zwischen Formaten (openai/gpt-4o-mini ↔ gpt-4o-mini)
+- **PII-Redaktion**: Vor Weiterleitung an Provider werden E-Mail, IBAN, Telefon entfernt
+- **Fallback**: Legacy-Key aus `config.php` wenn kein Provider in DB aktiv
+
+### Provider-Verwaltung
+- **DB-Tabelle**: `ai_provider_keys` mit `provider_type` ENUM('openrouter','openai'), AES-256-GCM verschluesselte Keys
+- **Aktivierung**: Nur 1 Key gleichzeitig aktiv (global), alle anderen werden deaktiviert
+- **Verbindungstest**: Test-Request an Provider-API mit minimalem Prompt
+- **Admin-UI**: Eigenes Panel in Sektion VERARBEITUNG (CRUD, Aktivierung, Test, maskierte Keys)
+
+### Exakte Kostenberechnung
+- **Server-seitig**: `model_pricing.php` → `calculateCost()` berechnet USD aus Tokens + gespeicherten Preisen
+- **Request-Logging**: Jeder KI-Call wird in `ai_requests` geloggt (User, Provider, Model, Tokens, geschaetzt + echt)
+- **Client-seitig**: `CostCalculator` (tiktoken) zaehlt Tokens vor dem Request fuer Schaetzung
+- **Akkumulation**: `ProcessingResult.cost_usd` → `BatchProcessingResult.total_cost_usd` (Summe aller Einzel-Kosten)
+- **UI**: Sofortige Kostenanzeige im Fazit-Overlay, verkuerzter Delay (5s OpenAI statt 90s OpenRouter)
+
+### Neue DB-Tabellen (Migration 020)
+| Tabelle | Beschreibung |
+|---------|--------------|
+| `ai_provider_keys` | id, provider_type, name, api_key_encrypted, is_active, created_by, timestamps |
+| `model_pricing` | id, provider, model_name, input/output_price_per_million, valid_from, is_active |
+| `ai_requests` | id, user_id, provider, model, context, document_id, tokens, costs, created_at |
+
+### Neue PHP-Endpunkte
+| Endpunkt | Datei | Beschreibung |
+|----------|-------|--------------|
+| GET /ai/providers/active | ai_providers.php | Aktiver Provider (Public, JWT) |
+| GET/POST/PUT/DELETE /admin/ai-providers | ai_providers.php | Admin CRUD |
+| POST /admin/ai-providers/{id}/activate | ai_providers.php | Key aktivieren |
+| POST /admin/ai-providers/{id}/test | ai_providers.php | Verbindungstest |
+| GET /ai/pricing | model_pricing.php | Aktive Preise (Public, JWT) |
+| GET/POST/PUT/DELETE /admin/model-pricing | model_pricing.php | Admin CRUD |
+| GET /ai/requests | ai.php | KI-Request-Historie (Admin, mit period-Filter) |
+| POST /ai/classify | ai.php | KI-Klassifikation (routed zum aktiven Provider) |
+| GET /ai/credits | ai.php | Provider-Credits (OpenRouter) / Usage (OpenAI) |
+
+### Neue Python-Klassen
+| Klasse | Datei | Beschreibung |
+|--------|-------|--------------|
+| `AIProviderKey` | `src/api/ai_providers.py` | Dataclass fuer Provider-Key |
+| `AIProvidersAPI` | `src/api/ai_providers.py` | API Client (CRUD, activate, test) |
+| `ModelPrice` | `src/api/model_pricing.py` | Dataclass fuer Modell-Preis |
+| `ModelPricingAPI` | `src/api/model_pricing.py` | API Client (CRUD, get_ai_requests) |
+| `CostCalculator` | `src/services/cost_calculator.py` | Token-Zaehlung (tiktoken) + Kostenberechnung |
+| `CostEstimate` / `RealCost` | `src/services/cost_calculator.py` | Dataclasses fuer Kosten |
+
+### Datenfluss KI-Klassifikation (v2.1.2)
+```
+[document_processor] ──classify_sparte_with_date()──▶ [openrouter.py]
+    │                                                      │
+    │ _doc_cost_usd += _server_cost_usd                   │ _openrouter_request()
+    │                                                      │     POST /ai/classify
+    ▼                                                      ▼
+[ProcessingResult]                                   [ai.php → handleClassify()]
+    │ cost_usd                                             │ getActiveProvider()
+    │                                                      │ mapModelName()
+    ▼                                                      │ callOpenAIProvider() ODER
+[BatchProcessingResult]                                    │ callOpenRouterProvider()
+    │ total_cost_usd = Σ cost_usd                         │ calculateCost() → logAiRequest()
+    │                                                      │
+    ▼                                                      ▼
+[archive_boxes_view]                                 [_cost: {real_cost_usd, provider}]
+    │ show_completion() → Sofort-Anzeige
+    │ _start_delayed_cost_check() → 5s/30s/90s
+    ▼
+[KI-Kosten-Toast mit Provider + Quelle]
+```
+
+---
+
+## Neue Features in v2.1.0 (ATLAS Index Volltextsuche)
+
+### ATLAS Index - Globale Dokumentensuche
+- **Zweck**: Virtuelle "Box" ganz oben in der Archiv-Sidebar, globale Volltextsuche ueber Dateinamen und extrahierten Text
+- **Architektur-Prinzip**: Eigener Endpoint `GET /documents/search` -- JOIN auf `document_ai_data` NUR hier, niemals in `listDocuments()`
+- **Zwei Suchmodi**: FULLTEXT `BOOLEAN MODE` (Standard, schnell) oder `LIKE '%term%'` (Teilstring, langsamer)
+- **Smart Text-Preview**: `LOCATE()` findet den Suchbegriff im Text, `SUBSTRING()` extrahiert ein 2000-Zeichen-Fenster um den Treffer (300 vor + 1700 nach). Fallback auf Textanfang bei Nicht-Treffer.
+- **XML/GDV-Filter**: Standardmaessig ausgeblendet (`box_type != 'roh' AND is_gdv = 0`), per Checkbox einbeziehbar
+- **UI**: `AtlasIndexWidget` im `QStackedWidget` (Page 1 neben Document-Table Page 0)
+  - Suchfeld + Such-Button (bei deaktivierter Live-Suche sichtbar)
+  - 3 Checkboxen: Live-Suche, XML/GDV einbeziehen, Teilstring-Suche
+  - `SearchResultCard`: Snippet-basierte Ergebnisse mit zweistufiger Treffer-Suche (voller Begriff, dann Einzelwoerter)
+  - `SearchWorker` (QThread): Nicht-blockierende API-Aufrufe
+- **Performance**: FULLTEXT-Index, LIMIT 200, Debounce 400ms, LOCATE-basiertes Preview, SearchWorker
+
+### Neuer PHP-Endpoint
+| Endpunkt | Datei | Beschreibung |
+|----------|-------|--------------|
+| GET /documents/search | documents.php | Volltextsuche mit FULLTEXT/LIKE, include_raw, substring, LOCATE-Preview |
+
+### Neue Python-Klassen
+| Klasse | Datei | Beschreibung |
+|--------|-------|--------------|
+| `SearchResult` | `src/api/documents.py` | Dataclass: Document + text_preview + relevance_score |
+| `SearchWorker` | `src/ui/archive_boxes_view.py` | QThread fuer async Suche |
+| `SearchResultCard` | `src/ui/archive_boxes_view.py` | QFrame fuer Suchergebnis-Karte mit Snippet |
+| `AtlasIndexWidget` | `src/ui/archive_boxes_view.py` | QWidget fuer Such-Interface |
+
+## Neue Features in v2.0.3/v2.0.4 (Volltext-Persistierung + Content-Duplikate)
+
+### Volltext + KI-Daten-Persistierung (v2.0.3)
+- **Separate Tabelle**: `document_ai_data` (1:1 zu `documents`, NIEMALS in `listDocuments()` gejoined)
+- **Spalten**: `extracted_text` (MEDIUMTEXT), `ai_full_response` (LONGTEXT), `extracted_text_sha256`, `text_char_count`, `ai_response_char_count`
+- **Indexes**: `FULLTEXT INDEX` auf `extracted_text` fuer zukuenftige Volltextsuche
+- **Performance**: Strikte Trennung - keine Auto-Joins, separate Endpoints, kein Lazy-Load im UI
+- **CASCADE-Delete**: `document_ai_data` wird bei Dokument-Loeschung mitgeloescht (DSGVO)
+
+### Content-Duplikat-Erkennung (v2.0.3)
+- **Unterschied zu Datei-Duplikaten**: Datei-Duplikat (`content_hash`) = gleiche Bytes, Content-Duplikat (`extracted_text_sha256`) = gleicher Text
+- **DB-Spalte**: `documents.content_duplicate_of_id` (INT NULL) zeigt auf das Original-Dokument
+- **Erkennung**: Beim Speichern von `extracted_text_sha256` wird geprueft ob ein aelteres Dokument denselben Hash hat
+- **UI**: Archiv-Tabelle zeigt ≡-Icon (indigo) fuer Content-Duplikate, ⚠-Icon (amber) fuer Datei-Duplikate (Prioritaet)
+
+### Proaktive Text-Extraktion (v2.0.3)
+- **Problem geloest**: Duplikate waren vorher erst sichtbar NACH der KI-Verarbeitung (zu spaet)
+- **Loesung**: `extract_and_save_text()` wird direkt nach Upload aufgerufen, BEVOR die KI-Pipeline
+- **MissingAiDataWorker**: Hintergrund-Worker fuer Scan-Dokumente (Power Automate) bei App-Start
+
+### PDF-Unlock-Fix (v2.0.4)
+- **Problem**: PDF-Anhaenge aus MSG/ZIP-Dateien wurden nicht entsperrt ("Keine PDF-Passwoerter verfuegbar")
+- **Ursache**: `api_client` Parameter fehlte beim Aufruf von `unlock_pdf_if_needed()`
+- **Fix**: Alle Aufrufe in `main_hub.py`, `archive_boxes_view.py`, `bipro_view.py` und `msg_handler.py` korrigiert
+- **ValueError-Handling**: Passwortgeschuetzte PDFs ohne Passwort crashen die App nicht mehr
+
+### Neue Datenbank-Migrationen
+| Script | Beschreibung |
+|--------|--------------|
+| `017_document_ai_data.php` | Volltext + KI-Daten-Tabelle mit CASCADE-Delete |
+| `018_content_duplicate_detection.php` | `content_duplicate_of_id` Spalte + Backfill |
 
 ## Neue Features in v2.0.0 (Mitteilungszentrale)
 
@@ -27,7 +202,7 @@
 - **Toast**: Bei neuer Chat-Nachricht, Klick oeffnet den entsprechenden Chat
 - **Deduplizierung**: `?last_message_ts=X` verhindert wiederholte Toasts
 
-### Admin-Panel "Mitteilungen" (Panel 10)
+### Admin-Panel "Mitteilungen" (Panel 14)
 - **CRUD**: Neue Mitteilung erstellen (Titel, Beschreibung, Severity), Loeschen
 - **Tabelle**: Alle Mitteilungen mit Zeitstempel, Quelle, Severity
 - **4. Sektion**: "KOMMUNIKATION" in der Admin-Sidebar
@@ -80,6 +255,21 @@
 - **MainHub**: `closeEvent()` prueft vor allen anderen Checks (GDV-Aenderungen etc.)
 - **UX**: `event.ignore()` + Toast-Warnung (kein modaler Dialog, kein "Trotzdem beenden?")
 - **Sicherheit**: `_is_worker_running()` faengt `RuntimeError` bei geloeschten C++-Objekten ab
+
+## Neue Features in v2.0.2 (Leere-Seiten-Erkennung)
+
+### 4-Stufen PDF-Leerseiten-Erkennung
+- **Zweck**: PDFs auf komplett leere oder inhaltslose Seiten pruefen (rein informativ, blockiert nicht die Pipeline)
+- **Algorithmus** (Performance-optimiert, ~5-20ms pro Seite bei 50 DPI):
+  1. **Text-Pruefung**: `page.get_text("text")` - OCR-Rauschen (<30 Zeichen) wird toleriert
+  2. **Vektor-Objekte**: `page.get_drawings()` - Linien, Rahmen, Tabellen erkennen
+  3. **Bilder**: `page.get_images(full=True)` - Relevante Bilder erkennen
+  4. **Pixel-Analyse**: `page.get_pixmap(dpi=50)` - Helligkeit (>250) + Varianz (<5.5) = leer
+- **Integration**: Laeuft in `document_processor._check_and_log_empty_pages()` VOR KI-Klassifikation
+- **DB**: `documents.empty_page_count` + `documents.total_page_count` (INT NULL)
+- **UI**: Spalte 1 in DocumentTableModel mit Icon (Halb-Kreis teilweise, Kreis komplett leer)
+- **History**: `empty_pages_detected` Eintrag in `activity_log` mit Seitenindizes
+- **Dateien**: `empty_page_detector.py` (Erkennung), `document_processor.py` (Integration), `archive_boxes_view.py` (UI)
 
 ## Neue Features in v1.1.3 (PDF-Bearbeitung)
 
@@ -272,6 +462,7 @@ ACENCIA ATLAS ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer mehr
 │  │   main_window.py    │ │partner_view │ │  gdv_editor_view │               │
 │  │   GDV-Editor        │ │ .py         │ │  .py             │               │
 │  └──────────┬──────────┘ └──────┬──────┘ └────────┬─────────┘               │
+
 └─────────────┼───────────────────┼─────────────────┼──────────────────────────┘
               │                   │                  │
               ▼                   ▼                  ▼
@@ -286,15 +477,17 @@ ACENCIA ATLAS ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer mehr
 │  │  - admin     │ │ - categories │ │ - zip_handler│ │   - gdv_layouts.py │  │
 │  │  - passwords │ │              │ │ - msg_handler│ │                    │  │
 │  │  - releases  │ │              │ │ - update_svc │ │                    │  │
+│  │  - messages  │ │              │ │ - empty_page │ │                    │  │
+│  │  - chat      │ │              │ │   _detector  │ │                    │  │
 │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └────────┬───────────┘  │
 └─────────┼────────────────┼────────────────┼──────────────────┼──────────────┘
           │                │                │                  │
           ▼                ▼                ▼                  ▼
 ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────┐
-│  Strato Webspace │ │  Versicherer     │ │  OpenRouter KI   │ │  Lokales FS  │
+│  Strato Webspace │ │  Versicherer     │ │ OpenRouter/OpenAI│ │  Lokales FS  │
 │  PHP REST API    │ │  BiPRO Services  │ │  GPT-4o/4o-mini  │ │  GDV-Dateien │
 │  MySQL + Files   │ │  (Degenia, VEMA) │ │  Klassifikation  │ │  Temp-Cache  │
-│  ~20 Endpunkte   │ │                  │ │                  │ │              │
+│  ~25 Endpunkte   │ │                  │ │  (dynamisch)     │ │              │
 └──────────────────┘ └──────────────────┘ └──────────────────┘ └──────────────┘
 ```
 
@@ -358,9 +551,10 @@ Download klicken → getShipment → MTOM parsen → Archiv-Upload
 Mails abholen → IMAP-Poll → Attachments downloaden → Pipeline → Upload
 ```
 
-#### archive_boxes_view.py (~5380 Zeilen)
-Dokumentenarchiv mit Box-System:
-- **BoxSidebar**: Navigation mit Live-Zaehlern + Kontextmenue (Download, SmartScan)
+#### archive_boxes_view.py (~6350 Zeilen)
+Dokumentenarchiv mit Box-System + ATLAS Index:
+- **BoxSidebar**: Navigation mit Live-Zaehlern + Kontextmenue (Download, SmartScan) + ATLAS Index Item
+- **ATLAS Index**: Virtuelle Such-Box (AtlasIndexWidget) mit SearchWorker, SearchResultCard, 3 Checkboxen
 - **8 Boxen**: GDV, Courtage, Sach, Leben, Kranken, Sonstige, Roh, Falsch
 - **MultiUploadWorker/MultiDownloadWorker**: Parallele Operationen
 - **BoxDownloadWorker**: Ganze Boxen als ZIP oder in Ordner herunterladen
@@ -373,16 +567,18 @@ Dokumentenarchiv mit Box-System:
 - **Verarbeitungs-Ausschluss**: Manuell verschobene Dokumente ueberspringen
 - **Dokument-Historie**: Seitenpanel mit farbcodierten Aenderungseintraegen (DocumentHistoryPanel)
 - **Duplikat-Spalte**: Warn-Icon bei erkannten Duplikaten mit Tooltip zum Original
+- **Leere-Seiten-Spalte**: Icon bei PDFs mit leeren Seiten (teilweise/komplett, Tooltip mit Details)
 - **Schliess-Schutz**: `get_blocking_operations()` verhindert App-Schliessung bei laufenden kritischen Workern
 
-#### admin_view.py (~4292 Zeilen) - Redesign v1.0.9, erweitert v2.0.0
+#### admin_view.py (~5200+ Zeilen) - Redesign v1.0.9, erweitert v2.1.3
 Administration mit vertikaler Sidebar:
 - **AdminNavButton**: Custom-Styling, monochrome Icons, orangene Trennlinien
-- **QStackedWidget**: 11 Panels in 4 Sektionen
+- **QStackedWidget**: 15 Panels in 5 Sektionen
   - VERWALTUNG: Nutzerverwaltung, Sessions, Passwoerter (0-2)
   - MONITORING: Aktivitaetslog, KI-Kosten, Releases (3-5)
-  - E-MAIL: E-Mail-Konten, SmartScan-Settings, SmartScan-Historie, IMAP Inbox (6-9)
-  - KOMMUNIKATION: Mitteilungen (10) **NEU v2.0.0**
+  - VERARBEITUNG: KI-Klassifikation (6), KI-Provider (7), Modell-Preise (8), Dokumenten-Regeln (9) **NEU v2.1.3**
+  - E-MAIL: E-Mail-Konten, SmartScan-Settings, SmartScan-Historie, IMAP Inbox (10-13)
+  - KOMMUNIKATION: Mitteilungen (14) **NEU v2.0.0**
 - **"Zurueck zur App" Button**: Verlassen des Admin-Bereichs
 
 #### toast.py (~558 Zeilen)
@@ -415,14 +611,15 @@ Base-Client fuer Server-Kommunikation:
 - Deadlock-Schutz: `_try_auth_refresh()` mit non-blocking acquire
 - Multipart-Upload fuer Dateien
 
-#### documents.py (~864 Zeilen)
-Dokumenten-Operationen mit Box-Support:
+#### documents.py (~900 Zeilen)
+Dokumenten-Operationen mit Box-Support + ATLAS Index:
 - `list()`, `upload()`, `download()`, `delete()`
 - `move_documents()`: Zwischen Boxen verschieben
 - `archive_documents()` / `unarchive_documents()`: Bulk-Archivierung
 - `set_documents_color()`: Bulk-Farbmarkierung
 - `get_document_history()`: Aenderungshistorie pro Dokument
 - `replace_document_file()`: Datei ersetzen (PDF-Bearbeitung)
+- `search_documents()`: ATLAS Index Volltextsuche (FULLTEXT/LIKE, include_raw, substring)
 
 #### Weitere API-Clients
 | Datei | Zweck | Zeilen |
@@ -433,10 +630,13 @@ Dokumenten-Operationen mit Box-Support:
 | `messages.py` | **Mitteilungen + Notification-Polling (NEU v2.0.0)** | ~143 |
 | `chat.py` | **1:1 Chat-Nachrichten (NEU v2.0.0)** | ~153 |
 | `smartscan.py` | SmartScan + EmailAccounts | ~350 |
-| `openrouter.py` | KI-Klassifikation (zweistufig) | ~900 |
+| `openrouter.py` | KI-Klassifikation (zweistufig, Provider-aware) | ~900 |
+| `ai_providers.py` | **KI-Provider-Verwaltung (CRUD, activate, test) NEU v2.1.2** | ~120 |
+| `model_pricing.py` | **Modell-Preise + KI-Request-Historie NEU v2.1.2** | ~117 |
 | `passwords.py` | Passwort-Verwaltung | ~80 |
 | `releases.py` | Auto-Update | ~120 |
 | `processing_history.py` | Audit-Trail | ~380 |
+| `document_rules.py` | **Dokumenten-Regeln (Settings + API) NEU v2.1.3** | ~94 |
 | `gdv_api.py` | GDV-Dateien server-seitig parsen | ~229 |
 | `xml_index.py` | XML-Index fuer BiPRO-Rohdaten | ~259 |
 | `smartadmin_auth.py` | SmartAdmin SAML-Auth (47 VUs) | ~640 |
@@ -697,7 +897,7 @@ Service Layer
 External
     ├── Strato Webspace (PHP API, MySQL, Files, ~23 Endpunkte)
     ├── BiPRO Services (Degenia, VEMA: 410 STS, 430 Transfer)
-    ├── OpenRouter KI (GPT-4o/4o-mini fuer Klassifikation)
+    ├── OpenRouter ODER OpenAI (GPT-4o/4o-mini, dynamisch umschaltbar v2.1.2)
     └── Lokale GDV-Dateien
 ```
 
@@ -721,6 +921,7 @@ External
 | | DELETE /documents/{id} | documents.php | Loeschen |
 | | GET /documents/{id}/history | documents.php | Aenderungshistorie |
 | | POST /documents/{id}/replace | documents.php | Datei ersetzen (PDF-Bearbeitung) |
+| | GET /documents/search | documents.php | **ATLAS Index Volltextsuche (NEU v2.1.0)** |
 | **VU** | GET /vu-connections | credentials.php | VU-Liste |
 | | POST /vu-connections | credentials.php | VU erstellen |
 | | GET /vu-connections/{id}/credentials | credentials.php | Credentials (entschluesselt) |
@@ -746,9 +947,18 @@ External
 | | PUT .../read | chat.php | Als gelesen markieren |
 | | GET /chat/users | chat.php | Verfuegbare Chat-Partner |
 | **Notifications** | GET /notifications/summary | notifications.php | Polling (Unread-Counts + Toast) |
+| **KI** | POST /ai/classify | ai.php | **KI-Klassifikation (dynamisches Routing) v2.1.2** |
+| | GET /ai/credits | ai.php | **Provider-Credits/Usage v2.1.2** |
+| | GET /ai/requests | ai.php | **Request-Historie (Admin) v2.1.2** |
+| | GET /ai/key | ai.php | Legacy OpenRouter API-Key |
+| | GET /ai/providers/active | ai_providers.php | **Aktiver Provider v2.1.2** |
+| | POST/PUT/DELETE /admin/ai-providers | ai_providers.php | **Provider CRUD v2.1.2** |
+| | GET /ai/pricing | model_pricing.php | **Modell-Preise v2.1.2** |
+| | POST/PUT/DELETE /admin/model-pricing | model_pricing.php | **Pricing CRUD v2.1.2** |
 | **System** | GET /updates/check | releases.php | Update-Check (Public) |
 | | POST /incoming-scans | incoming_scans.php | Scan-Upload (API-Key) |
-| | GET /ai/key | ai.php | OpenRouter API-Key |
+| **Regeln** | GET /document-rules | document_rules.php | **Dokumenten-Regeln laden (JWT) v2.1.3** |
+| | PUT /admin/document-rules | document_rules.php | **Regeln speichern (Admin) v2.1.3** |
 | | POST /processing_history/create | processing_history.php | Audit-Trail |
 | | GET /processing_history/costs | processing_history.php | KI-Kosten |
 
@@ -814,6 +1024,45 @@ private_messages (
     id, conversation_id, sender_id, receiver_id,
     content, created_at, read_at                -- read_at NULL = ungelesen
 )
+
+-- KI-Provider (v2.1.2)
+ai_provider_keys (
+    id, provider_type,              -- 'openrouter' oder 'openai'
+    name, api_key_encrypted,        -- AES-256-GCM verschluesselt
+    is_active,                      -- nur 1 gleichzeitig aktiv
+    created_by, created_at, updated_at
+)
+
+-- Modell-Preise (v2.1.2)
+model_pricing (
+    id, provider, model_name,
+    input_price_per_million,        -- $ pro 1M Input-Tokens
+    output_price_per_million,       -- $ pro 1M Output-Tokens
+    valid_from, is_active
+)
+
+-- KI-Request-Logging (v2.1.2)
+ai_requests (
+    id, user_id, provider, model,
+    context, document_id,           -- context z.B. 'document_classification'
+    prompt_tokens, completion_tokens, total_tokens,
+    estimated_cost_usd, real_cost_usd,
+    created_at
+)
+
+-- Dokumenten-Regeln (v2.1.3)
+document_rules_settings (
+    id INT PRIMARY KEY DEFAULT 1,   -- Single-Row-Tabelle
+    file_dup_action,                -- none, color_both, color_new, delete_new, delete_old
+    file_dup_color,                 -- VARCHAR(20), Farbe fuer Markierung
+    content_dup_action,             -- analog file_dup
+    content_dup_color,
+    partial_empty_action,           -- none, remove_pages, color_file
+    partial_empty_color,
+    full_empty_action,              -- none, delete, color_file
+    full_empty_color,
+    updated_at, updated_by
+)
 ```
 
 ---
@@ -851,7 +1100,7 @@ CATEGORY_NAMES["123456789"] = "Neue Kategorie"
 - **UI-Texte**: Groesstenteils in i18n/de.py, einige Hardcoded Strings verbleiben
 - **Speicherverbrauch**: Alle Records/Dokumente im Speicher (kein Lazy Loading)
 - **VU-spezifisch**: BiPRO-Flow variiert je VU (Degenia, VEMA haben eigene Logik)
-- **Grosse Dateien**: bipro_view.py (~4900), archive_boxes_view.py (~5380), admin_view.py (~4290), main_hub.py (~1324) → Aufteilen geplant
+- **Grosse Dateien**: bipro_view.py (~4900), archive_boxes_view.py (~6350), admin_view.py (~5200), main_hub.py (~1324) → Aufteilen geplant
 
 ## Unterstützte VUs
 

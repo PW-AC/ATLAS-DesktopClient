@@ -10,7 +10,7 @@
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-green.svg)
 ![Status](https://img.shields.io/badge/BiPRO-Funktioniert-brightgreen.svg)
-![KI](https://img.shields.io/badge/KI-OpenRouter-purple.svg)
+![KI](https://img.shields.io/badge/KI-OpenRouter%20%7C%20OpenAI-purple.svg)
 ![License](https://img.shields.io/badge/License-Proprietary-red.svg)
 
 ---
@@ -40,21 +40,23 @@
 - **Mail-Import**: IMAP-Mails abholen und Anhaenge in Eingangsbox importieren (mit Progress-Toast)
 
 ### Dokumentenarchiv mit Box-System
+- **ATLAS Index**: Globale Volltextsuche ueber alle Dokumente (Dateiname + OCR-Text), Live-Suche, Snippet-Vorschau (NEU v2.1.0)
 - **8 Boxen**: GDV, Courtage, Sach, Leben, Kranken, Sonstige, Roh, Falsch
 - **KI-Klassifikation**: Zweistufig mit Confidence-Scoring (GPT-4o-mini + GPT-4o Fallback)
 - **Parallele Verarbeitung**: 4 Dokumente gleichzeitig (ThreadPoolExecutor)
 - **KI-Benennung**: Automatische Umbenennung nach Schema `Versicherer_Typ_Datum.pdf`
 - **Multi-Upload**: Mehrere Dateien gleichzeitig hochladen (inkl. Drag & Drop)
 - **PDF-Vorschau** direkt in der App (QPdfView) + Tabellen-Vorschau (CSV/XLSX)
-- **PDF-Bearbeitung**: Seiten drehen und loeschen direkt in der Vorschau, Speichern auf Server
+- **PDF-Bearbeitung**: Seiten drehen und loeschen direkt in der Vorschau, Mehrfachauswahl (Strg+Klick), Speichern auf Server
+- **Dokumenten-Regeln**: Automatische Aktionen bei Duplikaten und leeren Seiten (Admin-konfigurierbar)
 - **Smart!Scan**: Dokumente per E-Mail versenden (Toolbar-Button + Kontextmenue)
 - **Box-Download**: Ganze Boxen als ZIP oder in Ordner herunterladen
 - **Farbmarkierung**: 8 Farben fuer visuelle Organisation
-- **Duplikat-Erkennung**: SHA256-Pruefziffer erkennt doppelte Dokumente (inkl. archivierte)
+- **Duplikat-Erkennung**: SHA256-Pruefziffer erkennt doppelte Dokumente (inkl. archivierte) + Content-Duplikate (gleicher Text)
 - **Dokument-Historie**: Seitenpanel zeigt farbcodierte Aenderungshistorie pro Dokument
 - **Tastenkuerzel**: F2, Entf, Strg+A/D/F/U, Enter, Esc, F5
 - **Automatische Verarbeitung**: ZIP-Entpacken, PDF-Entsperren, MSG-Anhaenge extrahieren
-- **OpenRouter Credits**: Guthaben-Anzeige im Header
+- **KI-Kosten**: Provider-aware Anzeige (OpenRouter Balance / OpenAI akkumulierte Kosten)
 - **Schliess-Schutz**: App kann nicht geschlossen werden waehrend KI-Verarbeitung oder SmartScan laeuft
 
 ### GDV-Editor
@@ -71,7 +73,10 @@
 - **Session-Management**: Aktive Sessions einsehen und beenden
 - **Passwort-Verwaltung**: PDF/ZIP-Passwoerter zentral verwalten
 - **Aktivitaetslog**: Alle API-Aktionen protokolliert
-- **KI-Kosten**: Verarbeitungshistorie, Kosten-Statistiken, Zeitraum-Filter
+- **KI-Kosten**: Verarbeitungshistorie, Kosten-Statistiken, Einzelne Requests, Zeitraum-Filter
+- **KI-Provider**: OpenRouter/OpenAI Keys verwalten, aktivieren, testen (NEU v2.1.2)
+- **Modell-Preise**: Input/Output-Preis pro Modell fuer exakte Kostenberechnung (NEU v2.1.2)
+- **Dokumenten-Regeln**: Automatische Aktionen bei Duplikaten/leeren Seiten konfigurieren (NEU v2.1.3)
 - **Releases**: Auto-Update Verwaltung (Upload, Status, Channel, SHA256)
 - **E-Mail-Konten**: SMTP/IMAP mit verschluesselten Credentials
 - **Smart!Scan-Einstellungen**: Zieladresse, Templates, Modi, Post-Send-Aktionen
@@ -127,13 +132,14 @@ python run.py
 ### Dokumentenarchiv
 
 1. **Navigation** → **Dokumentenarchiv**
-2. Boxen in der Sidebar auswaehlen (GDV, Courtage, Sach, Leben, etc.)
-3. **PDF-Vorschau**: Doppelklick auf PDF oder Vorschau-Button
-4. **Download**: Rechtsklick → "Herunterladen" oder Toolbar-Button
-5. **Upload**: Hochladen-Button oder Drag & Drop aus dem Explorer
-6. **Smart!Scan**: Gruener Button in der Toolbar oder Rechtsklick → Smart!Scan
-7. **Box-Download**: Rechtsklick auf Box in Sidebar → Herunterladen (ZIP/Ordner)
-8. **Tastenkuerzel**: F2 (Umbenennen), Entf (Loeschen), Strg+D (Download), F5 (Aktualisieren)
+2. **ATLAS Index** (oben in Sidebar): Globale Volltextsuche mit Live-Suche, Snippet-Vorschau und Filtern
+3. Boxen in der Sidebar auswaehlen (GDV, Courtage, Sach, Leben, etc.)
+4. **PDF-Vorschau**: Doppelklick auf PDF oder Vorschau-Button
+5. **Download**: Rechtsklick → "Herunterladen" oder Toolbar-Button
+6. **Upload**: Hochladen-Button oder Drag & Drop aus dem Explorer
+7. **Smart!Scan**: Gruener Button in der Toolbar oder Rechtsklick → Smart!Scan
+8. **Box-Download**: Rechtsklick auf Box in Sidebar → Herunterladen (ZIP/Ordner)
+9. **Tastenkuerzel**: F2 (Umbenennen), Entf (Loeschen), Strg+D (Download), F5 (Aktualisieren)
 
 ### GDV-Editor
 
@@ -153,11 +159,12 @@ python run.py
 ### Administration
 
 1. **Navigation** → **Administration** (nur fuer Admins sichtbar)
-2. Vertikale Sidebar links mit 11 Panels in 4 Sektionen
+2. Vertikale Sidebar links mit 15 Panels in 5 Sektionen
 3. **Verwaltung**: Nutzer, Sessions, Passwoerter
 4. **Monitoring**: Aktivitaetslog, KI-Kosten, Releases
-5. **E-Mail**: Konten, SmartScan-Settings, Historie, Posteingang
-6. **Kommunikation**: Mitteilungen erstellen und verwalten (NEU v2.0.0)
+5. **Verarbeitung**: KI-Klassifikation, KI-Provider, Modell-Preise, Dokumenten-Regeln (NEU v2.1.3)
+6. **E-Mail**: Konten, SmartScan-Settings, Historie, Posteingang
+7. **Kommunikation**: Mitteilungen erstellen und verwalten (NEU v2.0.0)
 
 ---
 
@@ -166,7 +173,7 @@ python run.py
 ```
 5510_GDV Tool V1/
 ├── run.py                     # Entry Point
-├── VERSION                    # Zentrale Versionsdatei (2.0.0)
+├── VERSION                    # Zentrale Versionsdatei (2.1.3)
 ├── requirements.txt           # Python-Abhaengigkeiten
 ├── requirements-dev.txt       # Dev-Dependencies (pytest, ruff)
 ├── AGENTS.md                  # Agent-Anweisungen (aktuell halten!)
@@ -185,10 +192,13 @@ python run.py
 │   │   ├── messages.py       # Mitteilungen + Notification-Polling API (NEU v2.0.0)
 │   │   ├── chat.py           # 1:1 Chat API (NEU v2.0.0)
 │   │   ├── smartscan.py      # SmartScan + EmailAccounts API
-│   │   ├── openrouter.py     # KI-Klassifikation (OpenRouter)
+│   │   ├── openrouter.py     # KI-Klassifikation (OpenRouter/OpenAI Proxy)
+│   │   ├── ai_providers.py   # KI-Provider API Client (NEU v2.1.2)
+│   │   ├── model_pricing.py  # Modell-Preise + Request-Historie (NEU v2.1.2)
 │   │   ├── passwords.py      # Passwort-Verwaltung API
 │   │   ├── releases.py       # Auto-Update API
-│   │   └── processing_history.py  # Audit-Trail API
+│   │   ├── processing_history.py  # Audit-Trail API
+│   │   └── document_rules.py # Dokumenten-Regeln API (NEU v2.1.3)
 │   │
 │   ├── bipro/                # BiPRO SOAP Client
 │   │   ├── transfer_service.py  # BiPRO 410 STS + 430 Transfer
@@ -202,7 +212,11 @@ python run.py
 │   │   ├── pdf_unlock.py     # PDF-Entsperrung
 │   │   ├── zip_handler.py    # ZIP-Entpackung
 │   │   ├── msg_handler.py    # Outlook .msg Verarbeitung
-│   │   └── update_service.py # Auto-Update Service
+│   │   ├── update_service.py # Auto-Update Service
+│   │   ├── empty_page_detector.py  # Leere-Seiten-Erkennung (NEU v2.0.2)
+│   │   ├── early_text_extract.py   # Proaktive Text-Extraktion (NEU v2.0.3)
+│   │   ├── cost_calculator.py # Token-Zaehlung + Kostenberechnung (NEU v2.1.2)
+│   │   └── atomic_ops.py    # Atomic File Operations
 │   │
 │   ├── domain/               # Datenmodelle
 │   │   ├── models.py         # Contract, Customer, Risk, Coverage
@@ -210,12 +224,13 @@ python run.py
 │   │
 │   ├── config/               # Konfiguration
 │   │   ├── processing_rules.py  # Verarbeitungsregeln + BiPRO-Codes
+│   │   ├── ai_models.py      # Modell-Definitionen pro Provider (NEU v2.1.2)
 │   │   ├── vu_endpoints.py   # VU-Endpunkt-Konfiguration
 │   │   ├── smartadmin_endpoints.py # SmartAdmin VU-Endpunkte (47 VUs)
 │   │   └── certificates.py   # Zertifikat-Manager (PFX/P12)
 │   │
 │   ├── i18n/                 # Internationalisierung
-│   │   └── de.py             # Deutsche UI-Texte (~980 Keys)
+│   │   └── de.py             # Deutsche UI-Texte (~1170 Keys)
 │   │
 │   ├── layouts/
 │   │   └── gdv_layouts.py    # GDV-Satzart-Definitionen
@@ -229,7 +244,7 @@ python run.py
 │       ├── chat_view.py      # Vollbild-Chat 1:1 (NEU v2.0.0)
 │       ├── bipro_view.py     # BiPRO Datenabruf + MailImportWorker
 │       ├── archive_boxes_view.py  # Dokumentenarchiv (Box-System)
-│       ├── admin_view.py     # Administration (11 Panels, Sidebar)
+│       ├── admin_view.py     # Administration (15 Panels, Sidebar)
 │       ├── gdv_editor_view.py # GDV-Editor
 │       ├── toast.py          # Toast-Benachrichtigungen + Progress
 │       ├── main_window.py    # GDV Hauptfenster
@@ -332,6 +347,64 @@ Proprietär - Nur für internen Gebrauch bei ACENCIA GmbH.
 ---
 
 ## Changelog
+
+### v2.1.3 (18. Februar 2026)
+- **NEU**: PDF-Vorschau Mehrfachauswahl: Strg+Klick, Shift+Klick, Strg+A fuer Seiten-Multi-Selection
+- **NEU**: PDF Bulk-Operationen: Mehrere Seiten gleichzeitig drehen oder loeschen
+- **NEU**: PDF Auto-Refresh: Leere-Seiten-Erkennung und Text-Extraktion nach Speichern automatisch aktualisiert
+- **NEU**: Dokumenten-Regeln Admin-Panel: Konfigurierbare Aktionen bei Duplikaten und leeren Seiten
+- **NEU**: 4 Regel-Kategorien: Datei-Duplikate, Inhaltsduplikate, teilweise leere PDFs, komplett leere Dateien
+- **NEU**: Automatische Leere-Seiten-Entfernung (PyMuPDF) mit Server-Upload und Cache-Invalidierung
+- **NEU**: Cache-Wipe: Preview-Cache wird bei ungültiger Session beim App-Start geleert
+- **NEU**: DB-Tabelle document_rules_settings + PHP API document_rules.php
+- **NEU**: ~40 neue i18n-Keys (DOC_RULES_*, PDF_EDIT_*)
+
+### v2.1.2 (18. Februar 2026)
+- **NEU**: KI-Provider-System: OpenRouter und OpenAI dynamisch umschaltbar im Admin
+- **NEU**: Provider-Verwaltung: API-Keys mit AES-256-GCM Verschluesselung, CRUD, Verbindungstest
+- **NEU**: OpenAI-Direktanbindung: ~96% Kostenersparnis gegenueber OpenRouter
+- **NEU**: Modell-Preise: Input/Output-Preis pro 1M Tokens fuer exakte Kostenberechnung
+- **NEU**: Exakte Kostenberechnung pro KI-Request (real_cost_usd aus Tokens + Pricing)
+- **NEU**: ai_requests-Tabelle: Jeder KI-Call geloggt (User, Provider, Model, Tokens, Kosten)
+- **NEU**: Akkumulierte Batch-Kosten: Sofortige Kostenanzeige im Verarbeitungs-Fazit
+- **NEU**: Token-Schaetzung via tiktoken vor dem Request (CostCalculator)
+- **NEU**: KI-Kosten-Tab erweitert: Einzelne Requests mit Zeitraum-Filter
+- **NEU**: KI-Klassifikation: Modell-Liste passt sich automatisch aktivem Provider an
+- **NEU**: Admin-Sidebar: 2 neue Panels (KI-Provider, Modell-Preise) in Sektion VERARBEITUNG
+- **NEU**: DB-Migration 020: ai_provider_keys + model_pricing + ai_requests
+
+### v2.1.0 (13. Februar 2026)
+- **NEU**: ATLAS Index: Globale Volltextsuche ueber alle Dokumente (Dateiname + OCR-extrahierter Text)
+- **NEU**: ATLAS Index erscheint als virtuelle Box ganz oben in der Archiv-Sidebar
+- **NEU**: Live-Suche (Debounce 400ms) mit abschaltbarer Checkbox + Such-Button
+- **NEU**: Snippet-basierte Ergebnisdarstellung (Google-Stil) mit Treffer-Hervorhebung
+- **NEU**: Smart Text-Preview: LOCATE-basierte Extraktion um Treffer herum (statt immer Textanfang)
+- **NEU**: XML/GDV-Rohdaten standardmaessig ausgeblendet (Checkbox zum Einbeziehen)
+- **NEU**: Teilstring-Suche optional per Checkbox (LIKE statt FULLTEXT)
+- **NEU**: "In Box anzeigen" Kontextmenue-Option navigiert zur Quell-Box und selektiert Dokument
+- **NEU**: Doppelklick auf Suchergebnis oeffnet PDF-Vorschau
+
+### v2.0.4 (13. Februar 2026)
+- **FIX**: PDF-Unlock fuer MSG/ZIP-Anhaenge funktioniert jetzt (api_client korrekt durchgereicht)
+- **FIX**: Passwortgeschuetzte PDFs ohne Passwort crashen die App nicht mehr (ValueError-Handling)
+- **FIX**: msg_handler.py akzeptiert jetzt api_client Parameter fuer PDF-Unlock
+
+### v2.0.3 (13. Februar 2026)
+- **NEU**: Volltext + KI-Daten-Persistierung: Separates `document_ai_data` Tabelle (1:1 zu documents)
+- **NEU**: Volltextsuche vorbereitet: `extracted_text` MEDIUMTEXT mit FULLTEXT-Index
+- **NEU**: Komplette KI-Rohantworten: `ai_full_response` LONGTEXT fuer Debugging/Analyse
+- **NEU**: Groessen-Analyse: `text_char_count` + `ai_response_char_count` Spalten
+- **NEU**: Content-Duplikat-Erkennung: Dokumente mit identischem Inhalt erkennen (auch bei verschiedener Datei)
+- **NEU**: ≡-Icon (indigo) fuer Content-Duplikate neben ⚠-Icon (amber) fuer Datei-Duplikate
+- **NEU**: Proaktive Text-Extraktion: Text wird sofort nach Upload extrahiert (BEVOR KI-Pipeline)
+- **NEU**: MissingAiDataWorker: Hintergrund-Worker fuer Scan-Dokumente bei App-Start
+- **NEU**: DB-Migration 017 (`document_ai_data`) + 018 (`content_duplicate_of_id`)
+
+### v2.0.2 (12. Februar 2026)
+- **NEU**: Leere-Seiten-Erkennung (PDF): 4-Stufen-Algorithmus (Text, Vektor, Bild, Pixel-Analyse)
+- **NEU**: Markierung leerer Seiten im Archiv (Icon-Spalte mit Tooltip)
+- **NEU**: DB-Felder `empty_page_count` + `total_page_count` in documents-Tabelle
+- **NEU**: QTableView-Migration: QTableWidget durch QTableView+QAbstractTableModel ersetzt (Performance)
 
 ### v2.0.0 (11. Februar 2026)
 - **NEU**: Mitteilungszentrale: Dashboard mit System-/Admin-Meldungen, Release-Info, Chat-Button

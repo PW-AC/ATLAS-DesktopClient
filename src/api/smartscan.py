@@ -102,7 +102,7 @@ class SmartScanAPI:
             body['client_request_id'] = client_request_id
         
         try:
-            response = self.client.post('/smartscan/send', json_data=body)
+            response = self.client.post('/smartscan/send', json_data=body, timeout=180)
             if response.get('success'):
                 return response['data']
         except APIError as e:
@@ -121,7 +121,7 @@ class SmartScanAPI:
             Dict mit status, processed, remaining, errors[]
         """
         try:
-            response = self.client.post(f'/smartscan/jobs/{job_id}/process')
+            response = self.client.post(f'/smartscan/jobs/{job_id}/process', timeout=180)
             if response.get('success'):
                 return response['data']
         except APIError as e:

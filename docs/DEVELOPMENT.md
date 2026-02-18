@@ -1,6 +1,6 @@
-# Entwickler-Dokumentation - ACENCIA ATLAS v2.0.0
+# Entwickler-Dokumentation - ACENCIA ATLAS v2.1.3
 
-**Stand:** 11. Februar 2026
+**Stand:** 18. Februar 2026
 
 ## Lokales Setup
 
@@ -53,14 +53,14 @@ Siehe `README.md` fuer die vollstaendige Projektstruktur.
 
 | Verzeichnis | Beschreibung | Zeilen (gesamt) |
 |-------------|--------------|-----------------|
-| `src/ui/` | Benutzeroberflaeche (PySide6) | ~23.000 |
-| `src/api/` | Server-API Clients | ~6.100 |
+| `src/ui/` | Benutzeroberflaeche (PySide6) | ~24.000 |
+| `src/api/` | Server-API Clients (inkl. KI-Provider, Pricing) | ~6.400 |
 | `src/bipro/` | BiPRO SOAP Client | ~2.400 |
-| `src/services/` | Business-Logik | ~3.400 |
+| `src/services/` | Business-Logik (inkl. CostCalculator) | ~3.600 |
 | `src/domain/` | Fachliche Modelle | ~1.100 |
 | `src/parser/` | GDV Fixed-Width Parser | ~750 |
-| `src/config/` | Konfiguration + Regeln | ~2.050 |
-| `src/i18n/` | Internationalisierung | ~980 |
+| `src/config/` | Konfiguration + Regeln + Modelle | ~2.110 |
+| `src/i18n/` | Internationalisierung | ~1170 |
 
 ---
 

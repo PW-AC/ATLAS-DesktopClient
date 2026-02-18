@@ -8,11 +8,30 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
 import logging
+import re
 from pathlib import Path
 
 from .client import APIClient, APIError
 
 logger = logging.getLogger(__name__)
+
+
+def safe_cache_filename(doc_id: int, original_filename: str) -> str:
+    """Erzeugt einen sicheren Cache-Dateinamen.
+    
+    Entfernt problematische Zeichen aus dem Dateinamen die auf Windows
+    mit MuPDF/PyMuPDF Probleme verursachen koennen (z.B. '...' in VEMA-Dateinamen).
+    
+    Args:
+        doc_id: Dokument-ID (wird als Praefix verwendet)
+        original_filename: Original-Dateiname (kann Sonderzeichen enthalten)
+    
+    Returns:
+        Sicherer Dateiname im Format '{doc_id}_{sanitized_filename}'
+    """
+    # Mehrfache Punkte (.., ..., ....) durch einzelnen Unterstrich ersetzen
+    safe_name = re.sub(r'\.{2,}', '_', original_filename or 'unknown')
+    return f"{doc_id}_{safe_name}"
 
 
 # Box-Typen und ihre Anzeige-Reihenfolge
@@ -92,8 +111,20 @@ class Document:
     is_archived: bool = False
     # Farbmarkierung (persistent ueber alle Operationen)
     display_color: Optional[str] = None
-    # Originalname des Duplikat-Quell-Dokuments (fuer Tooltip)
+    # Leere-Seiten-Erkennung (NULL = nicht geprueft)
+    empty_page_count: Optional[int] = None
+    total_page_count: Optional[int] = None
+    # Duplikat-Quell-Dokument: Metadaten fuer Rich-Tooltip
     duplicate_of_filename: Optional[str] = None
+    duplicate_of_box_type: Optional[str] = None
+    duplicate_of_created_at: Optional[str] = None
+    duplicate_of_is_archived: bool = False
+    # Inhaltsduplikat: Dokument mit identischem Text (anderer Datei-Hash) + Metadaten
+    content_duplicate_of_id: Optional[int] = None
+    content_duplicate_of_filename: Optional[str] = None
+    content_duplicate_of_box_type: Optional[str] = None
+    content_duplicate_of_created_at: Optional[str] = None
+    content_duplicate_of_is_archived: bool = False
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'Document':
@@ -128,16 +159,59 @@ class Document:
             external_shipment_id=data.get('external_shipment_id'),
             is_archived=bool(data.get('is_archived', False)),
             display_color=data.get('display_color'),
+            empty_page_count=int(data['empty_page_count']) if data.get('empty_page_count') is not None else None,
+            total_page_count=int(data['total_page_count']) if data.get('total_page_count') is not None else None,
             duplicate_of_filename=data.get('duplicate_of_filename') or None,
+            duplicate_of_box_type=data.get('duplicate_of_box_type') or None,
+            duplicate_of_created_at=data.get('duplicate_of_created_at') or None,
+            duplicate_of_is_archived=bool(data.get('duplicate_of_is_archived', False)),
+            content_duplicate_of_id=int(data['content_duplicate_of_id']) if data.get('content_duplicate_of_id') else None,
+            content_duplicate_of_filename=data.get('content_duplicate_of_filename') or None,
+            content_duplicate_of_box_type=data.get('content_duplicate_of_box_type') or None,
+            content_duplicate_of_created_at=data.get('content_duplicate_of_created_at') or None,
+            content_duplicate_of_is_archived=bool(data.get('content_duplicate_of_is_archived', False)),
         )
     
     @property
     def is_duplicate(self) -> bool:
-        """Prueft ob dieses Dokument ein Duplikat (Version > 1) ist."""
+        """Prueft ob dieses Dokument ein Datei-Duplikat (Version > 1) ist."""
         try:
             return int(self.version) > 1
         except (TypeError, ValueError):
             return False
+    
+    @property
+    def is_content_duplicate(self) -> bool:
+        """Prueft ob dieses Dokument ein Inhaltsduplikat ist (gleicher Text, andere Datei)."""
+        return self.content_duplicate_of_id is not None
+    
+    @property
+    def has_any_duplicate(self) -> bool:
+        """Prueft ob Datei- ODER Inhaltsduplikat."""
+        return self.is_duplicate or self.is_content_duplicate
+    
+    @property
+    def has_empty_pages(self) -> bool:
+        """Prueft ob das Dokument leere Seiten enthaelt (mindestens eine).
+        
+        Gibt False zurueck wenn die Leere-Seiten-Erkennung noch nicht
+        durchgefuehrt wurde (empty_page_count ist None/NULL).
+        """
+        return self.empty_page_count is not None and self.empty_page_count > 0
+    
+    @property
+    def is_completely_empty(self) -> bool:
+        """Prueft ob ALLE Seiten des Dokuments leer sind.
+        
+        Gibt False zurueck wenn:
+        - Leere-Seiten-Erkennung nicht durchgefuehrt (NULL-Werte)
+        - PDF hat 0 Seiten (total_page_count == 0)
+        - Nicht alle Seiten leer sind
+        """
+        return (self.empty_page_count is not None 
+                and self.total_page_count is not None 
+                and self.total_page_count > 0 
+                and self.empty_page_count == self.total_page_count)
     
     @property
     def is_pdf(self) -> bool:
@@ -247,6 +321,32 @@ class BoxStats:
         return getattr(self, box_type, 0)
 
 
+@dataclass
+class SearchResult:
+    """Suchergebnis aus der ATLAS Index Volltextsuche.
+    
+    Enthaelt ein Document-Objekt plus Such-spezifische Felder:
+    - text_preview: Erste 2000 Zeichen des extrahierten Texts (fuer Snippet-Aufbereitung)
+    - relevance_score: Relevanz-Ranking (Dateiname=10, Volltext=20, beides=30)
+    """
+    document: Document
+    text_preview: Optional[str] = None
+    relevance_score: int = 0
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'SearchResult':
+        """Erstellt ein SearchResult aus einem Server-Response-Dict."""
+        # Suchspezifische Felder extrahieren bevor Document.from_dict aufgerufen wird
+        text_preview = data.pop('text_preview', None)
+        relevance_score = int(data.pop('relevance_score', 0))
+        document = Document.from_dict(data)
+        return cls(
+            document=document,
+            text_preview=text_preview,
+            relevance_score=relevance_score
+        )
+
+
 class DocumentsAPI:
     """
     Dokumenten-API mit Box-System.
@@ -257,6 +357,7 @@ class DocumentsAPI:
         docs_api.list_by_box('gdv')
         docs_api.get_box_stats()
         docs_api.move_documents([1, 2, 3], 'sach')
+        docs_api.search_documents('Haftpflicht')
     """
     
     def __init__(self, client: APIClient):
@@ -312,6 +413,41 @@ class DocumentsAPI:
             return []
         except APIError as e:
             logger.error(f"Dokumente laden fehlgeschlagen: {e}")
+            return []
+    
+    def search_documents(self, query: str, limit: int = 200,
+                         include_raw: bool = False, substring: bool = False) -> List[SearchResult]:
+        """
+        ATLAS Index: Volltextsuche ueber Dateinamen und Dokumentinhalt.
+        
+        Server-seitig: JOIN auf document_ai_data mit FULLTEXT-Index.
+        Nur in diesem Endpoint, niemals in list_documents()!
+        
+        Args:
+            query: Suchbegriff (min. 3 Zeichen)
+            limit: Maximale Anzahl Ergebnisse (1-500, default 200)
+            include_raw: XML/GDV-Rohdaten einbeziehen (default: False)
+            substring: Teilstring-Suche statt FULLTEXT (default: False, langsamer)
+            
+        Returns:
+            Liste von SearchResult-Objekten (Document + text_preview + relevance_score)
+        """
+        if len(query) < 3:
+            return []
+        
+        params = {'q': query, 'limit': limit}
+        if include_raw:
+            params['include_raw'] = '1'
+        if substring:
+            params['substring'] = '1'
+        
+        try:
+            response = self.client.get('/documents/search', params=params)
+            if response.get('success'):
+                return [SearchResult.from_dict(d) for d in response['data']['documents']]
+            return []
+        except APIError as e:
+            logger.error(f"ATLAS Index Suche fehlgeschlagen: {e}")
             return []
     
     def list_by_box(self, box_type: str) -> List[Document]:
@@ -873,3 +1009,102 @@ class DocumentsAPI:
         except APIError as e:
             logger.error(f"Datei-Ersetzung fehlgeschlagen fuer Dokument {doc_id}: {e}")
             return False
+    
+    # =========================================================================
+    # AI-Data Methoden (document_ai_data Tabelle)
+    # PERFORMANCE-REGEL: Nie in list_documents() oder get_documents() nutzen!
+    # =========================================================================
+    
+    def save_ai_data(self, doc_id: int, data: Dict[str, Any]) -> bool:
+        """
+        Speichert Volltext + KI-Daten fuer ein Dokument (Upsert).
+        
+        Wird nach der KI-Klassifikation aufgerufen. Fehler hier brechen
+        die Dokumentenverarbeitung NICHT ab.
+        
+        Args:
+            doc_id: Dokument-ID
+            data: Dict mit Feldern:
+                - extracted_text: Volltext aller Seiten
+                - extracted_text_sha256: SHA256 des Textes
+                - extraction_method: 'text'|'ocr'|'mixed'|'none'
+                - extracted_page_count: Anzahl Seiten mit Text
+                - ai_full_response: KI-Rohantwort (JSON als String)
+                - ai_prompt_text: Verwendeter Prompt
+                - ai_model: Modell-ID
+                - ai_prompt_version: Prompt-Version
+                - ai_stage: 'triage_only'|'triage_and_detail'|'courtage_minimal'|'none'
+                - text_char_count: Zeichenanzahl des extrahierten Textes
+                - ai_response_char_count: Zeichenanzahl der KI-Antwort
+                - prompt_tokens: Token-Verbrauch (Input)
+                - completion_tokens: Token-Verbrauch (Output)
+                - total_tokens: Token-Verbrauch (Gesamt)
+                
+        Returns:
+            Dict mit Response-Daten (inkl. content_duplicate_of_id) oder None bei Fehler.
+            Fuer Abwaertskompatibilitaet: bool(result) ist True bei Erfolg.
+        """
+        try:
+            response = self.client.post(
+                f'/documents/{doc_id}/ai-data',
+                json_data=data
+            )
+            if response.get('success'):
+                result = response.get('data', {})
+                # Inhaltsduplikat-Info loggen wenn vorhanden
+                dup_id = result.get('content_duplicate_of_id')
+                if dup_id:
+                    dup_name = result.get('content_duplicate_of_filename', '?')
+                    logger.info(
+                        f"Inhaltsduplikat erkannt: Dokument {doc_id} hat identischen Text "
+                        f"wie Dokument {dup_id} ({dup_name})"
+                    )
+                else:
+                    logger.debug(f"AI-Daten gespeichert fuer Dokument {doc_id}")
+                return result
+            logger.warning(f"AI-Daten speichern fehlgeschlagen fuer Dokument {doc_id}: {response.get('error')}")
+            return None
+        except APIError as e:
+            logger.error(f"AI-Daten speichern fehlgeschlagen fuer Dokument {doc_id}: {e}")
+            return None
+    
+    def get_ai_data(self, doc_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Liest Volltext + KI-Daten fuer ein Dokument.
+        
+        Nur auf explizite Anfrage aufrufen -- NIEMALS automatisch
+        in Listenansichten oder beim Archiv-Load.
+        
+        Args:
+            doc_id: Dokument-ID
+            
+        Returns:
+            Dict mit AI-Daten oder None wenn nicht vorhanden/Fehler
+        """
+        try:
+            response = self.client.get(f'/documents/{doc_id}/ai-data')
+            if response.get('success'):
+                return response.get('ai_data')
+            return None
+        except APIError as e:
+            logger.error(f"AI-Daten laden fehlgeschlagen fuer Dokument {doc_id}: {e}")
+            return None
+    
+    def get_missing_ai_data_documents(self) -> List[Dict]:
+        """
+        Gibt Dokumente zurueck die noch keinen document_ai_data-Eintrag haben.
+        
+        Begrenzt auf nicht-archivierte Dokumente (max. 50).
+        Wird fuer die nachtraegliche Pruefung von Scan-Dokumenten genutzt.
+        
+        Returns:
+            Liste von Dicts mit id, original_filename, mime_type, file_size
+        """
+        try:
+            response = self.client.get('/documents/missing-ai-data')
+            if response.get('success'):
+                return response['data'].get('documents', [])
+            return []
+        except APIError as e:
+            logger.debug(f"Missing AI-Data Abfrage fehlgeschlagen: {e}")
+            return []

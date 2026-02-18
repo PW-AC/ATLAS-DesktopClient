@@ -5,6 +5,7 @@ Dialog für Benutzer-Anmeldung.
 """
 
 import os
+import logging
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -16,6 +17,8 @@ from PySide6.QtGui import QFont, QPixmap
 
 from api.client import APIClient, APIError
 from api.auth import AuthAPI, AuthState
+
+logger = logging.getLogger(__name__)
 
 
 class LoginWorker(QThread):
@@ -193,6 +196,21 @@ class LoginDialog(QDialog):
             self.status_label.setText(f"Willkommen zurück, {state.user.username}!")
             self.status_label.setStyleSheet("color: green;")
             self.accept()
+        else:
+            self._clear_local_caches()
+    
+    def _clear_local_caches(self):
+        """Loescht alle lokalen Caches wenn keine gueltige Session vorhanden ist."""
+        import shutil
+        import tempfile
+        
+        cache_dir = os.path.join(tempfile.gettempdir(), 'bipro_preview_cache')
+        if os.path.isdir(cache_dir):
+            try:
+                shutil.rmtree(cache_dir)
+                logger.info(f"Vorschau-Cache geloescht: {cache_dir}")
+            except Exception as e:
+                logger.debug(f"Cache-Bereinigung fehlgeschlagen: {e}")
     
     def _do_login(self):
         """Login durchführen."""

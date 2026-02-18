@@ -173,23 +173,29 @@ class DropUploadWorker(QThread):
                 for ext in zr.extracted_paths:
                     if is_msg_file(ext):
                         md = tempfile.mkdtemp(prefix="atlas_msg_", dir=td)
-                        mr = extract_msg_attachments(ext, md)
+                        mr = extract_msg_attachments(ext, md, api_client=self.api_client)
                         if mr.error:
                             self._errors.append((Path(ext).name, mr.error))
                         else:
                             for att in mr.attachment_paths:
-                                unlock_pdf_if_needed(att)
+                                try:
+                                    unlock_pdf_if_needed(att, api_client=self.api_client)
+                                except ValueError as e:
+                                    logger.warning(str(e))
                                 jobs.append((att, None))
                         jobs.append((ext, 'roh'))  # MSG -> roh
                     else:
-                        unlock_pdf_if_needed(ext)
+                        try:
+                            unlock_pdf_if_needed(ext, api_client=self.api_client)
+                        except ValueError as e:
+                            logger.warning(str(e))
                         jobs.append((ext, None))
                 jobs.append((fp, 'roh'))  # ZIP -> roh
 
             elif is_msg_file(fp):
                 td = tempfile.mkdtemp(prefix="atlas_msg_")
                 self._temp_dirs.append(td)
-                mr = extract_msg_attachments(fp, td)
+                mr = extract_msg_attachments(fp, td, api_client=self.api_client)
                 if mr.error:
                     self._errors.append((Path(fp).name, mr.error))
                     continue
@@ -201,16 +207,25 @@ class DropUploadWorker(QThread):
                             self._errors.append((Path(att).name, zr.error))
                         else:
                             for ext in zr.extracted_paths:
-                                unlock_pdf_if_needed(ext)
+                                try:
+                                    unlock_pdf_if_needed(ext, api_client=self.api_client)
+                                except ValueError as e:
+                                    logger.warning(str(e))
                                 jobs.append((ext, None))
                         jobs.append((att, 'roh'))  # ZIP-Anhang -> roh
                     else:
-                        unlock_pdf_if_needed(att)
+                        try:
+                            unlock_pdf_if_needed(att, api_client=self.api_client)
+                        except ValueError as e:
+                            logger.warning(str(e))
                         jobs.append((att, None))
                 jobs.append((fp, 'roh'))  # MSG -> roh
 
             else:
-                unlock_pdf_if_needed(fp)
+                try:
+                    unlock_pdf_if_needed(fp, api_client=self.api_client)
+                except ValueError as e:
+                    logger.warning(str(e))
                 jobs.append((fp, None))
 
         return jobs
@@ -243,6 +258,14 @@ class DropUploadWorker(QThread):
             else:
                 doc = docs_api.upload(path, source_type)
             if doc:
+                # Fruehe Text-Extraktion fuer Inhaltsduplikat-Erkennung
+                # Datei ist noch lokal verfuegbar, KI-Verarbeitung ueberschreibt spaeter per Upsert
+                if box_type != 'roh':  # Roh-Dateien (MSG, ZIP) nicht extrahieren
+                    try:
+                        from services.early_text_extract import extract_and_save_text
+                        extract_and_save_text(docs_api, doc.id, path, name)
+                    except Exception:
+                        pass  # Darf Upload nicht abbrechen
                 return (name, True, doc)
             else:
                 return (name, False, "Upload fehlgeschlagen")
@@ -658,15 +681,9 @@ class MainHub(QMainWindow):
             self.content_stack.removeWidget(self._placeholder_center)
             self.content_stack.insertWidget(0, self._message_center_view)
         
-        # #region agent log
-        import time as _t0; _log_nav_start = _t0.time()
-        # #endregion
         self._message_center_view.refresh()
         self.content_stack.setCurrentIndex(0)
         self._set_polling_interval(self._POLL_INTERVAL_CENTER)
-        # #region agent log
-        _log_nav_dur = (_t0.time() - _log_nav_start) * 1000; import json as _j0; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j0.dumps({"id":"log_show_center","timestamp":int(_t0.time()*1000),"location":"main_hub.py:_show_message_center","message":"_show_message_center refresh+setIndex","data":{"duration_ms":round(_log_nav_dur,1)},"hypothesisId":"A"})+'\n')
-        # #endregion
         
         # Sofort Badge aktualisieren (System-Meldungen wurden gerade gelesen)
         QTimer.singleShot(1500, self._refresh_badge_after_read)
@@ -953,14 +970,7 @@ class MainHub(QMainWindow):
         
         # Nicht starten wenn bereits ein Poll laeuft
         if self._notification_poll_worker and self._notification_poll_worker.isRunning():
-            # #region agent log
-            import time as _t; import json as _j; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j.dumps({"id":"log_notif_worker_overlap","timestamp":int(_t.time()*1000),"location":"main_hub.py:_poll_notifications","message":"Notification worker overlap SKIPPED","data":{"interval":self._current_poll_interval},"hypothesisId":"E"})+'\n')
-            # #endregion
             return
-        
-        # #region agent log
-        import time as _t2; import json as _j2; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j2.dumps({"id":"log_notif_poll_start","timestamp":int(_t2.time()*1000),"location":"main_hub.py:_poll_notifications","message":"Notification poll starting","data":{"interval":self._current_poll_interval},"hypothesisId":"E"})+'\n')
-        # #endregion
         
         self._notification_poll_worker = NotificationPollWorker(
             self._messages_api, self._last_message_ts
@@ -970,9 +980,6 @@ class MainHub(QMainWindow):
     
     def _on_notification_poll_finished(self, summary: dict):
         """Callback wenn Notification-Poll abgeschlossen (Main-Thread)."""
-        # #region agent log
-        import time as _tn; import json as _jn; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_jn.dumps({"id":"log_notif_finished","timestamp":int(_tn.time()*1000),"location":"main_hub.py:_on_notification_poll_finished","message":"Poll finished","data":{"has_data":bool(summary),"interval":self._current_poll_interval},"hypothesisId":"E"})+'\n')
-        # #endregion
         if not summary:
             return
         

@@ -14,10 +14,29 @@ import ctypes
 from logging.handlers import RotatingFileHandler
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Bekannte Qt-Warnungen die unterdrueckt werden sollen
+_SUPPRESSED_QT_WARNINGS = [
+    "QFont::setPointSize: Point size <= 0",  # QPdfView setzt intern pointSize(-1)
+]
+
+def _qt_message_handler(mode, context, message):
+    """Custom Qt Message Handler: Unterdrueckt bekannte harmlose Warnungen."""
+    if mode == QtMsgType.QtWarningMsg:
+        for pattern in _SUPPRESSED_QT_WARNINGS:
+            if pattern in message:
+                return  # Bekannte harmlose Warnung unterdruecken
+    # Alle anderen Meldungen normal ausgeben
+    if mode == QtMsgType.QtWarningMsg:
+        logging.getLogger('qt').warning(message)
+    elif mode == QtMsgType.QtCriticalMsg:
+        logging.getLogger('qt').error(message)
+    elif mode == QtMsgType.QtFatalMsg:
+        logging.getLogger('qt').critical(message)
 
 
 def _read_app_version() -> str:
@@ -201,6 +220,9 @@ def _acquire_single_instance() -> bool:
 
 def main():
     """Hauptfunktion zum Starten der Anwendung."""
+    # Qt Message Handler installieren (vor QApplication, um alle Warnungen abzufangen)
+    qInstallMessageHandler(_qt_message_handler)
+    
     app = QApplication(sys.argv)
     
     # Single-Instance Check

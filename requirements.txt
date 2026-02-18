@@ -34,8 +34,15 @@ pywin32>=306,<400; sys_platform == "win32"
 # ZIP mit AES-256 Verschluesselung entpacken
 pyzipper>=0.3.6,<1.0.0
 
+# Lokale OCR fuer Bild-PDFs (Tesseract-Wrapper)
+# Erfordert Tesseract OCR Engine: https://github.com/UB-Mannheim/tesseract/wiki
+pytesseract>=0.3.10,<1.0.0
+
 # Sichere lokale Speicherung (JWT-Token, Zertifikate) — SV-005
 keyring>=24.0.0,<26.0.0
+
+# Token-Zaehlung fuer KI-Kostenberechnung
+tiktoken>=0.5.0,<1.0.0
 
 # Fuer Packaging
 pyinstaller>=6.0.0,<7.0.0

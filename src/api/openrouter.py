@@ -64,8 +64,9 @@ def _decrement_queue_depth():
 # OpenRouter API Konfiguration
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_VISION_MODEL = "openai/gpt-4o"
-DEFAULT_EXTRACT_MODEL = "openai/gpt-4o"
+DEFAULT_EXTRACT_MODEL = "openai/gpt-4o-mini"  # Stufe 2: gpt-4o-mini statt gpt-4o (~17x guenstiger)
 DEFAULT_TRIAGE_MODEL = "openai/gpt-4o-mini"  # Guenstiges Modell fuer schnelle Kategorisierung
+DEFAULT_OCR_MODEL = "openai/gpt-4o-mini"  # OCR: gpt-4o-mini hat Vision-Support und ist ~17x guenstiger
 
 # Retry-Konfiguration
 MAX_RETRIES = 4
@@ -593,6 +594,14 @@ Eingabetext:
         self.api_client = api_client
         self._api_key: Optional[str] = None
         self._session = requests.Session()
+        
+        self._cost_calculator = None
+        try:
+            from services.cost_calculator import CostCalculator
+            self._cost_calculator = CostCalculator()
+            self._cost_calculator.load_pricing_from_api(api_client)
+        except Exception as e:
+            logger.debug(f"CostCalculator nicht verfuegbar: {e}")
     
     def _ensure_api_key(self) -> str:
         """
@@ -605,35 +614,43 @@ Eingabetext:
     
     def get_credits(self) -> Optional[dict]:
         """
-        SV-004 Fix: Ruft Guthaben ueber Server-Proxy ab.
+        Ruft Guthaben/Usage ueber Server-Proxy ab.
+        Unterstuetzt OpenRouter (balance) und OpenAI (monthly usage).
         
         Returns:
-            dict mit 'balance', 'total_credits', 'total_usage' und 'currency' oder None bei Fehler
+            dict mit 'provider' und provider-spezifischen Feldern, oder None bei Fehler.
+            OpenRouter: balance, total_credits, total_usage, currency
+            OpenAI: total_usage (USD), period
         """
         try:
-            # SV-004: Ueber Server-Proxy statt direkt an OpenRouter
             response = self.api_client.get("/ai/credits")
             
             if response.get('success') and response.get('data'):
                 data = response['data']
-                # OpenRouter gibt {data: {total_credits, total_usage}} zurueck
-                if 'data' in data:
-                    total_credits = data['data'].get('total_credits', 0)
-                    total_usage = data['data'].get('total_usage', 0)
-                else:
-                    total_credits = data.get('total_credits', 0)
-                    total_usage = data.get('total_usage', 0)
+                provider = data.get('provider', 'openrouter')
                 
+                if provider == 'openai':
+                    return {
+                        'provider': 'openai',
+                        'total_usage': data.get('total_usage'),
+                        'period': data.get('period', ''),
+                        'currency': 'USD'
+                    }
+                
+                inner = data.get('data', data)
+                total_credits = inner.get('total_credits', 0)
+                total_usage = inner.get('total_usage', 0)
                 balance = total_credits - total_usage
                 
                 return {
+                    'provider': 'openrouter',
                     'total_credits': total_credits,
                     'total_usage': total_usage,
                     'balance': balance,
                     'currency': 'USD'
                 }
             
-            logger.warning(f"Credits-Abfrage ueber Proxy fehlgeschlagen")
+            logger.warning("Credits-Abfrage ueber Proxy fehlgeschlagen")
             return None
             
         except Exception as e:
@@ -694,9 +711,13 @@ Eingabetext:
                         json_data=proxy_payload
                     )
                     
-                    # Server-Proxy gibt OpenRouter-Antwort in 'data' zurueck
+                    # Server-Proxy gibt KI-Antwort in 'data' zurueck
                     if response.get('success') and response.get('data'):
-                        return response['data']
+                        data = response['data']
+                        cost_info = data.get('_cost', {})
+                        if cost_info.get('provider'):
+                            logger.info(f"KI-Request via Provider: {cost_info['provider']}")
+                        return data
                     
                     # Fehler vom Proxy
                     error_msg = response.get('error', 'Unbekannter Proxy-Fehler')
@@ -780,8 +801,96 @@ Eingabetext:
         logger.info(f"{len(images)} Seite(n) konvertiert")
         return images
     
+    def ocr_pdf_local(self, pdf_path: str, max_pages: int = 2, dpi: int = 150) -> str:
+        """
+        Lokale OCR fuer Bild-PDFs via Tesseract (kostenlos, kein API-Call).
+        
+        Rendert PDF-Seiten lokal zu Bildern und extrahiert Text mit Tesseract OCR.
+        Deutlich guenstiger als Cloud-OCR (GPT-4o Vision), fuer gedruckte
+        Versicherungsdokumente mit Standardlayout voellig ausreichend.
+        
+        Args:
+            pdf_path: Pfad zur PDF-Datei
+            max_pages: Maximale Anzahl Seiten fuer OCR
+            dpi: Aufloesung fuer Rendering (150 = gute Balance Qualitaet/Speed)
+            
+        Returns:
+            Extrahierter Text (leer wenn Tesseract nicht verfuegbar)
+            
+        Raises:
+            Keine - gibt leeren String bei Fehler zurueck (Fallback auf Cloud-OCR)
+        """
+        try:
+            import pytesseract
+            from PIL import Image
+            import io
+        except ImportError:
+            logger.debug("pytesseract/Pillow nicht installiert, ueberspringe lokale OCR")
+            return ""
+        
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            return ""
+        
+        # Tesseract-Pfad konfigurieren (Windows Standard-Installation)
+        tesseract_paths = [
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+        ]
+        for tess_path in tesseract_paths:
+            if os.path.isfile(tess_path):
+                pytesseract.pytesseract.tesseract_cmd = tess_path
+                break
+        
+        try:
+            doc = fitz.open(pdf_path)
+            num_pages = min(len(doc), max_pages)
+            all_text = []
+            
+            for page_num in range(num_pages):
+                page = doc[page_num]
+                
+                # Seite zu Bild rendern (150 DPI fuer gute OCR-Qualitaet)
+                mat = fitz.Matrix(dpi / 72, dpi / 72)
+                pix = page.get_pixmap(matrix=mat)
+                
+                # PyMuPDF Pixmap -> PIL Image (fuer pytesseract)
+                png_data = pix.tobytes("png")
+                pil_image = Image.open(io.BytesIO(png_data))
+                
+                # Tesseract OCR (deutsch + englisch)
+                page_text = pytesseract.image_to_string(
+                    pil_image, 
+                    lang='deu+eng',
+                    config='--psm 6'  # Uniform block of text
+                )
+                
+                if page_text.strip():
+                    all_text.append(page_text.strip())
+            
+            doc.close()
+            
+            result = '\n\n'.join(all_text)
+            if result:
+                logger.info(f"Lokale OCR (Tesseract): {len(result)} Zeichen aus {num_pages} Seite(n)")
+            else:
+                logger.debug(f"Lokale OCR: kein Text erkannt in {num_pages} Seite(n)")
+            
+            return result
+            
+        except pytesseract.TesseractNotFoundError:
+            logger.warning(
+                "Tesseract OCR nicht installiert. "
+                "Bitte installieren: https://github.com/UB-Mannheim/tesseract/wiki"
+            )
+            return ""
+        except Exception as e:
+            logger.warning(f"Lokale OCR fehlgeschlagen: {e}")
+            return ""
+    
     def extract_text_from_images(self, images_b64: List[str], 
-                                  model: str = DEFAULT_VISION_MODEL) -> str:
+                                  model: str = DEFAULT_OCR_MODEL) -> str:
         """
         Extrahiert Text aus Bildern mittels Vision-Modell (OCR).
         
@@ -804,7 +913,10 @@ Eingabetext:
                 "text": (
                     "Lies dieses Versicherungsdokument vollstaendig aus. "
                     "Gib den gesamten Text zurueck, Zeile fuer Zeile. "
-                    "Achte besonders auf: Versicherer-Name, Datum, Dokumenttyp."
+                    "Achte besonders auf: Versicherer-Name (VU), Datum, Dokumenttyp, "
+                    "Versicherungssparte (z.B. Sach, Leben, Kranken, KFZ, Haftpflicht), "
+                    "Versicherungsscheinnummern (VS-Nr), Vertragsnummern und Policennummern. "
+                    "Bei Tabellen: Spaltenkoepfe und erste Datenzeilen wiedergeben."
                 )
             }
         ]
@@ -820,7 +932,7 @@ Eingabetext:
         
         messages = [{"role": "user", "content": content}]
         
-        response = self._openrouter_request(messages, model=model, max_tokens=8192)
+        response = self._openrouter_request(messages, model=model, max_tokens=2000)
         
         # Text aus Antwort extrahieren
         text = ""
@@ -1514,6 +1626,12 @@ Antwort NUR als JSON:
                 
                 if result:
                     logger.info(f"Courtage minimal: {result}")
+                    # Interne Metadaten durchreichen (mit _ Prefix, abwaertskompatibel)
+                    result['_usage'] = response.get('usage', {})
+                    result['_raw_response'] = content
+                    result['_prompt_text'] = prompt
+                    result['_ai_model'] = DEFAULT_TRIAGE_MODEL
+                    result['_ai_stage'] = 'courtage_minimal'
                     return result
                 
         except Exception as e:
@@ -1535,7 +1653,15 @@ Antwort NUR als JSON:
         result = self.classify_sparte_with_date(pdf_path)
         return result.get('sparte', 'sonstige')
     
-    def classify_sparte_with_date(self, pdf_path: str) -> dict:
+    def classify_sparte_with_date(self, pdf_path: str,
+                                   stage1_prompt: str = None,
+                                   stage1_model: str = None,
+                                   stage1_max_tokens: int = None,
+                                   stage2_enabled: bool = True,
+                                   stage2_prompt: str = None,
+                                   stage2_model: str = None,
+                                   stage2_max_tokens: int = None,
+                                   stage2_trigger: str = 'low') -> dict:
         """
         Zweistufige Klassifikation mit Confidence-Scoring (nur PDFs).
         
@@ -1543,11 +1669,22 @@ Antwort NUR als JSON:
           -> confidence "high"/"medium" -> fertig
           -> confidence "low" -> Stufe 2
         
-        Stufe 2: GPT-4o (5 Seiten, praeziser)
+        Stufe 2: GPT-4o-mini (5 Seiten, praeziser) - optional deaktivierbar
           -> Endgueltiges Ergebnis inkl. Dokumentname bei "sonstige"
+        
+        Alle Parameter sind optional -- ohne Parameter werden die Hardcoded-Defaults
+        verwendet (Abwaertskompatibilitaet).
         
         Args:
             pdf_path: Pfad zur PDF-Datei
+            stage1_prompt: Optionaler benutzerdefinierter Prompt fuer Stufe 1
+            stage1_model: Optionales Modell fuer Stufe 1
+            stage1_max_tokens: Optionale max_tokens fuer Stufe 1
+            stage2_enabled: Ob Stufe 2 aktiv ist (Default: True)
+            stage2_prompt: Optionaler benutzerdefinierter Prompt fuer Stufe 2
+            stage2_model: Optionales Modell fuer Stufe 2
+            stage2_max_tokens: Optionale max_tokens fuer Stufe 2
+            stage2_trigger: Wann Stufe 2 ausloesen: 'low' oder 'low_medium'
             
         Returns:
             {"sparte": ..., "confidence": ..., "document_date_iso": ..., "vu_name": ..., "document_name": ...}
@@ -1558,13 +1695,18 @@ Antwort NUR als JSON:
         text = self._extract_relevant_text(pdf_path, for_triage=True)
         
         if not text.strip():
-            # Fallback zu OCR
+            # Stufe A: Lokale OCR via Tesseract (kostenlos, ~50-200ms)
+            text = self.ocr_pdf_local(pdf_path, max_pages=2, dpi=150)
+        
+        if not text.strip():
+            # Stufe B: Cloud-OCR als letzter Fallback (teuer, nur wenn Tesseract fehlt/versagt)
             try:
-                images = self.pdf_to_images(pdf_path, max_pages=1)
+                images = self.pdf_to_images(pdf_path, max_pages=2, dpi=100)
                 if images:
-                    text = self.extract_text_from_images(images[:1])
+                    logger.info("Lokale OCR lieferte keinen Text, nutze Cloud-OCR als Fallback")
+                    text = self.extract_text_from_images(images[:2])
             except Exception as e:
-                logger.error(f"OCR fehlgeschlagen: {e}")
+                logger.error(f"Cloud-OCR fehlgeschlagen: {e}")
                 return {"sparte": "sonstige", "confidence": "low", "document_date_iso": None, 
                         "vu_name": None, "document_name": None}
         
@@ -1590,7 +1732,9 @@ Antwort NUR als JSON:
         
         result = self._classify_sparte_request(
             input_text_s1, 
-            model=DEFAULT_TRIAGE_MODEL
+            model=stage1_model or DEFAULT_TRIAGE_MODEL,
+            custom_prompt=stage1_prompt,
+            custom_max_tokens=stage1_max_tokens,
         )
         
         if not result:
@@ -1606,10 +1750,18 @@ Antwort NUR als JSON:
         )
         
         # =====================================================
-        # STUFE 2: GPT-4o bei "low" Confidence (nur PDFs)
+        # STUFE 2: Detail-Klassifikation bei niedriger Confidence
         # =====================================================
-        if confidence == "low" and pdf_path.lower().endswith('.pdf'):
-            logger.info(f"Confidence 'low' -> Stufe 2 mit GPT-4o (mehr Text, praeziser)")
+        # Trigger bestimmen: 'low' = nur bei low, 'low_medium' = bei low oder medium
+        should_trigger_stage2 = False
+        if stage2_trigger == 'low_medium':
+            should_trigger_stage2 = confidence in ("low", "medium")
+        else:
+            should_trigger_stage2 = confidence == "low"
+        
+        if should_trigger_stage2 and pdf_path.lower().endswith('.pdf') and stage2_enabled:
+            s2_model = stage2_model or DEFAULT_EXTRACT_MODEL
+            logger.info(f"Confidence '{confidence}' -> Stufe 2 mit {s2_model} (mehr Text, praeziser)")
             
             # Mehr Text: 5 Seiten statt 2
             full_text = self._extract_relevant_text(pdf_path, for_triage=False)
@@ -1625,33 +1777,74 @@ Antwort NUR als JSON:
             
             result_stage2 = self._classify_sparte_detail(
                 input_text_s2,
-                model=DEFAULT_EXTRACT_MODEL
+                model=s2_model,
+                custom_prompt=stage2_prompt,
+                custom_max_tokens=stage2_max_tokens,
             )
             
             if result_stage2:
                 logger.info(
-                    f"Stufe 2 (GPT-4o): sparte={result_stage2.get('sparte')}, "
+                    f"Stufe 2 ({s2_model}): sparte={result_stage2.get('sparte')}, "
                     f"document_name={result_stage2.get('document_name')}, "
                     f"VU={result_stage2.get('vu_name')}"
                 )
                 # Stufe 2 Ergebnis hat Vorrang
                 result_stage2["confidence"] = "medium"  # Stufe 2 ist mindestens medium
+                
+                # Aggregierte Metadaten: Stufe 1 + Stufe 2
+                s1_usage = result.get('_usage', {})
+                s2_usage = result_stage2.get('_usage', {})
+                result_stage2['_usage'] = {
+                    'prompt_tokens': (s1_usage.get('prompt_tokens') or 0) + (s2_usage.get('prompt_tokens') or 0),
+                    'completion_tokens': (s1_usage.get('completion_tokens') or 0) + (s2_usage.get('completion_tokens') or 0),
+                    'total_tokens': (s1_usage.get('total_tokens') or 0) + (s2_usage.get('total_tokens') or 0),
+                }
+                # Kosten aggregieren: Stage 1 + Stage 2
+                s1_cost = result.get('_server_cost_usd', 0) or 0
+                s2_cost = result_stage2.get('_server_cost_usd', 0) or 0
+                result_stage2['_server_cost_usd'] = s1_cost + s2_cost
+                result_stage2['_provider'] = result_stage2.get('_provider') or result.get('_provider', 'unknown')
+                
+                # Beide Raw-Responses + Prompts sammeln
+                result_stage2['_raw_response'] = {
+                    'stage1': result.get('_raw_response', ''),
+                    'stage2': result_stage2.get('_raw_response', '')
+                }
+                result_stage2['_prompt_text'] = {
+                    'stage1': result.get('_prompt_text', ''),
+                    'stage2': result_stage2.get('_prompt_text', '')
+                }
+                result_stage2['_ai_model'] = f"{stage1_model or DEFAULT_TRIAGE_MODEL}+{s2_model}"
+                result_stage2['_ai_stage'] = 'triage_and_detail'
                 return result_stage2
         
+        # Nur Stufe 1 -- Metadaten ergaenzen
+        result['_ai_model'] = DEFAULT_TRIAGE_MODEL
+        result['_ai_stage'] = 'triage_only'
         return result
     
-    def _classify_sparte_request(self, text: str, model: str = DEFAULT_TRIAGE_MODEL) -> Optional[dict]:
+    def _classify_sparte_request(self, text: str, model: str = DEFAULT_TRIAGE_MODEL,
+                                 custom_prompt: str = None,
+                                 custom_max_tokens: int = None) -> Optional[dict]:
         """
         Stufe 1: Schnelle Sparten-Klassifikation mit Confidence-Scoring.
         
         Args:
             text: Extrahierter Text
             model: LLM-Modell
+            custom_prompt: Optionaler benutzerdefinierter Prompt (mit {text} Platzhalter)
+            custom_max_tokens: Optionale max_tokens
             
         Returns:
             {"sparte": ..., "confidence": ..., "document_date_iso": ..., "vu_name": ...}
         """
-        prompt = '''Klassifiziere dieses Versicherungsdokument in eine Sparte.
+        if custom_prompt:
+            # .replace() statt .format() verwenden, da der Prompt JSON-Beispiele
+            # mit {}-Klammern enthaelt (z.B. {"sparte": "..."}) die .format()
+            # faelschlicherweise als Platzhalter interpretieren wuerde (KeyError)
+            prompt = custom_prompt.replace('{text}', text)
+        else:
+            prompt = '''Klassifiziere dieses Versicherungsdokument in eine Sparte.
 
 SPARTEN:
 - courtage: NUR Provisionsabrechnungen/Courtageabrechnungen vom VU an den MAKLER/VERMITTLER
@@ -1663,7 +1856,9 @@ SPARTEN:
 - sach: KFZ, Haftpflicht, Privathaftpflicht, PHV, Tierhalterhaftpflicht, Hundehaftpflicht,
   Hausrat, Wohngebaeude, Unfall, Unfallversicherung, Rechtsschutz, Gewerbe,
   Betriebshaftpflicht, Glas, Reise, Gebaeudeversicherung, Inhaltsversicherung,
-  Bauherrenhaftpflicht, Elektronik, PrivatSchutzversicherung, Kombi-Schutz, Buendelversicherung
+  Bauherrenhaftpflicht, Elektronik, PrivatSchutzversicherung, Kombi-Schutz, Buendelversicherung,
+  Schadenaufstellung, Schadenliste, Schadenstatistik, Schadenhistorie, Schadenquote,
+  Fahrzeug, Fahrzeugerprobung, Fahrzeugschein, Fahrzeugbrief
 
 - leben: Lebensversicherung, Rente, Rentenversicherung, BU, Berufsunfaehigkeit, Riester,
   Ruerup, Pensionskasse, Pensionsfonds, Altersvorsorge, bAV, betriebliche Altersversorgung,
@@ -1671,13 +1866,15 @@ SPARTEN:
 
 - kranken: PKV, Krankenzusatz, Zahnzusatz, Pflege, Krankentagegeld, Krankenhaustagegeld
 
-- sonstige: Nur wenn KEINE der obigen Sparten passt
+- sonstige: Nur wenn wirklich KEINE der obigen Sparten erkennbar ist
 
 WICHTIG - HAEUFIGE VERWECHSLUNGEN:
 - Unfallversicherung = IMMER sach! Auch wenn Todesfallsumme, Invaliditaet oder
   Progressionsstaffel erwaehnt wird - das sind Unfallleistungen, NICHT Lebensversicherung!
 - PrivatSchutzversicherung, Kombi-Schutz, Buendelpolice = sach (Haftpflicht+Unfall+Hausrat)
 - NICHT leben: Todesfallsumme/Invaliditaet bei Unfallversicherung
+- Schadenlisten / Schadenaufstellungen / Schadenstatistiken = IMMER sach
+- Dokumente ueber Fahrzeuge / Fahrzeugerprobung = sach (KFZ-Versicherung)
 
 REGELN:
 1. Courtage NUR wenn Hauptzweck = Provisionsabrechnung fuer Makler mit Provisionsliste
@@ -1687,7 +1884,9 @@ REGELN:
    Beispiel: Kuendigung einer Unfallversicherung = "sach", nicht "leben"!
 3. Bei Zweifel zwischen Sach und Sonstige -> IMMER Sach
 4. Bei Zweifel zwischen Sach und Leben -> Sach bevorzugen (ausser eindeutig Lebensversicherung/Rente/BU)
-5. "sonstige" nur wenn wirklich KEINE Sparte erkennbar ist
+5. "sonstige" nur wenn wirklich KEINE Versicherungssparte erkennbar ist
+6. Wenn ein Dokument Versicherungsnummern (VS-Nr, VN, Policennummer) enthaelt, ist es ein
+   Versicherungsdokument und gehoert in eine Sparte, NICHT in sonstige
 
 CONFIDENCE:
 - "high": Sparte ist eindeutig erkennbar (z.B. "Wohngebaeudeversicherung", "Provisionsabrechnung")
@@ -1733,18 +1932,45 @@ JSON: {{"sparte": "...", "confidence": "high"|"medium"|"low", "document_date_iso
         try:
             messages = [{"role": "user", "content": prompt}]
             response_format = {"type": "json_schema", "json_schema": schema}
+            effective_max_tokens = custom_max_tokens or 150
+            
+            estimate = None
+            if self._cost_calculator:
+                try:
+                    estimate = self._cost_calculator.estimate_from_messages(
+                        messages, model, effective_max_tokens
+                    )
+                except Exception:
+                    pass
             
             response = self._openrouter_request(
                 messages,
                 model=model,
                 response_format=response_format,
-                max_tokens=150
+                max_tokens=effective_max_tokens
             )
             
             if response.get('choices'):
                 content = response['choices'][0].get('message', {}).get('content', '')
                 result = _safe_json_loads(content)
                 if result and "sparte" in result:
+                    usage = response.get('usage', {})
+                    result['_usage'] = usage
+                    result['_raw_response'] = content
+                    result['_prompt_text'] = prompt
+                    
+                    server_cost = response.get('_cost', {})
+                    result['_server_cost_usd'] = float(server_cost.get('real_cost_usd', 0))
+                    result['_provider'] = server_cost.get('provider', 'unknown')
+                    
+                    if self._cost_calculator and usage:
+                        try:
+                            real = self._cost_calculator.calculate_real_cost(usage, model)
+                            result['_estimated_cost_usd'] = estimate.estimated_cost_usd if estimate else None
+                            result['_real_cost_usd'] = real.real_cost_usd
+                        except Exception:
+                            pass
+                    
                     return result
                 
         except Exception as e:
@@ -1752,32 +1978,44 @@ JSON: {{"sparte": "...", "confidence": "high"|"medium"|"low", "document_date_iso
         
         return None
     
-    def _classify_sparte_detail(self, text: str, model: str = DEFAULT_EXTRACT_MODEL) -> Optional[dict]:
+    def _classify_sparte_detail(self, text: str, model: str = DEFAULT_EXTRACT_MODEL,
+                                custom_prompt: str = None,
+                                custom_max_tokens: int = None) -> Optional[dict]:
         """
-        Stufe 2: Detaillierte Klassifikation mit GPT-4o.
+        Stufe 2: Detaillierte Klassifikation mit staerkerem Modell.
         
-        Wird nur bei "low" Confidence aus Stufe 1 aufgerufen.
+        Wird nur bei niedriger Confidence aus Stufe 1 aufgerufen.
         Gibt zusaetzlich einen Dokumentnamen zurueck (besonders bei "sonstige").
         
         Args:
             text: Mehr Text (5 Seiten)
-            model: Staerkeres LLM-Modell (GPT-4o)
+            model: LLM-Modell
+            custom_prompt: Optionaler benutzerdefinierter Prompt (mit {text} Platzhalter)
+            custom_max_tokens: Optionale max_tokens
             
         Returns:
             {"sparte": ..., "document_date_iso": ..., "vu_name": ..., "document_name": ...}
         """
-        prompt = '''Analysiere dieses Versicherungsdokument detailliert.
+        if custom_prompt:
+            # .replace() statt .format() - siehe Kommentar in _classify_sparte_request
+            prompt = custom_prompt.replace('{text}', text)
+        else:
+            prompt = '''Analysiere dieses Versicherungsdokument detailliert.
 
 SPARTEN:
 - courtage: NUR Provisionsabrechnungen/Courtageabrechnungen fuer Makler
 - sach: KFZ, Haftpflicht, PHV, Tierhalterhaftpflicht, Hausrat, Wohngebaeude, Unfall,
   Unfallversicherung, Rechtsschutz, Gewerbe, Betriebshaftpflicht, Glas, Reise,
-  Gebaeudeversicherung, PrivatSchutzversicherung, Kombi-Schutz, Buendelversicherung
+  Gebaeudeversicherung, PrivatSchutzversicherung, Kombi-Schutz, Buendelversicherung,
+  Schadenaufstellung, Schadenliste, Schadenstatistik, Schadenhistorie, Schadenquote,
+  Fahrzeug, Fahrzeugerprobung
 - leben: Lebensversicherung, Rente, BU, Riester, Ruerup, Pensionskasse, bAV, Sterbegeld
 - kranken: PKV, Krankenzusatz, Zahnzusatz, Pflege, Krankentagegeld
-- sonstige: Wenn KEINE Sparte passt (z.B. allgemeiner Schriftwechsel, Maklervertrag)
+- sonstige: Wenn wirklich KEINE Versicherungssparte erkennbar ist
 
 WICHTIG: Unfallversicherung = IMMER sach (auch bei Todesfallsumme/Invaliditaet)!
+WICHTIG: Schadenlisten/Schadenaufstellungen = IMMER sach!
+WICHTIG: Wenn Versicherungsnummern (VS-Nr, VN, Policennummer) enthalten -> Sparte zuordnen, NICHT sonstige!
 
 REGELN:
 1. Courtage NUR bei Provisionsabrechnungen mit Provisionsliste
@@ -1787,6 +2025,7 @@ REGELN:
 5. Bei "sonstige": Gib einen kurzen Dokumentnamen als document_name zurueck!
    Beispiele: "Schriftwechsel", "Maklervertrag", "Vollmacht", "Begleitschreiben", 
    "Vermittlerinfo", "Allgemeine_Information"
+6. "sonstige" nur wenn wirklich KEIN Versicherungsbezug erkennbar ist
 
 TEXT:
 {text}
@@ -1826,18 +2065,45 @@ JSON: {{"sparte": "...", "document_date_iso": "YYYY-MM-DD" oder null, "vu_name":
         try:
             messages = [{"role": "user", "content": prompt}]
             response_format = {"type": "json_schema", "json_schema": schema}
+            effective_max_tokens = custom_max_tokens or 200
+            
+            estimate = None
+            if self._cost_calculator:
+                try:
+                    estimate = self._cost_calculator.estimate_from_messages(
+                        messages, model, effective_max_tokens
+                    )
+                except Exception:
+                    pass
             
             response = self._openrouter_request(
                 messages,
                 model=model,
                 response_format=response_format,
-                max_tokens=200
+                max_tokens=effective_max_tokens
             )
             
             if response.get('choices'):
                 content = response['choices'][0].get('message', {}).get('content', '')
                 result = _safe_json_loads(content)
                 if result and "sparte" in result:
+                    usage = response.get('usage', {})
+                    result['_usage'] = usage
+                    result['_raw_response'] = content
+                    result['_prompt_text'] = prompt
+                    
+                    server_cost = response.get('_cost', {})
+                    result['_server_cost_usd'] = float(server_cost.get('real_cost_usd', 0))
+                    result['_provider'] = server_cost.get('provider', 'unknown')
+                    
+                    if self._cost_calculator and usage:
+                        try:
+                            real = self._cost_calculator.calculate_real_cost(usage, model)
+                            result['_estimated_cost_usd'] = estimate.estimated_cost_usd if estimate else None
+                            result['_real_cost_usd'] = real.real_cost_usd
+                        except Exception:
+                            pass
+                    
                     return result
                 
         except Exception as e:

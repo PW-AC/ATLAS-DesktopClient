@@ -1,0 +1,985 @@
+ich will eine geschäftsführer ebene haben mit einer mitarbeiter verwaltung- und einem Guten Provisionsmanagement system, ich habe die listen der Versicherungs provisionen und kann immer wieder auszüge aus xempus advisor - unserem beratungstool mit angebots berechnung , offenen beratungen und abgeschlossenen + vsnr nummer
+
+Gut.
+Du willst raus aus „wir werten Listen aus“ – hin zu echter Steuerung auf Geschäftsführerebene mit sauberer Mitarbeiterverwaltung + belastbarem Provisionssystem.
+
+Ich gehe strukturiert vor.
+
+1️⃣ Zielbild – was du eigentlich brauchst
+
+Du brauchst drei Ebenen:
+
+A) Geschäftsführerebene (Controlling & Steuerung)
+
+Gesamtprovisionen
+
+Umsatz pro Mitarbeiter
+
+Bestand vs. Neugeschäft
+
+Stornoquote
+
+Offene Beratungen vs. Abschlüsse
+
+Forecast
+
+B) Mitarbeiterverwaltung
+
+Mitarbeiterstammdaten
+
+Hierarchien (GF → Teamleiter → Berater)
+
+Provisionsvereinbarungen
+
+individuelle Splits
+
+Zielvorgaben
+
+C) Provisions-Engine
+
+Einlesen von:
+
+Versicherer-Provisionslisten (BiPRO 300xxx → Courtage)
+
+Xempus Advisor Exporte (Angebote, offene Beratungen, Abschlüsse, VSNR)
+
+Matching:
+
+VSNR
+
+Name
+
+Geburtsdatum (wenn vorhanden)
+
+Automatische Berechnung:
+
+Fixprovision
+
+Staffel
+
+Split
+
+Storno-Rückbelastung
+
+Team-Beteiligung
+
+2️⃣ Datenquellen sauber definieren
+
+Du hast aktuell:
+
+🟠 Versicherer-Provisionslisten
+
+→ Real gezahlte Courtage
+→ enthalten VSNR + Betrag + Datum
+
+🔵 Xempus Advisor
+
+→ Angebotsphase
+→ Offene Beratungen
+→ Abgeschlossene Verträge
+→ VSNR vorhanden
+
+Das ist perfekt.
+
+Das Problem ist nicht die Datenlage.
+Das Problem ist: keine zentrale Provisions-Logik dahinter.
+
+3️⃣ Architektonisch sinnvoller Weg (für ATLAS)
+
+ATLAS ist bereits:
+
+Dokumentenarchiv
+
+BiPRO-Abruf
+
+Courtage-Box
+
+GDV-Editor
+
+Admin-Panel
+
+Activity-Logging
+
+Rollen & Permissions
+
+Du musst kein neues Tool bauen.
+
+Du brauchst ein neues Modul:
+
+📦 Neues Modul: „ACENCIA ATLAS – Provisionsmanagement“
+Modul 1: Mitarbeiterverwaltung
+
+Struktur:
+
+Mitarbeiter
+- ID
+- Rolle (GF / TL / Berater)
+- Provisionsmodell
+- Fixum
+- Split-Regeln
+- Team-Zuordnung
+- Aktiv / Inaktiv
+
+
+Optional:
+
+Provisionsvertrag als PDF anhängen
+
+Historisierung bei Änderungen
+
+Modul 2: Vertrags-Mapping
+
+System muss:
+
+VSNR aus Xempus speichern
+
+VSNR aus Courtage-Liste speichern
+
+Automatisch matchen
+
+Status vergeben:
+
+Angebot
+Offen
+Abgeschlossen
+Provision erhalten
+Provision fehlt
+Storniert
+Rueckbelastung
+
+
+Das ist dein Kern.
+
+Modul 3: Provisionsengine
+
+Beispielregeln:
+
+Leben 4% AP + 1% BP
+
+Kranken 6% AP
+
+Sach 20% vom Jahresnetto
+
+Staffel ab 100.000 €
+
+Teamleiter 5% Override
+
+GF 2% Override
+
+Diese Regeln dürfen NICHT hart codiert sein.
+
+Sie müssen:
+
+als Tabelle konfigurierbar sein
+
+versioniert sein
+
+historisiert sein
+
+4️⃣ Geschäftsführerebene – was dort sichtbar sein muss
+
+Dashboard:
+
+Gesamtprovision Monat
+
+YTD
+
+Prognose
+
+Top Performer
+
+Unter Plan
+
+Stornoquote
+
+Offene Beratungen ohne Abschluss
+
+Abschluss ohne Provisionseingang
+
+Provision ohne Xempus-Abschluss (Fehler!)
+
+Das ist echte Kontrolle.
+
+5️⃣ Technische Umsetzung (realistisch für dein System)
+
+Du arbeitest mit:
+
+Python Desktop
+
+Strato MySQL
+
+PHP API
+
+Already bestehende Tabellenstruktur
+
+Activity-Log vorhanden
+
+Rollenmodell vorhanden
+
+Du brauchst:
+
+Neue Tabellen:
+employees
+commission_models
+commission_rules
+contracts (zentrale Vertragstabelle!)
+commission_entries
+commission_payouts
+commission_splits
+
+
+Wichtig:
+→ Verträge dürfen nicht nur in Xempus oder nur in GDV existieren
+→ Du brauchst eine zentrale Vertragsentität
+
+6️⃣ Kritische Wahrheit
+
+Solange du nur Excel-Listen auswertest:
+
+Keine saubere Historie
+
+Keine automatische Stornoerkennung
+
+Keine Forecast-Logik
+
+Keine saubere Split-Verteilung
+
+Keine Revision
+
+Das ist Spielerei.
+
+Wenn du es richtig willst, musst du:
+
+→ VSNR als Primärschlüssel etablieren
+→ Jede Provision einem Vertrag + Mitarbeiter zuordnen
+→ Jede Änderung historisieren
+
+7️⃣ Entscheidende Frage (bevor ich weiter plane)
+
+Willst du:
+
+A) Nur internes Controlling-Tool
+oder
+B) Ein System, das später auch extern / SaaS-fähig wäre?
+
+Das ändert die Architektur massiv.
+
+8️⃣ Nächster Schritt
+
+Bevor ich dir einen kompletten Architekturplan hinlege:
+
+Sag mir:
+
+Wie viele Mitarbeiter sind realistisch?
+
+Gibt es Teamleiter?
+
+Gibt es unterschiedliche Provisionsmodelle?
+
+Gibt es Split-Geschäft (z.B. 50/50)?
+
+Soll Xempus regelmäßig automatisch importiert werden oder manuell?
+
+Antwort kurz.
+Dann gehen wir sauber und strukturiert weiter.
+
+Backup Uwe Weimert 20260213 144303ArbG
+
+Kopie VU Provisionsdaten
+
+Visualisierung konnte nicht angezeigt werden
+ich will eine geschäftsführer ebene haben mit einer mitarbeiter verwaltung- und einem Guten Provisionsmanagement system, ich habe die listen der Versicherungs provisionen und kann immer wieder auszüge aus xempus advisor - unserem beratungstool mit angebots berechnung , offenen beratungen und abgeschlossenen + vsnr nummer
+
+Perfekt. Du hast genau das, was man braucht, um es richtig aufzubauen:
+
+✅ Versicherer-Provisionslisten
+
+✅ Xempus Advisor Exporte (Angebot / offen / abgeschlossen + VSNR)
+
+✅ VSNR als gemeinsamer Schlüssel
+
+Das reicht für ein sauberes, professionelles System.
+
+Jetzt gehen wir Schritt für Schritt – ohne Overengineering.
+
+1️⃣ Zielbild (klar und kompromisslos)
+
+Du willst:
+
+👑 Geschäftsführerebene
+
+Gesamtprovisionen
+
+Umsatz je Mitarbeiter
+
+Offene Beratungen vs. echte Abschlüsse
+
+Provision erhalten vs. Provision fehlt
+
+Storno / Rückbelastung
+
+Forecast
+
+👥 Mitarbeiterverwaltung
+
+Mitarbeiter anlegen
+
+Provisionsmodell je Mitarbeiter
+
+Hierarchie (GF → Teamleiter → Berater)
+
+Split-Regeln
+
+💰 Provisionsmanagement
+
+Automatisches Matching:
+
+VSNR aus Xempus
+
+VSNR aus Versicherer-Provisionsliste
+
+Statuslogik
+
+Split-Berechnung
+
+Historie
+
+Das ist kein Excel-Problem mehr. Das ist eine Datenmodell-Frage.
+
+2️⃣ Architektur – minimal, aber professionell
+
+Du brauchst eine zentrale Vertragslogik.
+
+Nicht:
+
+„Xempus-Vertrag“
+
+„Provisionsdatensatz“
+
+Sondern:
+
+🔑 Zentrale Vertragstabelle
+contract_id
+vsnr
+kunde
+berater_id
+status
+beitrag
+abschlussdatum
+quelle (xempus / manuell)
+
+
+Dann:
+
+💸 Provisionstabelle
+commission_id
+contract_id
+versicherer
+provisionsbetrag
+provisionsdatum
+art (AP / BP / Rückbelastung)
+quelle (VU-Liste)
+
+
+Und:
+
+👥 Mitarbeiter
+employee_id
+name
+rolle (GF / TL / Berater)
+provisionsmodell_id
+teamleiter_id
+aktiv
+
+3️⃣ Matching-Logik (Herzstück)
+
+Beim Import:
+
+Schritt 1 – Xempus-Import
+
+Vertrag mit VSNR speichern
+
+Status = Angebot / Offen / Abgeschlossen
+
+Schritt 2 – Versicherer-Provisionsliste
+
+VSNR einlesen
+
+Prüfen: existiert Vertrag?
+
+Ja → Provision zuordnen
+
+Nein → „Provision ohne Vertrag“ markieren
+
+4️⃣ Status-Matrix (wichtig!)
+Xempus	Provision	Ergebnis
+Angebot	Nein	Pipeline
+Abgeschlossen	Nein	⚠ Provision fehlt
+Abgeschlossen	Ja	✅ OK
+Storniert	Rückbelastung	🔴 Storno korrekt
+Kein Xempus	Ja	⚠ Datenfehler
+
+Das ist Geschäftsführer-Level-Kontrolle.
+
+5️⃣ Geschäftsführerdashboard (konkret)
+
+Du brauchst keine Spielerei. Du brauchst:
+
+Provision Monat
+
+Provision YTD
+
+Provision je Mitarbeiter
+
+Offene Provisionen (Abschluss ohne Zahlung)
+
+Stornoquote
+
+Forecast (offene Beratungen * Durchschnittsprovision)
+
+Mehr nicht.
+
+Alles andere ist Deko.
+
+6️⃣ Jetzt wichtig – deine Realität klären
+
+Bevor ich dir ein vollständiges System-Design gebe, muss ich verstehen:
+
+Wie viele Mitarbeiter?
+
+Gibt es Teamleiter-Struktur?
+
+Haben Mitarbeiter unterschiedliche Provisionsmodelle?
+
+Gibt es Splits (z.B. 50/50 bei Gemeinschaftsgeschäft)?
+
+Kommen Rückbelastungen als separate Position in der VU-Liste?
+
+Sind die Xempus-Exporte immer im gleichen Format?
+
+Antwort mir das kurz strukturiert.
+
+7️⃣ Technischer nächster Schritt
+
+Du hast zwei Dateien hochgeladen:
+
+Backup_Uwe Weimert_20260213 144303.xlsx
+
+kopie-VU_Provisionsdaten.xlsx
+
+Wenn du willst, analysiere ich:
+
+Struktur
+
+Spaltenlogik
+
+Matching-Fähigkeit
+
+Datenqualität
+
+Typische Fehlerquellen
+
+Dann bauen wir es realistisch auf – nicht theoretisch.
+
+Sag mir:
+
+👉 Soll ich die beiden Dateien jetzt technisch analysieren und dir eine klare Struktur empfehlen?
+
+13 mitarbeiter davon 3-5 consulter, 1 teamleiter. ja gibt teamleeeiter struktur. Haben Mitarbeiter unterschiedliche Provisionsmodelle ja also verschiedene prozente aber richtige modelle eigemntlich nur vertriebsleiter halt. keine gemeinschaftskonzepte. ja extra position. ja xempus immer gleiches format . analysiere:
+
+Struktur
+
+Spaltenlogik
+
+Matching-Fähigkeit
+
+Datenqualität
+
+Typische Fehlerquellen
+
+Dann bauen wir es realistisch auf – nicht theoretisch.
+
+Gut. Jetzt wird es konkret.
+Ich sage dir ehrlich, was ich sehe – und was das für dein System bedeutet.
+
+🔎 1️⃣ STRUKTUR-ANALYSE
+📘 Datei 1 – Xempus-Export
+
+115 Zeilen, 9 Spalten
+
+Spalten:
+
+Name
+
+Straße
+
+PLZ
+
+Ort
+
+IBAN
+
+BIC
+
+Tarif-Info
+
+Zuschuss-Info
+
+ID
+
+⚠️ Kritischer Punkt:
+
+→ Es gibt keine VSNR-Spalte
+→ Kein Vertragsstatus
+→ Kein Abschlussdatum
+→ Keine Beitragsdaten
+→ Kein Vermittler
+
+Das ist kein vollständiger Vertriebs-Export.
+Das ist ein Stammdaten-/Beratungs-Export.
+
+Damit kannst du aktuell KEIN sauberes Matching machen.
+
+📙 Datei 2 – VU-Provisionsdaten
+
+15.433 Zeilen, 42 Spalten
+
+Wichtige Spalten:
+
+Neue / zuletzt gültige VSNR ✅
+
+Provisions-Betrag ✅
+
+Provisions-basissumme
+
+Art (AP / BP / Rückbelastung vermutlich)
+
+Auszahlungs-datum
+
+Versicherungsnehmer
+
+Versicherte Person
+
+Vermittler
+
+Vermittler-Courtage (kompl. Struktur 19,4%)
+
+Das ist brauchbar.
+
+Hier steckt alles drin, was wir brauchen.
+
+🔗 2️⃣ MATCHING-FÄHIGKEIT
+Aktuell:
+❌ Xempus-Datei hat keine VSNR
+✅ VU-Datei hat VSNR
+
+Das heißt:
+
+Du kannst momentan nicht automatisch matchen.
+
+🧨 3️⃣ DATENQUALITÄT
+Xempus
+
+IBAN/BIC zu 87% leer
+
+Keine numerischen Felder
+
+Alles Text
+
+Keine Status-Info
+
+Diese Datei reicht NICHT für Provisionsmanagement.
+
+Du brauchst einen anderen Export aus Xempus:
+
+VSNR
+
+Status (offen / abgeschlossen)
+
+Abschlussdatum
+
+Beitrag
+
+Berater
+
+Ohne das ist es blindes Raten.
+
+VU-Datei
+
+Sehr gute Basis.
+
+Aber typische Risiken:
+
+Mehrfachprovisionen pro VSNR (AP + BP + Nachträge)
+
+Rückbelastungen als negative Beträge
+
+Alt-VSNR vs. neue VSNR
+
+Leere Vermittler-Spalte
+
+Ratenzahlungen (Ratenanzahl / Raten-Nummer)
+
+Das muss in der Engine berücksichtigt werden.
+
+🧠 4️⃣ TYPISCHE FEHLERQUELLEN
+
+Hier wird es wichtig.
+
+1️⃣ VSNR-Wechsel
+
+Spalte:
+"Neue / zuletzt gültige VSNR"
+
+→ Wenn Versicherer umnummeriert, bekommst du Dubletten
+
+Lösung:
+VSNR-Historientabelle
+
+2️⃣ Ratenprovisionen
+
+Ratenanzahl / Raten-Nummer
+
+→ Sonst zählst du Provision doppelt oder falsch
+
+3️⃣ Rückbelastungen
+
+Art-Spalte prüfen
+
+→ Muss als negative Provision verbucht werden
+
+4️⃣ Mehrere Vermittler
+
+Spalte:
+Vermittler
+Vermittler2
+Herkunft (Vermittler)
+
+→ Split-Logik muss sauber definiert werden
+
+🏗 5️⃣ REALISTISCHE SYSTEM-ENTSCHEIDUNG
+
+Bevor wir irgendwas bauen:
+
+Du brauchst zwingend einen anderen Xempus-Export.
+
+Der muss enthalten:
+
+VSNR
+
+Status
+
+Abschlussdatum
+
+Beitrag
+
+Berater
+
+Produktart
+
+Ohne das kannst du kein GF-System bauen.
+
+🎯 6️⃣ Jetzt meine klare Empfehlung
+
+Schritt 1:
+Hol dir aus Xempus den vollständigen Vertrags-Export.
+
+Schritt 2:
+Wir definieren eine zentrale Vertragstabelle.
+
+Schritt 3:
+Wir bauen eine Provisions-Engine:
+
+AP
+
+BP
+
+Rückbelastung
+
+Staffel
+
+Override Teamleiter
+
+GF Override
+
+🔥 Jetzt eine wichtige Frage
+
+Ist das wirklich der vollständige Xempus-Export?
+
+Oder hast du noch eine andere Datei mit:
+
+VSNR
+
+Abschluss
+
+Status
+
+Berater
+
+Weil wenn das alles ist, dann sage ich dir offen:
+
+→ Damit kann man kein echtes Provisionsmanagement bauen.
+
+Schick mir ggf. den richtigen Export – dann gehen wir richtig rein. 
+
+Backup Uwe Weimert 20260213 144303ArbG
+die xempus liste hat mehrere bläter!!!!!!!
+
+Sehr gut. Jetzt reden wir auf einem ganz anderen Niveau.
+
+Du hattest recht – das Entscheidende Blatt ist:
+
+🔥 Sheet: „Beratungen“
+
+17.695 Zeilen
+62 Spalten
+Und hier steckt alles, was wir brauchen.
+
+1️⃣ STRUKTUR – Xempus „Beratungen“
+
+Wichtige Spalten:
+
+Versicherungsscheinnummer ✅ (das ist deine VSNR!)
+
+Status ✅
+
+Beratungsdatum
+
+Beginn
+
+Gesamtbeitrag ✅
+
+Versicherer ✅
+
+Typ
+
+Durchführungsweg
+
+Tarif
+
+Berater ✅
+
+Datum Entscheidung
+
+Datum Antragsdokument
+
+Das ist exakt die Struktur, die wir für ein professionelles System brauchen.
+
+2️⃣ MATCHING-FÄHIGKEIT – Jetzt realistisch bewerten
+
+VU-Datei:
+
+Neue / zuletzt gültige VSNR
+
+Xempus:
+
+Versicherungsscheinnummer
+
+➡ Wenn diese beiden Felder identisch sind → 100% sauberes Matching möglich.
+
+Das ist sauber.
+
+3️⃣ DATENQUALITÄT
+Xempus Beratungen
+
+Stärken:
+
+VSNR vorhanden
+
+Berater vorhanden
+
+Status vorhanden
+
+Beitrag vorhanden
+
+Versicherer vorhanden
+
+Datum Entscheidung vorhanden
+
+Schwächen:
+
+Einige technische Leerspalten (Unnamed)
+
+Elektronische Übermittlung leer
+
+Status vermutlich nicht normiert (muss geprüft werden)
+
+Aber insgesamt:
+Sehr gute Datenbasis.
+
+VU-Provisionsdaten
+
+Stärken:
+
+VSNR vorhanden
+
+Provisionsbetrag
+
+Auszahlungsdatum
+
+Art (AP/BP/Rückbelastung)
+
+Vermittler
+
+Risiken:
+
+Mehrfachprovisionen
+
+Raten
+
+Umnummerierung
+
+Rückbelastungen
+
+Aber insgesamt:
+Professionelle Provisionsliste.
+
+4️⃣ TYPISCHE FEHLERQUELLEN (jetzt praxisnah)
+1️⃣ Status-Problem
+
+Wenn Xempus „Abgeschlossen“ sagt,
+aber keine Provision kommt → Alarm
+
+2️⃣ VSNR-Änderung
+
+VU nutzt „Neue / zuletzt gültige VSNR“
+Xempus evtl. alte VSNR
+
+→ Du brauchst eine VSNR-Mapping-Tabelle
+
+3️⃣ Ratenprovision
+
+Wenn Ratenanzahl > 1
+→ darf nicht als Gesamt-AP gezählt werden
+
+4️⃣ Rückbelastung
+
+Art prüfen
+Negativ buchen
+Vertrag auf „Storno“ setzen
+
+5️⃣ Berater-Zuordnung
+
+Xempus hat „Berater“
+VU-Datei hat „Vermittler“
+
+Diese beiden Felder müssen gemappt werden.
+Sonst stimmt deine Mitarbeiter-Provision nicht.
+
+5️⃣ REALISTISCHE SYSTEM-ARCHITEKTUR (angepasst an deine Realität)
+
+Du hast:
+
+13 Mitarbeiter
+
+1 Teamleiter
+
+3–5 Consulter
+
+Unterschiedliche Prozente
+
+Keine Gemeinschaftsgeschäfte
+
+Rückbelastungen separat
+
+Das ist perfekt strukturiert.
+
+🔷 Zentrale Tabellen (minimal aber professionell)
+contracts
+
+vsnr
+
+versicherer
+
+beitrag
+
+berater
+
+status
+
+beginn
+
+entscheidungsdatum
+
+commissions
+
+vsnr
+
+provisionsbetrag
+
+auszahlungsdatum
+
+art (AP/BP/Rückbelastung)
+
+rate_nr
+
+rate_anzahl
+
+employees
+
+name
+
+rolle
+
+provisionsmodell
+
+teamleiter_id
+
+commission_rules
+
+produktart
+
+ap_prozent
+
+bp_prozent
+
+override_teamleiter
+
+override_gf
+
+6️⃣ Geschäftsführerebene – was du damit bekommst
+
+Automatisch berechenbar:
+
+Provision je Mitarbeiter
+
+Override Teamleiter
+
+GF Override
+
+Offene Provisionen
+
+Stornoquote
+
+Abschlussquote
+
+Pipeline-Wert
+
+Forecast
+
+Und das ohne Excel-Chaos.
+
+7️⃣ Ehrliche Einschätzung
+
+Mit diesen beiden Datenquellen kannst du ein echtes, sauberes Provisionssystem bauen.
+
+Nicht theoretisch.
+Sondern real.
+
+8️⃣ Jetzt der nächste strategische Schritt
+
+Bevor wir anfangen zu bauen, klären wir:
+
+Wie viele unterschiedliche Provisionsmodelle gibt es real?
+
+Sind die Prozente abhängig von Produktart?
+
+Gibt es Staffelmodelle (ab Umsatz X mehr %)?
+
+Bekommen Teamleiter Override auf alles oder nur auf Team?
+
+Bekommt GF Override auf alles?
+
+Antwort das bitte strukturiert.
+
+Dann baue ich dir die konkrete Engine-Logik – exakt passend zu deinem Unternehmen

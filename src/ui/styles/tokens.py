@@ -104,13 +104,15 @@ FONT_HEADLINE = '"Tenor Sans", "Segoe UI", -apple-system, sans-serif'
 FONT_BODY = '"Open Sans", "Segoe UI", -apple-system, sans-serif'
 FONT_MONO = '"Cascadia Code", "Consolas", monospace'
 
-# Font-Größen
-FONT_SIZE_H1 = "20px"
-FONT_SIZE_H2 = "16px"
-FONT_SIZE_H3 = "14px"
-FONT_SIZE_BODY = "13px"
-FONT_SIZE_CAPTION = "11px"
-FONT_SIZE_MONO = "12px"
+# Font-Groessen (pt statt px: verhindert QFont::setPointSize(-1) Warnungen)
+# Qt-Stylesheets mit px setzen pixelSize, pointSize() liefert dann -1.
+# Mit pt bleibt pointSize() immer gueltig.
+FONT_SIZE_H1 = "15pt"
+FONT_SIZE_H2 = "12pt"
+FONT_SIZE_H3 = "11pt"
+FONT_SIZE_BODY = "10pt"
+FONT_SIZE_CAPTION = "8pt"
+FONT_SIZE_MONO = "9pt"
 
 # Font-Weights
 FONT_WEIGHT_NORMAL = "400"
@@ -894,7 +896,7 @@ def show_error_dialog(parent, title: str, cause: str, actions: list = None,
     title_label = QLabel(f"⚠ {title}")
     title_label.setStyleSheet(f"""
         font-family: {FONT_HEADLINE};
-        font-size: 16px;
+        font-size: 12pt;
         color: {ERROR};
         font-weight: 500;
     """)

@@ -345,6 +345,9 @@ function loadSettings(): array {
  * }
  */
 function startSendJob(array $payload): void {
+    set_time_limit(300);
+    ignore_user_abort(true);
+
     $data = get_json_body();
 
     $mode             = $data['mode'] ?? null;
@@ -553,6 +556,9 @@ function processChunk(int $jobId, array $payload): void {
  * @return array{status:string, processed:int, remaining:int, errors:string[]}
  */
 function processChunkInternal(int $jobId, array $payload): array {
+    set_time_limit(300);
+    ignore_user_abort(true);
+
     // --- Job laden und pruefen ---
 
     $job = Database::queryOne('SELECT * FROM smartscan_jobs WHERE id = ?', [$jobId]);
