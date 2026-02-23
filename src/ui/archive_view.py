@@ -2462,7 +2462,7 @@ class DuplicateCompareDialog(QDialog):
                 continue
             
             # Download starten
-            from ui.archive_boxes_view import PreviewDownloadWorker
+            from ui.archive.workers import PreviewDownloadWorker
             worker = PreviewDownloadWorker(
                 self._docs_api, doc.id, self._preview_cache_dir,
                 filename=doc.original_filename,

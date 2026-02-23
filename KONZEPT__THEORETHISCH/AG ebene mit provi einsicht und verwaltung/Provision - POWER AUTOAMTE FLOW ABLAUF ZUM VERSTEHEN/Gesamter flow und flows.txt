@@ -1,0 +1,204 @@
+=== MAIN ===
+
+CALL BenutzerDaten
+CALL 'Umsatzmeldeliste Zu prüfende Holen'
+
+=== MAIN ENDE ===
+
+=== BenutzerDaten ===
+
+IF (Folder.IfFolderExists.DoesNotExist Path: $'''C:\\automate''') THEN
+    Folder.Create FolderPath: $'''C:\\''' FolderName: $'''automate''' Folder=> automateordner
+END
+SET Automateordner TO $'''C:\\automate'''
+IF (File.IfFile.Exists File: $'''%automateordner%\\Prov_abr.txt''') THEN
+    File.ReadTextFromFile.ReadText File: $'''%automateordner%\\Prov_abr.txt''' Encoding: File.TextFileEncoding.DefaultEncoding Content=> Pfad_Prov_abr_Grundlage
+ELSE
+    Display.SelectFileDialog.SelectFile Title: $'''Prov abr Grundlage''' IsTopMost: True CheckIfFileExists: False SelectedFile=> Pfad_Prov_abr_Grundlage
+    File.WriteText File: $'''%automateordner%\\Prov_abr.txt''' TextToWrite: Pfad_Prov_abr_Grundlage AppendNewLine: False IfFileExists: File.IfFileExists.Overwrite Encoding: File.FileEncoding.DefaultEncoding
+END
+IF (File.IfFile.Exists File: $'''%automateordner%\\Prov_umsml.txt''') THEN
+    File.ReadTextFromFile.ReadText File: $'''%automateordner%\\Prov_umsml.txt''' Encoding: File.TextFileEncoding.DefaultEncoding Content=> Pfad_umsml
+ELSE
+    Display.SelectFileDialog.SelectFile Title: $'''umsml''' IsTopMost: True CheckIfFileExists: False SelectedFile=> Pfad_umsml
+    File.WriteText File: $'''%automateordner%\\Prov_umsml.txt''' TextToWrite: Pfad_umsml AppendNewLine: False IfFileExists: File.IfFileExists.Overwrite Encoding: File.FileEncoding.DefaultEncoding
+END
+IF (File.IfFile.Exists File: $'''%automateordner%\\Prov_Vu_Daten.txt''') THEN
+    File.ReadTextFromFile.ReadText File: $'''%automateordner%\\Prov_Vu_Daten.txt''' Encoding: File.TextFileEncoding.DefaultEncoding Content=> Pfad_Vu_Daten
+ELSE
+    Display.SelectFileDialog.SelectFile Title: $'''Vu Daten''' IsTopMost: True CheckIfFileExists: False SelectedFile=> Pfad_Vu_Daten
+    File.WriteText File: $'''%automateordner%\\Prov_Vu_Daten.txt''' TextToWrite: Pfad_Vu_Daten AppendNewLine: False IfFileExists: File.IfFileExists.Overwrite Encoding: File.FileEncoding.DefaultEncoding
+END
+**REGION Prüfen ob Vorlage und UsML im selben ordern liegen
+Text.Reverse Text: Pfad_umsml ReversedText=> Pfad_ORDNER_UsML
+Text.Reverse Text: Pfad_Prov_abr_Grundlage ReversedText=> Pfad_ORDNER_Prov_abr_Grundlage
+Text.CropText.CropTextAfterFlag Text: Pfad_ORDNER_Prov_abr_Grundlage FromFlag: $'''\\''' IgnoreCase: False CroppedText=> Pfad_ORDNER_Prov_abr_Grundlage
+Text.CropText.CropTextAfterFlag Text: Pfad_ORDNER_UsML FromFlag: $'''\\''' IgnoreCase: False CroppedText=> Pfad_ORDNER_UsML
+Text.Reverse Text: Pfad_ORDNER_Prov_abr_Grundlage ReversedText=> Pfad_ORDNER_Prov_abr_Grundlage
+Text.Reverse Text: Pfad_ORDNER_UsML ReversedText=> Pfad_ORDNER_UsML
+IF Pfad_ORDNER_UsML = Pfad_ORDNER_Prov_abr_Grundlage THEN
+    # Gleicher Pfad (Vorraussetzung!!)
+    SET Pfad_Ordner_Alle TO Pfad_ORDNER_UsML
+ELSE
+    # Ungleicher Pfad!!!(Makro wird nicht Funktionieren!)
+    EXIT Code: 0 ErrorMessage: $'''Die Vorlage für den Prov abrechner liegt nicht im selben ordern wie die UmsatzmeldeListe ab. Das makro wird nicht korrekt arbeiten können und der Flow scheitert'''
+END
+**ENDREGION
+**REGION Inhalt des Ordners abrufen um Erstellte xlsx zu identifizieren
+Folder.GetFiles Folder: $'''X:\\PROV''' FileFilter: $'''*''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.NoSort SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Files=> Files_Ordner_Alle_Davor
+**ENDREGION
+
+
+=== BenutzerDaten ENDE===
+
+=== Umsatzmeldeliste zu Prüfen holen ===
+
+**REGION Export, Abrechnungsdaten
+Excel.LaunchExcel.LaunchAndOpen Path: Pfad_umsml Visible: True ReadOnly: False LoadAddInsAndMacros: True UseMachineLocale: True Instance=> Excel_UmsML
+Excel.SetActiveWorksheet.ActivateWorksheetByName Instance: Excel_UmsML Name: $'''Meldeliste Consulter'''
+WAIT 2
+Excel.RunMacro Instance: Excel_UmsML Macro: $'''ExportiereProvisionsdaten'''
+Excel.CloseExcel.Close Instance: Excel_UmsML
+**ENDREGION
+WAIT 2
+**REGION Neue Xlsx identifizieren
+Folder.GetFiles Folder: $'''X:\\PROV''' FileFilter: $'''*''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.NoSort SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Files=> Files_Ordner_Alle_Dannach
+Variables.SubtractLists FirstList: Files_Ordner_Alle_Dannach SecondList: Files_Ordner_Alle_Davor OutputList=> Pfad_Abrechner
+SET Pfad_Abrechner TO Pfad_Abrechner[0]
+**ENDREGION
+WAIT 1
+**REGION Abrechnungs xlsx und Vu daten xlsx öffnen und mit suche beginnen
+Excel.LaunchExcel.LaunchAndOpen Path: Pfad_Abrechner Visible: False ReadOnly: False LoadAddInsAndMacros: True UseMachineLocale: True Instance=> Excel_Abrechner
+Excel.LaunchExcel.LaunchAndOpen Path: Pfad_Vu_Daten Visible: True ReadOnly: False LoadAddInsAndMacros: True UseMachineLocale: True Instance=> Excel_VU
+WAIT 1
+Excel.GetFirstFreeColumnRow Instance: Excel_Abrechner FirstFreeColumn=> FirstFreeSpalte_Abrechner FirstFreeRow=> FirstFreeZeile_Abrechner
+Excel.ReadFromExcel.ReadCells Instance: Excel_Abrechner StartColumn: $'''A''' StartRow: 1 EndColumn: FirstFreeSpalte_Abrechner EndRow: FirstFreeZeile_Abrechner GetCellContentsMode: Excel.GetCellContentsMode.PlainText FirstLineIsHeader: True RangeValue=> Data_Excl_Abrechner
+SET Current_ZeilenCounter TO 0
+LOOP FOREACH Current_Zeile_Abrechner IN Data_Excl_Abrechner
+    SET Current_VU_Courtagesatz TO 0
+    SET Current_VU_Auszahlungsdatum TO 0
+    SET Current_VU_GesCourtage TO 0
+    Variables.IncreaseVariable Value: Current_ZeilenCounter IncrementValue: 1
+    SWITCH Current_Zeile_Abrechner[6]
+        CASE IsEmpty()
+            NEXT LOOP
+        CASE Contains($'''Allianz''', True)
+            Excel.SetActiveWorksheet.ActivateWorksheetByName Instance: Excel_VU Name: $'''Allianz'''
+            SET testsuchwer TO Current_Zeile_Abrechner[1]
+            Scripting.RunPowershellScript.RunScript Script: $'''param (
+    [string]$Eingabetext = \"%testsuchwer%\"
+)
+
+# Entferne alle Nicht-Ziffern (also Buchstaben, Leerzeichen, Sonderzeichen etc.)
+$NurZahlen = ($Eingabetext -replace \'[^\\d]\', \'\')
+
+# Gib das Ergebnis zurück
+Write-Output $NurZahlen
+''' ScriptOutput=> testsuchwer
+            Text.Trim Text: testsuchwer TrimOption: Text.TrimOption.Both TrimmedText=> testsuchwer
+            Excel.FindAndReplace.FindAll Instance: Excel_VU TextToFind: testsuchwer MatchCase: False MatchEntireCellContents: False SearchBy: Excel.SearchOrder.Rows Cells=> Current_GefZeilen
+            LABEL 'ALLIANZ Neu suche'
+            IF IsEmpty(Current_GefZeilen) THEN
+                # Vertrag nicht gefunden
+                NEXT LOOP
+            END
+            IF Current_GefZeilen.RowsCount = 1 THEN
+                SET Current_GefZeile TO Current_GefZeilen[0][1]
+            ELSE
+                Variables.SortDataTable.SortWithColumnIndex DataTable: Current_GefZeilen ColumnIndex: 1 Order: Variables.SortDirection.Descending
+                SET Current_GefZeile TO Current_GefZeilen[0][1]
+            END
+            Excel.ActivateCellInExcel.ActivateCell Instance: Excel_VU Column: $'''a''' Row: Current_GefZeile
+            Excel.ReadFromExcel.ReadCell Instance: Excel_VU StartColumn: $'''K''' StartRow: Current_GefZeile GetCellContentsMode: Excel.GetCellContentsMode.PlainText CellValue=> Current_VU_Courtagesatz
+            Text.Trim Text: Current_VU_Courtagesatz TrimOption: Text.TrimOption.Both TrimmedText=> Current_VU_Courtagesatz
+            IF Current_VU_Courtagesatz < 20 THEN
+                # Courtagesatz liegt unter 20
+                Variables.DeleteRowFromDataTable DataTable: Current_GefZeilen RowIndex: 0
+                GOTO 'ALLIANZ Neu suche'
+                DISABLE NEXT LOOP
+            END
+            Excel.ReadFromExcel.ReadCell Instance: Excel_VU StartColumn: $'''G''' StartRow: Current_GefZeile GetCellContentsMode: Excel.GetCellContentsMode.PlainText CellValue=> Current_VU_Auszahlungsdatum
+            Text.Trim Text: Current_VU_Auszahlungsdatum TrimOption: Text.TrimOption.Both TrimmedText=> Current_VU_Auszahlungsdatum
+            Excel.ReadFromExcel.ReadCell Instance: Excel_VU StartColumn: $'''D''' StartRow: Current_GefZeile GetCellContentsMode: Excel.GetCellContentsMode.PlainText CellValue=> Current_VU_GesCourtage
+            Text.Trim Text: Current_VU_GesCourtage TrimOption: Text.TrimOption.Both TrimmedText=> Current_VU_GesCourtage
+        CASE Contains($'''Swiss Life''', True)
+            Excel.SetActiveWorksheet.ActivateWorksheetByName Instance: Excel_VU Name: $'''SwissLife'''
+            SET testsuchwer TO Current_Zeile_Abrechner[1]
+            Scripting.RunPowershellScript.RunScript Script: $'''param (
+    [string]$Eingabetext = \"%testsuchwer%\"
+)
+
+# Entferne alle Nicht-Ziffern (also Buchstaben, Leerzeichen, Sonderzeichen etc.)
+$NurZahlen = ($Eingabetext -replace \'[^\\d]\', \'\')
+
+# Gib das Ergebnis zurück
+Write-Output $NurZahlen
+''' ScriptOutput=> testsuchwer
+            Text.Trim Text: testsuchwer TrimOption: Text.TrimOption.Both TrimmedText=> testsuchwer
+            Text.SplitText.SplitAtNumberOfCharacters Text: testsuchwer SplitInterval: 5 Result=> TextList
+            SET testsuchwer TO $'''%TextList[0]%/%TextList[1]%'''
+            Excel.FindAndReplace.FindAll Instance: Excel_VU TextToFind: testsuchwer MatchCase: False MatchEntireCellContents: False SearchBy: Excel.SearchOrder.Rows Cells=> Current_GefZeilen
+            IF IsEmpty(Current_GefZeilen) THEN
+                # Vertrag nicht gefunden
+                NEXT LOOP
+            END
+            IF Current_GefZeilen.RowsCount = 1 THEN
+                SET Current_GefZeile TO Current_GefZeilen[0][1]
+            ELSE
+                Variables.SortDataTable.SortWithColumnIndex DataTable: Current_GefZeilen ColumnIndex: 1 Order: Variables.SortDirection.Descending
+                SET Current_GefZeile TO Current_GefZeilen[0][1]
+            END
+            Excel.ActivateCellInExcel.ActivateCell Instance: Excel_VU Column: $'''a''' Row: Current_GefZeile
+            Excel.ReadFromExcel.ReadCell Instance: Excel_VU StartColumn: $'''C''' StartRow: Current_GefZeile GetCellContentsMode: Excel.GetCellContentsMode.PlainText CellValue=> Current_VU_Auszahlungsdatum
+            Text.Trim Text: Current_VU_Auszahlungsdatum TrimOption: Text.TrimOption.Both TrimmedText=> Current_VU_Auszahlungsdatum
+            Excel.ReadFromExcel.ReadCell Instance: Excel_VU StartColumn: $'''N''' StartRow: Current_GefZeile GetCellContentsMode: Excel.GetCellContentsMode.PlainText CellValue=> Current_VU_GesCourtage
+            Text.Trim Text: Current_VU_GesCourtage TrimOption: Text.TrimOption.Both TrimmedText=> Current_VU_GesCourtage
+        CASE Contains($'''Volkswohlbund''', True)
+            Excel.SetActiveWorksheet.ActivateWorksheetByName Instance: Excel_VU Name: $'''VB'''
+            SET testsuchwer TO Current_Zeile_Abrechner[1]
+            Scripting.RunPowershellScript.RunScript Script: $'''param (
+    [string]$Eingabetext = \"%testsuchwer%\"
+)
+
+# Entferne alle Nicht-Ziffern (also Buchstaben, Leerzeichen, Sonderzeichen etc.)
+$NurZahlen = ($Eingabetext -replace \'[^\\d]\', \'\')
+
+# Gib das Ergebnis zurück
+Write-Output $NurZahlen
+''' ScriptOutput=> testsuchwer
+            Text.Trim Text: testsuchwer TrimOption: Text.TrimOption.Both TrimmedText=> testsuchwer
+            Excel.FindAndReplace.FindAll Instance: Excel_VU TextToFind: testsuchwer MatchCase: False MatchEntireCellContents: False SearchBy: Excel.SearchOrder.Rows Cells=> Current_GefZeilen
+            IF IsEmpty(Current_GefZeilen) THEN
+                # Vertrag nicht gefunden
+                NEXT LOOP
+            END
+            IF Current_GefZeilen.RowsCount = 1 THEN
+                SET Current_GefZeile TO Current_GefZeilen[0][1]
+            ELSE
+                Variables.SortDataTable.SortWithColumnIndex DataTable: Current_GefZeilen ColumnIndex: 1 Order: Variables.SortDirection.Descending
+                SET Current_GefZeile TO Current_GefZeilen[0][1]
+            END
+            Excel.ActivateCellInExcel.ActivateCell Instance: Excel_VU Column: $'''a''' Row: Current_GefZeile
+            Excel.ReadFromExcel.ReadCell Instance: Excel_VU StartColumn: $'''AR''' StartRow: Current_GefZeile GetCellContentsMode: Excel.GetCellContentsMode.PlainText CellValue=> Current_VU_Auszahlungsdatum
+            Text.Trim Text: Current_VU_Auszahlungsdatum TrimOption: Text.TrimOption.Both TrimmedText=> Current_VU_Auszahlungsdatum
+            Excel.ReadFromExcel.ReadCell Instance: Excel_VU StartColumn: $'''O''' StartRow: Current_GefZeile GetCellContentsMode: Excel.GetCellContentsMode.PlainText CellValue=> Current_VU_GesCourtage
+            Text.Trim Text: Current_VU_GesCourtage TrimOption: Text.TrimOption.Both TrimmedText=> Current_VU_GesCourtage
+        DEFAULT
+            NEXT LOOP
+    END
+    Variables.ModifyDataTableItem DataTable: Data_Excl_Abrechner ColumnNameOrIndex: 20 RowIndex: Current_ZeilenCounter - 1 Value: Current_VU_Auszahlungsdatum
+    Variables.ModifyDataTableItem DataTable: Data_Excl_Abrechner ColumnNameOrIndex: 22 RowIndex: Current_ZeilenCounter - 1 Value: Current_VU_GesCourtage
+END
+Excel.CloseExcel.Close Instance: Excel_VU
+Excel.ClearCellsFromExcel.ClearCells Instance: Excel_Abrechner StartColumn: $'''A''' StartRow: 2 EndColumn: FirstFreeSpalte_Abrechner EndRow: FirstFreeZeile_Abrechner
+DISABLE Excel.PasteCellsToExcel.PasteAt Instance: Excel_Abrechner Column: $'''A''' Row: 2
+Excel.WriteToExcel.WriteCell Instance: Excel_Abrechner Value: Data_Excl_Abrechner Column: $'''A''' Row: 2
+Excel.CloseExcel.CloseAndSave Instance: Excel_Abrechner
+Excel.LaunchExcel.LaunchAndOpenUnderExistingProcess Path: Pfad_Abrechner Visible: True ReadOnly: False UseMachineLocale: False Instance=> Excel_Abrechner
+**ENDREGION
+
+
+=== Umsatzmeldeliste zu Prüfen holen ENDE ===
+
+
+

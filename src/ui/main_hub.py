@@ -146,6 +146,35 @@ class DropUploadWorker(QThread):
         if self._executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
 
+    def _prepare_single_file(self, fp, jobs, api_client):
+        """Bereitet eine Einzeldatei vor: Bild→PDF-Konvertierung + PDF-Unlock.
+        
+        Bei Bilddateien: konvertiertes PDF wird als Job hinzugefuegt,
+        Original als Roh-Archiv-Job. Bei allen anderen: unlock + Job.
+        """
+        from services.pdf_unlock import unlock_pdf_if_needed
+        from services.image_converter import is_image_file, convert_image_to_pdf
+
+        if is_image_file(fp):
+            import tempfile as _tf
+            td = _tf.mkdtemp(prefix="atlas_img_")
+            self._temp_dirs.append(td)
+            import os
+            base = os.path.splitext(os.path.basename(fp))[0]
+            pdf_out = os.path.join(td, base + '.pdf')
+            pdf_path = convert_image_to_pdf(fp, pdf_out)
+            if pdf_path:
+                jobs.append((pdf_path, None))  # konvertiertes PDF -> Eingangsbox
+                jobs.append((fp, 'roh'))        # Original-Bild -> Roh-Archiv
+            else:
+                jobs.append((fp, None))  # Fallback: Bild direkt hochladen
+        else:
+            try:
+                unlock_pdf_if_needed(fp, api_client=api_client)
+            except ValueError as e:
+                logger.warning(str(e))
+            jobs.append((fp, None))
+
     def _expand_all_files(self, file_paths):
         """Phase 1: Entpackt alle ZIPs/MSGs rekursiv und liefert flache Upload-Job-Liste.
         
@@ -156,7 +185,6 @@ class DropUploadWorker(QThread):
         import tempfile
         from services.msg_handler import is_msg_file, extract_msg_attachments
         from services.zip_handler import is_zip_file, extract_zip_contents
-        from services.pdf_unlock import unlock_pdf_if_needed
 
         jobs = []  # (path, box_type)
 
@@ -167,7 +195,6 @@ class DropUploadWorker(QThread):
                 zr = extract_zip_contents(fp, td, api_client=self.api_client)
                 if zr.error:
                     self._errors.append((Path(fp).name, zr.error))
-                    # ZIP trotzdem ins Roh-Archiv
                     jobs.append((fp, 'roh'))
                     continue
                 for ext in zr.extracted_paths:
@@ -178,18 +205,10 @@ class DropUploadWorker(QThread):
                             self._errors.append((Path(ext).name, mr.error))
                         else:
                             for att in mr.attachment_paths:
-                                try:
-                                    unlock_pdf_if_needed(att, api_client=self.api_client)
-                                except ValueError as e:
-                                    logger.warning(str(e))
-                                jobs.append((att, None))
+                                self._prepare_single_file(att, jobs, self.api_client)
                         jobs.append((ext, 'roh'))  # MSG -> roh
                     else:
-                        try:
-                            unlock_pdf_if_needed(ext, api_client=self.api_client)
-                        except ValueError as e:
-                            logger.warning(str(e))
-                        jobs.append((ext, None))
+                        self._prepare_single_file(ext, jobs, self.api_client)
                 jobs.append((fp, 'roh'))  # ZIP -> roh
 
             elif is_msg_file(fp):
@@ -207,26 +226,14 @@ class DropUploadWorker(QThread):
                             self._errors.append((Path(att).name, zr.error))
                         else:
                             for ext in zr.extracted_paths:
-                                try:
-                                    unlock_pdf_if_needed(ext, api_client=self.api_client)
-                                except ValueError as e:
-                                    logger.warning(str(e))
-                                jobs.append((ext, None))
+                                self._prepare_single_file(ext, jobs, self.api_client)
                         jobs.append((att, 'roh'))  # ZIP-Anhang -> roh
                     else:
-                        try:
-                            unlock_pdf_if_needed(att, api_client=self.api_client)
-                        except ValueError as e:
-                            logger.warning(str(e))
-                        jobs.append((att, None))
+                        self._prepare_single_file(att, jobs, self.api_client)
                 jobs.append((fp, 'roh'))  # MSG -> roh
 
             else:
-                try:
-                    unlock_pdf_if_needed(fp, api_client=self.api_client)
-                except ValueError as e:
-                    logger.warning(str(e))
-                jobs.append((fp, None))
+                self._prepare_single_file(fp, jobs, self.api_client)
 
         return jobs
 
@@ -364,6 +371,7 @@ class MainHub(QMainWindow):
         self._archive_view = None
         self._gdv_view = None
         self._admin_view = None
+        self._provision_view = None
         self._message_center_view = None
         self._chat_view = None
         
@@ -543,6 +551,16 @@ class MainHub(QMainWindow):
         self.btn_gdv.clicked.connect(self._show_gdv)
         sidebar_layout.addWidget(self.btn_gdv)
         
+        # Provisionsmanagement Button (nur mit provision_access Recht)
+        user_prov = self.auth_api.current_user
+        if user_prov and user_prov.has_permission('provision_access'):
+            self.btn_provision = NavButton("💰", texts.PROVISION_NAV_TITLE)
+            self.btn_provision.setToolTip(texts.PROVISION_NAV_TOOLTIP)
+            self.btn_provision.clicked.connect(self._show_provision)
+            sidebar_layout.addWidget(self.btn_provision)
+        else:
+            self.btn_provision = None
+        
         # Spacer
         sidebar_layout.addStretch()
         
@@ -617,14 +635,19 @@ class MainHub(QMainWindow):
         self._placeholder_gdv = self._create_placeholder("GDV Editor", "Wird geladen...")
         self.content_stack.addWidget(self._placeholder_gdv)         # Index 3
         
-        # Index 4: Admin (nur fuer Admins)
+        # Index 4: Provision (nur mit Recht)
+        if self.btn_provision:
+            self._placeholder_provision = self._create_placeholder(texts.PROVISION_NAV_TITLE, texts.PROVISION_LOADING)
+            self.content_stack.addWidget(self._placeholder_provision)  # Index 4
+        
+        # Index 5: Admin (nur fuer Admins) -- verschoben wg. Provision
         if self.btn_admin:
             self._placeholder_admin = self._create_placeholder(texts.NAV_ADMIN_VIEW, texts.LOADING)
-            self.content_stack.addWidget(self._placeholder_admin)   # Index 4
+            self.content_stack.addWidget(self._placeholder_admin)   # Index 5 (oder 4 ohne Provision)
         
-        # Index 5: Chat (Vollbild) - Placeholder
+        # Index 6: Chat (Vollbild) - Placeholder
         self._placeholder_chat = self._create_placeholder(texts.CHAT_TITLE, texts.MSG_CENTER_LOADING)
-        self.content_stack.addWidget(self._placeholder_chat)        # Index 5 (oder 4 ohne Admin)
+        self.content_stack.addWidget(self._placeholder_chat)        # dynamischer Index
     
     def _create_placeholder(self, title: str, subtitle: str) -> QWidget:
         """Erstellt ein Placeholder-Widget im ACENCIA Design."""
@@ -652,6 +675,8 @@ class MainHub(QMainWindow):
     def _update_nav_buttons(self, active_btn):
         """Aktualisiert die Navigation-Buttons."""
         all_btns = [self.btn_center, self.btn_bipro, self.btn_archive, self.btn_gdv]
+        if self.btn_provision:
+            all_btns.append(self.btn_provision)
         if self.btn_admin:
             all_btns.append(self.btn_admin)
         for btn in all_btns:
@@ -751,6 +776,51 @@ class MainHub(QMainWindow):
         dialog = SettingsDialog(self)
         dialog.exec()
     
+    def _get_provision_index(self) -> int:
+        """Dynamischer Stack-Index fuer Provision (4 wenn vorhanden)."""
+        return 4 if self.btn_provision else -1
+    
+    def _get_admin_index(self) -> int:
+        """Dynamischer Stack-Index fuer Admin."""
+        base = 4
+        if self.btn_provision:
+            base += 1
+        return base if self.btn_admin else -1
+    
+    def _get_chat_index(self) -> int:
+        """Dynamischer Stack-Index fuer Chat."""
+        base = 4
+        if self.btn_provision:
+            base += 1
+        if self.btn_admin:
+            base += 1
+        return base
+    
+    def _show_provision(self):
+        """Zeigt das Provisionsmanagement (Vollbild mit eigener Sidebar)."""
+        if not self.btn_provision:
+            return
+        self._update_nav_buttons(self.btn_provision)
+        idx = self._get_provision_index()
+        
+        if self._provision_view is None:
+            from ui.provision.provision_hub import ProvisionHub
+            self._provision_view = ProvisionHub(self.api_client, self.auth_api)
+            self._provision_view._toast_manager = self._toast_manager
+            self._provision_view.back_requested.connect(self._leave_provision)
+            
+            self.content_stack.removeWidget(self._placeholder_provision)
+            self.content_stack.insertWidget(idx, self._provision_view)
+        
+        self._sidebar.hide()
+        self.content_stack.setCurrentIndex(idx)
+        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
+    
+    def _leave_provision(self):
+        """Verlaesst das Provisionsmanagement."""
+        self._sidebar.show()
+        self._show_archive()
+    
     def _show_admin(self):
         """Zeigt die Administrations-Ansicht (nur fuer Admins).
         
@@ -759,20 +829,19 @@ class MainHub(QMainWindow):
         if not self.btn_admin:
             return
         self._update_nav_buttons(self.btn_admin)
+        idx = self._get_admin_index()
         
         if self._admin_view is None:
-            from ui.admin_view import AdminView
+            from ui.admin import AdminView
             self._admin_view = AdminView(self.api_client, self.auth_api)
             self._admin_view._toast_manager = self._toast_manager
             self._admin_view.back_requested.connect(self._leave_admin)
             
-            # Placeholder ersetzen
             self.content_stack.removeWidget(self._placeholder_admin)
-            self.content_stack.insertWidget(4, self._admin_view)
+            self.content_stack.insertWidget(idx, self._admin_view)
         
-        # Hauptsidebar ausblenden - Admin hat eigene Sidebar
         self._sidebar.hide()
-        self.content_stack.setCurrentIndex(4)
+        self.content_stack.setCurrentIndex(idx)
         self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
     
     def _show_chat(self):
@@ -786,14 +855,13 @@ class MainHub(QMainWindow):
             self._chat_view._toast_manager = self._toast_manager
             self._chat_view.back_requested.connect(self._leave_chat)
             
-            # Chat-Index berechnen (nach Admin)
-            chat_idx = 5 if self.btn_admin else 4
+            chat_idx = self._get_chat_index()
             self.content_stack.removeWidget(self._placeholder_chat)
             self.content_stack.insertWidget(chat_idx, self._chat_view)
         
         self._chat_view.refresh()
         self._sidebar.hide()
-        chat_idx = 5 if self.btn_admin else 4
+        chat_idx = self._get_chat_index()
         self.content_stack.setCurrentIndex(chat_idx)
         # Notification-Poller pausieren - ChatRefreshWorker uebernimmt
         self._set_polling_interval(0)
@@ -1412,16 +1480,19 @@ class MainHub(QMainWindow):
 
     def closeEvent(self, event):
         """Fenster schließen."""
-        # Pruefen auf blockierende Operationen (KI-Verarbeitung, Kosten-Check, SmartScan)
+        # Pruefen auf blockierende Operationen (KI-Verarbeitung, Kosten-Check, SmartScan, Provision-Import)
+        blocking = []
         if self._archive_view and hasattr(self._archive_view, 'get_blocking_operations'):
-            blocking = self._archive_view.get_blocking_operations()
-            if blocking:
-                from i18n import de as texts
-                msg = texts.CLOSE_BLOCKED_TITLE + "\n\n" + "\n".join(f"- {b}" for b in blocking)
-                if hasattr(self, '_toast_manager') and self._toast_manager:
-                    self._toast_manager.show_warning(msg)
-                event.ignore()
-                return
+            blocking.extend(self._archive_view.get_blocking_operations())
+        if self._provision_view and hasattr(self._provision_view, 'get_blocking_operations'):
+            blocking.extend(self._provision_view.get_blocking_operations())
+        if blocking:
+            from i18n import de as texts
+            msg = texts.CLOSE_BLOCKED_TITLE + "\n\n" + "\n".join(f"- {b}" for b in blocking)
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_warning(msg)
+            event.ignore()
+            return
 
         # Prüfen auf ungespeicherte Änderungen im GDV-Editor
         if self._gdv_view and hasattr(self._gdv_view, 'has_unsaved_changes'):

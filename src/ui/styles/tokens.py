@@ -56,12 +56,17 @@ SIDEBAR_ACTIVE_BORDER = ACCENT_500
 # =============================================================================
 
 SUCCESS = "#059669"       # Grün - Erfolg, Aktiv
+SUCCESS_500 = SUCCESS
 SUCCESS_LIGHT = "#d1fae5"
 WARNING = ACCENT_500      # Orange - Warnung (= ACENCIA Orange)
+WARNING_500 = WARNING
 WARNING_LIGHT = ACCENT_100
 ERROR = "#dc2626"         # Rot - Fehler
+ERROR_500 = ERROR
 ERROR_LIGHT = "#fee2e2"
+DANGER_500 = ERROR        # Alias fuer Settings-Panel
 INFO = PRIMARY_500        # Hellblau - Information (= ACENCIA Hellblau)
+INFO_500 = INFO
 INFO_LIGHT = PRIMARY_100
 
 # =============================================================================
@@ -93,6 +98,39 @@ DOCUMENT_DISPLAY_COLORS = {
     'pink':   '#f8bbd0',   # Blasses Pink
     'cyan':   '#b2ebf2',   # Blasses Tuerkis
     'yellow': '#fff9c4',   # Blasses Gelb
+}
+
+# =============================================================================
+# PILL-BADGE FARBEN (Provisionsmanagement Status-Badges)
+# =============================================================================
+
+PILL_COLORS = {
+    "zugeordnet":        {"bg": "#d1fae5", "text": "#065f46"},
+    "vertrag_gefunden":  {"bg": "#fef3c7", "text": "#92400e"},
+    "offen":             {"bg": "#fff3e0", "text": "#e65100"},
+    "nicht_zugeordnet":  {"bg": "#fff3e0", "text": "#e65100"},
+    "gesperrt":    {"bg": "#fee2e2", "text": "#991b1b"},
+    "entwurf":     {"bg": "#f3f4f6", "text": "#374151"},
+    "geprueft":    {"bg": "#dbeafe", "text": "#1e40af"},
+    "freigegeben": {"bg": "#d1fae5", "text": "#065f46"},
+    "ausgezahlt":  {"bg": "#c8e6c9", "text": "#1b5e20"},
+    "ignoriert":   {"bg": "#f3f4f6", "text": "#6b7280"},
+    "in_pruefung": {"bg": "#fef3c7", "text": "#92400e"},
+    "abgeschlossen": {"bg": "#d1fae5", "text": "#065f46"},
+}
+
+ROLE_BADGE_COLORS = {
+    "consulter":   {"bg": "#dbeafe", "text": "#1e40af"},
+    "teamleiter":  {"bg": "#fff3e0", "text": "#e65100"},
+    "backoffice":  {"bg": "#f3f4f6", "text": "#374151"},
+}
+
+ART_BADGE_COLORS = {
+    "ap":              {"bg": "#dbeafe", "text": "#1e40af"},
+    "bp":              {"bg": "#e0e7ff", "text": "#3730a3"},
+    "rueckbelastung":  {"bg": "#fee2e2", "text": "#991b1b"},
+    "nullmeldung":     {"bg": "#fef3c7", "text": "#92400e"},  # Gelb/Amber fuer 0€-Zeilen
+    "sonstige":        {"bg": "#f3f4f6", "text": "#374151"},
 }
 
 # =============================================================================
@@ -164,6 +202,79 @@ SPLITTER_MIN_RIGHT = 400
 
 TRANSITION_FAST = "150ms"
 TRANSITION_NORMAL = "250ms"
+
+# =============================================================================
+# RICH-TOOLTIP BUILDER
+# =============================================================================
+
+def build_rich_tooltip(
+    definition: str,
+    berechnung: str = "",
+    quelle: str = "",
+    hinweis: str = "",
+) -> str:
+    """Baut einen standardisierten Rich-Tooltip im HTML-Format.
+
+    Jeder Tooltip folgt dem 4-Felder-Template:
+      - Definition:  Was bedeutet dieses Feld?
+      - Berechnung:  Wie entsteht der Wert?
+      - Quelle:      Woher kommen die Daten?
+      - Hinweis:     Typische Ursachen bei Abweichungen
+    """
+    parts = [f"<b>{definition}</b>"]
+    if berechnung:
+        parts.append(f"<br/><span style='color:{PRIMARY_500};'>Berechnung:</span> {berechnung}")
+    if quelle:
+        parts.append(f"<br/><span style='color:{PRIMARY_500};'>Quelle:</span> {quelle}")
+    if hinweis:
+        parts.append(f"<br/><span style='color:{ACCENT_500};'>Hinweis:</span> {hinweis}")
+    return "".join(parts)
+
+
+# =============================================================================
+# PROVISION TABLE STYLE (erhoehte Zeilenhoehe fuer GF-Lesbarkeit)
+# =============================================================================
+
+def get_provision_table_style() -> str:
+    """Tabellen-Styling fuer Provisionsmanagement: grosszuegige Zeilen, gut lesbar."""
+    return f"""
+        QTableView {{
+            background-color: {BG_PRIMARY};
+            alternate-background-color: #f5f8fb;
+            border: 1.5px solid #b0c4d8;
+            border-radius: {RADIUS_LG};
+            gridline-color: #d5dfe8;
+            font-family: {FONT_BODY};
+            font-size: 11pt;
+            selection-background-color: {PRIMARY_100};
+            selection-color: {TEXT_PRIMARY};
+        }}
+        QTableView::item {{
+            padding: 12px 14px;
+            border-bottom: 1px solid #d5dfe8;
+        }}
+        QTableView::item:selected {{
+            background-color: #d0dfed;
+            color: {TEXT_PRIMARY};
+        }}
+        QTableView::item:hover {{
+            background-color: #edf2f7;
+        }}
+        QHeaderView::section {{
+            background-color: #d0dcea;
+            color: {PRIMARY_900};
+            padding: 12px 14px;
+            border: none;
+            border-bottom: 2px solid #98b3cb;
+            font-weight: {FONT_WEIGHT_BOLD};
+            font-family: {FONT_BODY};
+            font-size: 10pt;
+        }}
+        QHeaderView::section:hover {{
+            background-color: #bfcfdf;
+        }}
+    """
+
 
 # =============================================================================
 # STYLESHEET-HELPER FUNKTIONEN

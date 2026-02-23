@@ -4,6 +4,7 @@
 - **Mitteilungszentrale** - System-/Admin-Meldungen, Release-Info, 1:1 Chat mit Lesebestaetigung
 - **BiPRO-Datenabruf** - Automatisierter Abruf von Lieferungen von Versicherern + IMAP Mail-Import
 - **Dokumentenarchiv mit Box-System** - Zentrales Archiv mit KI-Klassifikation und Smart!Scan
+- **Provisionsmanagement** - VU-Provisionen importieren, Berater verwalten, automatisch zuordnen, abrechnen
 - **GDV-Editor** - Erstellung, Ansicht und Bearbeitung von GDV-Datensaetzen
 - **Administration** - Nutzerverwaltung, E-Mail-Konten, KI-Kosten, Releases, Mitteilungen
 
@@ -58,6 +59,18 @@
 - **Automatische Verarbeitung**: ZIP-Entpacken, PDF-Entsperren, MSG-Anhaenge extrahieren
 - **KI-Kosten**: Provider-aware Anzeige (OpenRouter Balance / OpenAI akkumulierte Kosten)
 - **Schliess-Schutz**: App kann nicht geschlossen werden waehrend KI-Verarbeitung oder SmartScan laeuft
+
+### Provisionsmanagement (GF-Bereich, NEU v3.0.0)
+- **Eigenstaendiger Hub**: Vollbild-Ansicht mit 7 Panels (wie Admin-Bereich)
+- **VU-Provisionslisten importieren**: Allianz, SwissLife, VB (Excel, paralleler Import)
+- **Xempus-Beratungen importieren**: Vertraege mit VSNR, VU, Sparte, Beitrag
+- **Mitarbeiter-Verwaltung**: CRUD mit Rollen (Consulter, Teamleiter, Backoffice), Provisionssaetze
+- **Automatisches Matching**: VSNR-basiert, Batch-JOIN fuer 15.000+ Zeilen in ~11s
+- **Vermittler-Zuordnung**: VU-Vermittlernamen auf interne Berater mappen
+- **Split-Berechnung**: Berater-Anteil, Teamleiter-Abzug, AG-Anteil (mit TL-Override)
+- **Dashboard**: KPI-Karten, Berater-Ranking, Monats- und YTD-Werte
+- **Monatsabrechnungen**: Generieren, Revisionierung, Status-Workflow (berechnet → ausgezahlt)
+- **Berechtigung**: `provision_manage` (aktuell Admin-only)
 
 ### GDV-Editor
 - **GDV-Dateien oeffnen**: `.gdv`, `.txt`, `.dat`, `.vwb`
@@ -156,6 +169,16 @@ python run.py
 3. Aktuelle Version und Release Notes in der kleinen Kachel
 4. **"Chats oeffnen"** fuer private 1:1 Nachrichten (Vollbild-Ansicht)
 
+### Provisionsmanagement
+
+1. **Navigation** → **Provisionen** (nur fuer Admins mit `provision_manage` Berechtigung)
+2. **Import**: VU-Provisionslisten (Excel) oder Xempus-Beratungen importieren
+3. **Mitarbeiter**: Berater, Teamleiter und Backoffice anlegen mit Provisionssaetzen
+4. **Vermittler-Zuordnung**: VU-Vermittlernamen auf interne Berater mappen
+5. **Auto-Match**: Button "Automatisch zuordnen" ordnet Provisionen den Beratern zu
+6. **Dashboard**: KPI-Karten und Berater-Ranking pruefen
+7. **Abrechnungen**: Monatsabrechnungen generieren und freigeben
+
 ### Administration
 
 1. **Navigation** → **Administration** (nur fuer Admins sichtbar)
@@ -173,7 +196,7 @@ python run.py
 ```
 5510_GDV Tool V1/
 ├── run.py                     # Entry Point
-├── VERSION                    # Zentrale Versionsdatei (2.1.3)
+├── VERSION                    # Zentrale Versionsdatei (3.0.0)
 ├── requirements.txt           # Python-Abhaengigkeiten
 ├── requirements-dev.txt       # Dev-Dependencies (pytest, ruff)
 ├── AGENTS.md                  # Agent-Anweisungen (aktuell halten!)
@@ -195,6 +218,7 @@ python run.py
 │   │   ├── openrouter.py     # KI-Klassifikation (OpenRouter/OpenAI Proxy)
 │   │   ├── ai_providers.py   # KI-Provider API Client (NEU v2.1.2)
 │   │   ├── model_pricing.py  # Modell-Preise + Request-Historie (NEU v2.1.2)
+│   │   ├── provision.py      # Provisions-API (NEU v3.0.0)
 │   │   ├── passwords.py      # Passwort-Verwaltung API
 │   │   ├── releases.py       # Auto-Update API
 │   │   ├── processing_history.py  # Audit-Trail API
@@ -209,6 +233,7 @@ python run.py
 │   ├── services/             # Business-Logik
 │   │   ├── data_cache.py     # Cache + Auto-Refresh
 │   │   ├── document_processor.py  # KI-Klassifikation
+│   │   ├── provision_import.py    # VU/Xempus-Parser (NEU v3.0.0)
 │   │   ├── pdf_unlock.py     # PDF-Entsperrung
 │   │   ├── zip_handler.py    # ZIP-Entpackung
 │   │   ├── msg_handler.py    # Outlook .msg Verarbeitung
@@ -230,7 +255,7 @@ python run.py
 │   │   └── certificates.py   # Zertifikat-Manager (PFX/P12)
 │   │
 │   ├── i18n/                 # Internationalisierung
-│   │   └── de.py             # Deutsche UI-Texte (~1170 Keys)
+│   │   └── de.py             # Deutsche UI-Texte (~1380+ Keys)
 │   │
 │   ├── layouts/
 │   │   └── gdv_layouts.py    # GDV-Satzart-Definitionen
@@ -245,6 +270,15 @@ python run.py
 │       ├── bipro_view.py     # BiPRO Datenabruf + MailImportWorker
 │       ├── archive_boxes_view.py  # Dokumentenarchiv (Box-System)
 │       ├── admin_view.py     # Administration (15 Panels, Sidebar)
+│       ├── provision/        # Provisionsmanagement (NEU v3.0.0)
+│       │   ├── provision_hub.py   # Hub mit Sidebar (7 Panels)
+│       │   ├── dashboard_panel.py # KPI + Berater-Ranking
+│       │   ├── employees_panel.py # Mitarbeiter-CRUD
+│       │   ├── contracts_panel.py # Vertraege
+│       │   ├── commissions_panel.py # Provisionen + Auto-Match
+│       │   ├── import_panel.py    # VU/Xempus-Import
+│       │   ├── mappings_panel.py  # Vermittler-Zuordnung
+│       │   └── billing_panel.py   # Monatsabrechnungen
 │       ├── gdv_editor_view.py # GDV-Editor
 │       ├── toast.py          # Toast-Benachrichtigungen + Progress
 │       ├── main_window.py    # GDV Hauptfenster
@@ -254,7 +288,7 @@ python run.py
 │       └── styles/tokens.py  # Design-Tokens (Farben, Fonts)
 │
 ├── BiPro-Webspace Spiegelung Live/  # Server-API (LIVE synchronisiert!)
-│   └── api/                  # PHP REST API (~23 Endpunkte)
+│   └── api/                  # PHP REST API (~40 Endpunkte)
 │       ├── index.php         # Router
 │       ├── lib/              # Shared Libraries (DB, JWT, Permissions)
 │       └── lib/PHPMailer/    # SMTP-Versand
@@ -347,6 +381,22 @@ Proprietär - Nur für internen Gebrauch bei ACENCIA GmbH.
 ---
 
 ## Changelog
+
+### v3.0.0 (19. Februar 2026)
+- **NEU**: Provisionsmanagement (GF-Bereich): Eigenstaendiger Hub mit 7 Panels
+- **NEU**: VU-Provisionslisten Import: 3 Formate (Allianz, SwissLife, VB), paralleler Import
+- **NEU**: Xempus-Beratungen Import: Vertraege mit VSNR, VU, Berater-Zuordnung
+- **NEU**: Mitarbeiter-CRUD: Rollen (Consulter/Teamleiter/Backoffice), Provisionssaetze, TL-Override
+- **NEU**: Auto-Matching: 5-Schritt Batch-JOIN, ~11s fuer 15.010 Zeilen
+- **NEU**: Split-Engine: 3 Batch-UPDATEs (Rueckbelastung, Positive ohne TL, Positive mit TL)
+- **NEU**: Dashboard: KPI-Karten + Berater-Ranking mit Monats- und YTD-Werten
+- **NEU**: Vermittler-Zuordnung: VU-Name → interner Berater, ungeloeste Vermittler
+- **NEU**: Monatsabrechnungen: Generieren, Revision, Status-Workflow (berechnet→ausgezahlt)
+- **NEU**: PHP Backend provision.php (~1100 Zeilen, 15+ Routen unter /pm/)
+- **NEU**: Python ProvisionAPI (9 Dataclasses, defensive .get()-Zugriffe)
+- **NEU**: VU/Xempus-Parser (provision_import.py, Column-Mappings, Normalisierung)
+- **NEU**: 7 pm_* DB-Tabellen + 2 Permissions (provision_manage, provision_view)
+- **NEU**: ~214 neue i18n-Keys (PROVISION_*)
 
 ### v2.1.3 (18. Februar 2026)
 - **NEU**: PDF-Vorschau Mehrfachauswahl: Strg+Klick, Shift+Klick, Strg+A fuer Seiten-Multi-Selection

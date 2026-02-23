@@ -1,8 +1,157 @@
-# Architektur - ACENCIA ATLAS v2.1.3
+# Architektur - ACENCIA ATLAS v3.0.0
 
-**Stand:** 18. Februar 2026
+**Stand:** 19. Februar 2026
 
 **Primaere Referenz: `AGENTS.md`** - Dieses Dokument enthaelt ergaenzende Architektur-Details. Fuer den aktuellen Feature-Stand und Debugging-Tipps siehe `AGENTS.md`.
+
+## Neue Features in v3.0.0 (Provisionsmanagement / GF-Bereich)
+
+### Provisionsmanagement-Architektur
+
+Das Provisionsmanagement ist als eigenstaendiger Vollbild-Hub implementiert (identisches Pattern wie AdminView):
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ProvisionHub (Vollbild)                                                │
+│  ┌──────────────┐  ┌──────────────────────────────────────────────────┐ │
+│  │ Sidebar      │  │ QStackedWidget (7 Panels, Lazy-Loading)         │ │
+│  │              │  │                                                  │ │
+│  │ ▸ Dashboard  │  │  ┌──────────────────────────────────────────┐   │ │
+│  │ ▸ Mitarb.   │  │  │ DashboardPanel                           │   │ │
+│  │ ▸ Vertraege │  │  │  KPI-Karten  |  Berater-Ranking-Tabelle  │   │ │
+│  │ ▸ Provision │  │  └──────────────────────────────────────────┘   │ │
+│  │ ▸ Import    │  │  ┌──────────────────────────────────────────┐   │ │
+│  │ ▸ Mappings  │  │  │ EmployeesPanel    (CRUD + EmployeeDialog)│   │ │
+│  │ ▸ Abrechn.  │  │  │ ContractsPanel    (Filter + Zuweisung)  │   │ │
+│  │              │  │  │ CommissionsPanel  (AutoMatch + Filter)   │   │ │
+│  │ [Zurueck]   │  │  │ ImportPanel       (VU + Xempus + Worker) │   │ │
+│  │              │  │  │ MappingsPanel     (VU→Berater Mapping)  │   │ │
+│  └──────────────┘  │  │ BillingPanel      (Generate + Workflow)  │   │ │
+│                     │  └──────────────────────────────────────────┘   │ │
+│                     └──────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Datenmodell (7 pm_* Tabellen)
+
+```
+pm_commission_models ─┐
+                      ├──▶ pm_employees ──┬──▶ pm_commissions
+                      │                    │        │
+                      │                    ├──▶ pm_berater_abrechnungen
+                      │                    │
+                      │    pm_contracts ───┘
+                      │        │
+pm_vermittler_mapping ◀───────┘
+                      │
+pm_import_batches ────┘
+```
+
+| Tabelle | Zeilen (Testdaten) | Beschreibung |
+|---------|-------------------|--------------|
+| `pm_commission_models` | ~2-5 | Provisionssatzmodelle (z.B. "Standard 80%") |
+| `pm_employees` | ~3-10 | Mitarbeiter (Consulter, Teamleiter, Backoffice) |
+| `pm_contracts` | ~1.004 | Xempus-Vertraege mit VSNR, VU, Berater-Zuweisung |
+| `pm_commissions` | ~15.010 | Provisionsbuchungen mit Match-Status und Splits |
+| `pm_vermittler_mapping` | ~20-50 | VU-Vermittlername → interner Berater |
+| `pm_berater_abrechnungen` | ~5-20/Monat | Monatsabrechnungen (Snapshot-Prinzip) |
+| `pm_import_batches` | ~2-10 | Import-Historie (Source, Filename, Rows) |
+
+### Split-Engine (Batch-SQL)
+
+Die Split-Berechnung laeuft in 3 optimierten Batch-UPDATEs (statt per-Row-Loop):
+
+```
+batchRecalculateSplits()
+├── Step A: Rueckbelastungen / negative Betraege
+│   → berater_anteil = betrag * rate / 100
+│   → tl_anteil = 0  (TL traegt Verluste nicht mit)
+│   → ag_anteil = betrag - berater_anteil
+│
+├── Step B: Positive Provisionen OHNE Teamleiter
+│   → berater_anteil = betrag * rate / 100
+│   → tl_anteil = 0
+│   → ag_anteil = betrag - berater_anteil
+│
+└── Step C: Positive Provisionen MIT Teamleiter
+    → berater_brutto = betrag * rate / 100
+    → tl_anteil = MIN(berater_brutto * tl_rate / 100, berater_brutto)
+    │   ODER: betrag * tl_rate / 100  (bei Basis 'gesamt_courtage')
+    → berater_anteil = berater_brutto - tl_anteil
+    → ag_anteil = betrag - berater_brutto
+```
+
+**Invariante**: `berater_anteil + tl_anteil + ag_anteil == betrag` (immer)
+
+### Auto-Matching (5-Schritt Batch-JOIN)
+
+```
+autoMatchCommissions()
+│
+├── 1. VSNR-Match: commissions.vsnr_normalized JOIN contracts.vsnr_normalized
+│   → berater_id + match_status='auto_matched'
+│
+├── 2. Alt-VSNR-Match: commissions.vsnr_normalized JOIN contracts.vsnr_alt_normalized
+│   → Fallback fuer umbenannte VSNRs
+│
+├── 3. Vermittler-Mapping: commissions.vermittler_name_normalized
+│   JOIN pm_vermittler_mapping → berater_id (fuer Zeilen OHNE Vertrag)
+│
+├── 4. batchRecalculateSplits() → 3 Batch-UPDATEs (siehe oben)
+│
+└── 5. Vertragsstatus-Update: contracts SET status='provision_erhalten'
+```
+
+Performance: ~11s fuer 15.010 Provisionszeilen (vorher Timeout bei per-Row-Loop)
+
+### Neue PHP-Endpunkte (alle unter `/pm/...`)
+
+| Endpunkt | Methoden | Beschreibung |
+|----------|----------|--------------|
+| `/pm/employees[/{id}]` | GET/POST/PUT/DELETE | Mitarbeiter-CRUD |
+| `/pm/contracts[/{id}]` | GET/PUT | Vertraege + Berater-Zuweisung |
+| `/pm/commissions` | GET | Provisionen (Filter: match_status, berater_id, von, bis, versicherer) |
+| `/pm/commissions/{id}/match` | PUT | Manuelles Matching |
+| `/pm/commissions/{id}/ignore` | PUT | Provision ignorieren |
+| `/pm/commissions/recalculate` | POST | Splits neu berechnen |
+| `/pm/import/vu-liste` | POST | VU-Provisionsliste importieren |
+| `/pm/import/xempus` | POST | Xempus-Beratungen importieren |
+| `/pm/import/match` | POST | Auto-Matching ausloesen |
+| `/pm/import/batches` | GET | Import-Historie |
+| `/pm/dashboard/summary` | GET | Dashboard KPI-Daten |
+| `/pm/mappings` | GET/POST | Vermittler-Mappings (include_unmapped=1 fuer ungeloeste) |
+| `/pm/abrechnungen[/{id}]` | GET/POST/PUT | Abrechnungen generieren/laden/Status aendern |
+| `/pm/models[/{id}]` | GET/POST/PUT | Provisionsmodelle CRUD |
+
+### Neue Python-Klassen
+
+| Klasse | Datei | Beschreibung |
+|--------|-------|--------------|
+| `ProvisionAPI` | `src/api/provision.py` | API Client mit allen Endpoints |
+| `Employee` | `src/api/provision.py` | Dataclass: Mitarbeiter mit Rolle, Rate, TL-Override |
+| `Contract` | `src/api/provision.py` | Dataclass: Vertrag mit VSNR, VU, Berater-ID, Status |
+| `Commission` | `src/api/provision.py` | Dataclass: Provisionsbuchung mit Splits und Match-Info |
+| `CommissionModel` | `src/api/provision.py` | Dataclass: Provisionssatzmodell |
+| `DashboardSummary` | `src/api/provision.py` | Dataclass: KPI-Zusammenfassung mit per_berater |
+| `ImportResult` / `ImportBatch` | `src/api/provision.py` | Dataclass: Import-Ergebnis und -Historie |
+| `BeraterAbrechnung` | `src/api/provision.py` | Dataclass: Monatsabrechnung pro Berater |
+| `VermittlerMapping` | `src/api/provision.py` | Dataclass: VU-Name → Berater-Zuordnung |
+| `ProvisionHub` | `src/ui/provision/provision_hub.py` | Vollbild-Hub mit Sidebar (7 Panels) |
+| `VuImportWorker` | `src/ui/provision/import_panel.py` | QThread: Paralleler Import mit ThreadPoolExecutor |
+
+### QStackedWidget-Indizes (main_hub.py, erweitert)
+
+| Index | View | Beschreibung |
+|-------|------|--------------|
+| 0 | Mitteilungszentrale | Dashboard (v2.0.0) |
+| 1 | BiPRO | Datenabruf + Mail-Import |
+| 2 | Archiv | Dokumentenarchiv mit Boxen |
+| 3 | GDV | Editor |
+| 4 | Admin | Vollbild mit eigener Sidebar |
+| 5 | Chat | Vollbild mit eigener Sidebar (v2.0.0) |
+| 6 | Provision | **Vollbild mit eigener Sidebar (NEU v3.0.0)** |
+
+---
 
 ## Neue Features in v2.1.3 (Dokumenten-Regeln + PDF Multi-Selection)
 
@@ -441,13 +590,13 @@ ACENCIA ATLAS ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer mehr
 │                    Desktop-App (PySide6/Qt)                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                           UI Layer                                          │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
-│  │ main_hub.py │ │bipro_view.py│ │archive_boxes│ │    admin_view.py        ││
-│  │ Navigation  │ │ BiPRO-Abruf │ │ _view.py    │ │   11 Admin-Panels       ││
-│  │ Drag&Drop   │ │ MailImport  │ │ Smart!Scan  │ │   Sidebar-Navigation    ││
-│  │ NotiPoller  │ │ VU-Verwalt. │ │ PDF-Preview │ │                         ││
-│  │ toast.py    │ │             │ │             │ │                         ││
-│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └───────────┬─────────────┘│
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌──────────────┐ ┌────────┐│
+│  │ main_hub.py │ │bipro_view.py│ │archive_boxes│ │admin_view.py │ │provis. ││
+│  │ Navigation  │ │ BiPRO-Abruf │ │ _view.py    │ │ 15 Panels    │ │ hub.py ││
+│  │ Drag&Drop   │ │ MailImport  │ │ Smart!Scan  │ │ Sidebar-Nav  │ │7 Panels││
+│  │ NotiPoller  │ │ VU-Verwalt. │ │ PDF-Preview │ │              │ │GF-Ber. ││
+│  │ toast.py    │ │             │ │             │ │              │ │        ││
+│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬───────┘ └───┬────┘│
 │  ┌─────────────────┐ ┌─────────────┐                                        │
 │  │message_center   │ │ chat_view   │   NEU v2.0.0                           │
 │  │ _view.py        │ │ .py         │                                        │
@@ -487,7 +636,7 @@ ACENCIA ATLAS ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer mehr
 │  Strato Webspace │ │  Versicherer     │ │ OpenRouter/OpenAI│ │  Lokales FS  │
 │  PHP REST API    │ │  BiPRO Services  │ │  GPT-4o/4o-mini  │ │  GDV-Dateien │
 │  MySQL + Files   │ │  (Degenia, VEMA) │ │  Klassifikation  │ │  Temp-Cache  │
-│  ~25 Endpunkte   │ │                  │ │  (dynamisch)     │ │              │
+│  ~40 Endpunkte   │ │                  │ │  (dynamisch)     │ │              │
 └──────────────────┘ └──────────────────┘ └──────────────────┘ └──────────────┘
 ```
 
@@ -637,6 +786,7 @@ Dokumenten-Operationen mit Box-Support + ATLAS Index:
 | `releases.py` | Auto-Update | ~120 |
 | `processing_history.py` | Audit-Trail | ~380 |
 | `document_rules.py` | **Dokumenten-Regeln (Settings + API) NEU v2.1.3** | ~94 |
+| `provision.py` | **Provisions-API (9 Dataclasses + ProvisionAPI) NEU v3.0.0** | ~641 |
 | `gdv_api.py` | GDV-Dateien server-seitig parsen | ~229 |
 | `xml_index.py` | XML-Index fuer BiPRO-Rohdaten | ~259 |
 | `smartadmin_auth.py` | SmartAdmin SAML-Auth (47 VUs) | ~640 |
@@ -885,6 +1035,9 @@ UI Layer
     │
     ├── archive_view.py ──▶ api/documents.py
     │
+    ├── provision/         ──▶ api/provision.py     (NEU v3.0.0)
+    │  provision_hub.py    ──▶ services/provision_import.py
+    │
     └── main_window.py ───▶ parser/gdv_parser.py
                       ───▶ domain/mapper.py
                       ───▶ domain/models.py
@@ -961,6 +1114,17 @@ External
 | | PUT /admin/document-rules | document_rules.php | **Regeln speichern (Admin) v2.1.3** |
 | | POST /processing_history/create | processing_history.php | Audit-Trail |
 | | GET /processing_history/costs | processing_history.php | KI-Kosten |
+| **Provision** | GET/POST/PUT/DELETE /pm/employees | provision.php | **Mitarbeiter-CRUD (v3.0.0)** |
+| | GET/PUT /pm/contracts | provision.php | **Vertraege + Berater-Zuweisung** |
+| | GET /pm/commissions | provision.php | **Provisionen (Filter: status, berater, VU)** |
+| | PUT /pm/commissions/{id}/match | provision.php | **Manuelles Matching** |
+| | POST /pm/import/vu-liste | provision.php | **VU-Provisionsliste importieren** |
+| | POST /pm/import/xempus | provision.php | **Xempus-Beratungen importieren** |
+| | POST /pm/import/match | provision.php | **Auto-Matching ausloesen** |
+| | GET /pm/dashboard/summary | provision.php | **Dashboard KPI-Daten** |
+| | GET/POST /pm/mappings | provision.php | **Vermittler-Zuordnung** |
+| | GET/POST/PUT /pm/abrechnungen | provision.php | **Monatsabrechnungen** |
+| | GET/POST/PUT /pm/models | provision.php | **Provisionsmodelle** |
 
 ### Datenbank-Schema
 
@@ -1063,6 +1227,66 @@ document_rules_settings (
     full_empty_color,
     updated_at, updated_by
 )
+
+-- Provisionsmanagement (v3.0.0) - 7 Tabellen
+pm_commission_models (
+    id, name, commission_rate,       -- Provisionssatz in %
+    is_active, created_at, updated_at
+)
+
+pm_employees (
+    id, name, role,                  -- 'consulter', 'teamleiter', 'backoffice'
+    commission_model_id,             -- FK → pm_commission_models
+    commission_rate_override,        -- Ueberschreibt Model-Rate (NULL = Model-Rate)
+    teamleiter_id,                   -- FK → pm_employees (Teamleiter des Beraters)
+    tl_override_rate,                -- TL-Abzugs-Rate in % (nur bei Teamleitern)
+    tl_override_basis,               -- 'berater_anteil' oder 'gesamt_courtage'
+    is_active, created_at, updated_at
+)
+
+pm_contracts (
+    id, vsnr, vsnr_normalized,       -- Versicherungsschein-Nr (normalisiert: nur Ziffern, keine fuehrenden Nullen)
+    vsnr_alt, vsnr_alt_normalized,   -- Alternative VSNR (fuer Umbenennungen)
+    vu_name, versicherungsnehmer, sparte,
+    beitrag, berater_id,             -- FK → pm_employees
+    status,                          -- 'aktiv', 'provision_erhalten', 'gekuendigt', 'ruhend'
+    import_batch_id,                 -- FK → pm_import_batches
+    created_at, updated_at
+)
+
+pm_commissions (
+    id, vsnr, vsnr_normalized,
+    versicherer, vermittler_name, vermittler_name_normalized,
+    betrag, buchungsdatum, art,      -- 'provision', 'rueckbelastung', 'storno'
+    berater_id,                      -- FK → pm_employees (gesetzt durch Auto-Match oder manuell)
+    match_status,                    -- 'unmatched', 'auto_matched', 'manual_matched', 'ignored'
+    berater_anteil, tl_anteil, ag_anteil,  -- Split-Berechnung
+    row_hash,                        -- SHA256 fuer Duplikat-Erkennung beim Import
+    import_batch_id,                 -- FK → pm_import_batches
+    created_at
+)
+
+pm_vermittler_mapping (
+    id, vermittler_name, vermittler_name_normalized,
+    berater_id,                      -- FK → pm_employees
+    created_at
+)
+
+pm_berater_abrechnungen (
+    id, berater_id, abrechnungsmonat,  -- Format: 'YYYY-MM'
+    brutto_provision, tl_abzug, netto_provision,
+    rueckbelastungen, auszahlung,
+    revision,                        -- Auto-inkrement bei erneuter Generierung
+    status,                          -- 'berechnet', 'geprueft', 'freigegeben', 'ausgezahlt'
+    created_at, updated_at
+)
+
+pm_import_batches (
+    id, source,                      -- 'vu_liste', 'xempus'
+    filename, sheet_name,
+    total_rows, imported_rows, skipped_rows,
+    created_by, created_at
+)
 ```
 
 ---
@@ -1100,7 +1324,7 @@ CATEGORY_NAMES["123456789"] = "Neue Kategorie"
 - **UI-Texte**: Groesstenteils in i18n/de.py, einige Hardcoded Strings verbleiben
 - **Speicherverbrauch**: Alle Records/Dokumente im Speicher (kein Lazy Loading)
 - **VU-spezifisch**: BiPRO-Flow variiert je VU (Degenia, VEMA haben eigene Logik)
-- **Grosse Dateien**: bipro_view.py (~4900), archive_boxes_view.py (~6350), admin_view.py (~5200), main_hub.py (~1324) → Aufteilen geplant
+- **Grosse Dateien**: bipro_view.py (~4900), archive_boxes_view.py (~6350), admin_view.py (~5200), main_hub.py (~1324), import_panel.py (~739) → Aufteilen geplant
 
 ## Unterstützte VUs
 

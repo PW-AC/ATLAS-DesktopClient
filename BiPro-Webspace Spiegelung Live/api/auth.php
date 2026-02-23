@@ -152,8 +152,8 @@ function handleLogin(): void {
         [$user['id']]
     );
     
-    // Permissions laden
-    $permissions = getUserPermissions($user['id']);
+    // Effektive Permissions laden (Admins: Standard auto-granted + explizite Provision-Perms)
+    $permissions = getEffectivePermissions($user['id']);
     
     // Login loggen
     ActivityLogger::logAuth($user['id'], $username, 'login_success', "Erfolgreich angemeldet");
@@ -238,8 +238,8 @@ function handleVerify(): void {
         json_response(['valid' => false, 'reason' => $reason]);
     }
     
-    // Permissions laden
-    $permissions = getUserPermissions($payload['user_id']);
+    // Effektive Permissions laden (Admins: Standard auto-granted + explizite Provision-Perms)
+    $permissions = getEffectivePermissions($payload['user_id']);
     
     json_response([
         'valid' => true,
@@ -268,8 +268,8 @@ function handleMe(): void {
         json_error('Benutzer nicht gefunden', 404);
     }
     
-    // Permissions laden
-    $permissions = getUserPermissions($user['id']);
+    // Effektive Permissions laden (Admins: Standard auto-granted + explizite Provision-Perms)
+    $permissions = getEffectivePermissions($user['id']);
     $user['permissions'] = $permissions;
     
     json_success([

@@ -1,6 +1,6 @@
-# Entwickler-Dokumentation - ACENCIA ATLAS v2.1.3
+# Entwickler-Dokumentation - ACENCIA ATLAS v3.0.0
 
-**Stand:** 18. Februar 2026
+**Stand:** 19. Februar 2026
 
 ## Lokales Setup
 
@@ -53,14 +53,15 @@ Siehe `README.md` fuer die vollstaendige Projektstruktur.
 
 | Verzeichnis | Beschreibung | Zeilen (gesamt) |
 |-------------|--------------|-----------------|
-| `src/ui/` | Benutzeroberflaeche (PySide6) | ~24.000 |
-| `src/api/` | Server-API Clients (inkl. KI-Provider, Pricing) | ~6.400 |
+| `src/ui/` | Benutzeroberflaeche (PySide6) | ~26.400 |
+| `src/ui/provision/` | Provisionsmanagement (7 Panels + Hub) | ~2.400 |
+| `src/api/` | Server-API Clients (inkl. KI-Provider, Provision) | ~7.000 |
 | `src/bipro/` | BiPRO SOAP Client | ~2.400 |
-| `src/services/` | Business-Logik (inkl. CostCalculator) | ~3.600 |
+| `src/services/` | Business-Logik (inkl. CostCalculator, provision_import) | ~4.200 |
 | `src/domain/` | Fachliche Modelle | ~1.100 |
 | `src/parser/` | GDV Fixed-Width Parser | ~750 |
 | `src/config/` | Konfiguration + Regeln + Modelle | ~2.110 |
-| `src/i18n/` | Internationalisierung | ~1170 |
+| `src/i18n/` | Internationalisierung | ~1.380+ |
 
 ---
 
@@ -273,6 +274,38 @@ colors = {
     ...
 }
 ```
+
+### Provisionsmanagement testen (v3.0.0)
+
+Der GF-Bereich (Provisionsmanagement) hat eigene Test-Workflows:
+
+**Daten-Import testen:**
+1. App starten, in den Provisions-Bereich wechseln
+2. **Import-Panel**: VU-Provisionsliste (Excel) oder Xempus-Export hochladen
+3. Pruefen: Import-Historie zeigt Batch mit Zeilen-Statistik
+
+**Matching testen:**
+1. Mindestens 1 Mitarbeiter + 1 Vermittler-Mapping anlegen
+2. **Provisionen-Panel**: "Automatisch zuordnen" klicken
+3. Pruefen: Match-Status wechselt von "unmatched" zu "auto_matched"
+4. Pruefen: Splits (berater_anteil + tl_anteil + ag_anteil == betrag)
+
+**Split-Engine pruefen:**
+- Rueckbelastungen: `tl_anteil == 0` (Teamleiter traegt Verluste nicht mit)
+- Positive ohne TL: `tl_anteil == 0`, `berater_anteil + ag_anteil == betrag`
+- Positive mit TL: `berater_anteil + tl_anteil + ag_anteil == betrag`
+- TL-Override-Basis: `berater_anteil` (Standard) oder `gesamt_courtage`
+
+**API-Smoke-Test:**
+```bash
+python scripts/smoke_test.py
+```
+
+**Bekannte Besonderheiten:**
+- `batchRecalculateSplits()` fuehrt 3 Batch-UPDATEs aus (optimiert von per-Row-Loop)
+- Auto-Matching hat 5 Schritte (VSNR → Alt-VSNR → Vermittler → Splits → Status)
+- Dashboard `per_berater` Felder sind explizit Float-gecastet (Fix in v3.0.0)
+- `VuImportWorker` nutzt `ThreadPoolExecutor` (max 15 Worker) fuer parallelen Import
 
 ---
 

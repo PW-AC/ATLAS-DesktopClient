@@ -53,7 +53,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         ACENCIA ATLAS v2.1.3                                │
+│                         ACENCIA ATLAS v3.0.0                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Desktop-App (PySide6/Qt)                         Strato Webspace           │
 │  ├── UI Layer                                     ├── PHP REST API          │
@@ -63,7 +63,8 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 │  │   ├── bipro_view.py (BiPRO+MailImport) ✅      │   ├── documents.php     │
 │  │   ├── archive_boxes_view.py (Archiv) ✅        │   ├── gdv.php           │
 │  │   ├── gdv_editor_view.py (GDV-Editor)          │   ├── credentials.php   │
-│  │   ├── admin_view.py (Admin, 15 Panels) ✅      │   ├── admin.php         │
+│  │   ├── admin/ (Admin-Package, 15 Panels) ✅      │   ├── admin.php         │
+│  │   ├── provision/ (GF-Bereich, 7 Panels) ✅     │   ├── provision.php     │
 │  │   ├── update_dialog.py (Auto-Update) ✅        │   ├── sessions.php      │
 │  │   ├── toast.py (Toast+ProgressToast)           │   ├── activity.php      │
 │  │   ├── partner_view.py                          │   ├── releases.php      │
@@ -75,6 +76,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 │  │   ├── src/api/client.py                        ├── Dokumente-Storage     │
 │  │   ├── src/api/documents.py                     └── Releases-Storage      │
 │  │   ├── src/api/admin.py (Admin-API)                                       │
+│  │   ├── src/api/provision.py (Provision-API) **NEU v3.0.0**               │
 │  │   ├── src/api/messages.py (Mitteilungen-API) **NEU v2.0.0**             │
 │  │   ├── src/api/chat.py (Chat-API) **NEU v2.0.0**                        │
 │  │   ├── src/api/releases.py (Releases-API)                                │
@@ -86,12 +88,14 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 │  │   └── src/bipro/categories.py (Kategorie-Mapping)                        │
 │  ├── Services Layer                                                         │
 │  │   ├── src/services/document_processor.py (Klassifikation)                │
+│  │   ├── src/services/provision_import.py (VU/Xempus-Parser) **NEU v3.0.0**│
 │  │   ├── src/services/data_cache.py (Cache + Auto-Refresh-Kontrolle)        │
 │  │   ├── src/services/update_service.py (Auto-Update) **NEU v0.9.9**       │
 │  │   ├── src/services/empty_page_detector.py (Leere-Seiten) **NEU v2.0.2** │
 │  │   ├── src/services/pdf_unlock.py (PDF-Passwort-Entsperrung)              │
 │  │   ├── src/services/zip_handler.py (ZIP-Entpackung)                       │
 │  │   ├── src/services/msg_handler.py (Outlook MSG-Verarbeitung)             │
+│  │   ├── src/services/image_converter.py (Bild→PDF) **NEU v3.1.1**         │
 │  │   └── src/services/atomic_ops.py (Atomic File Operations)                │
 │  └── Parser Layer                                                           │
 │      ├── gdv_parser.py                                                      │
@@ -228,10 +232,12 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - **PDF-Validierung**: Automatische Reparatur korrupter PDFs mit PyMuPDF
   - **Auto-Refresh-Pause**: Cache-Refresh wird während Downloads pausiert
 - **Dateien**:
-  - `src/bipro/transfer_service.py` (~1220 Zeilen) → BiPRO 410 STS + BiPRO 430 Transfer
+  - `src/bipro/transfer_service.py` (~1329 Zeilen) → BiPRO 410 STS + BiPRO 430 Transfer
+ - `src/bipro/mtom_parser.py` (~282 Zeilen) → Gemeinsamer MTOM/XOP Parser (Refactoring Schritt 1)
   - `src/bipro/rate_limiter.py` → AdaptiveRateLimiter **NEU v0.9.1**
   - `src/bipro/categories.py` → Kategorie-Code zu Name Mapping
-  - `src/ui/bipro_view.py` (~4900+ Zeilen) → UI + ParallelDownloadManager + MailImportWorker
+  - `src/bipro/workers.py` (~1336 Zeilen) → 5 QThread-Worker (Fetch, Download, Acknowledge, MailImport, ParallelDL)
+  - `src/ui/bipro_view.py` (~3530 Zeilen) → UI + Signal-Handling (Worker importiert aus bipro/workers.py)
   - `src/services/data_cache.py` → DataCacheService (pause/resume_auto_refresh)
 - **Unterstützte VUs**: 
   - ✅ **Degenia** - Vollständig funktionsfähig
@@ -270,7 +276,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `src/api/documents.py` → Document-Modell mit Box-Feldern
   - `src/services/document_processor.py` → **Parallele Klassifikation** (ThreadPoolExecutor)
   - `src/config/processing_rules.py` → **Konfigurierbare Regeln**
-  - `src/api/openrouter.py` → OpenRouter Client (Klassifikation + Credits)
+  - `src/api/openrouter/` → **OpenRouter Package (Refactoring v3.1.1): client.py, classification.py, ocr.py, models.py, utils.py**
   - `src/api/client.py` → API-Client mit Retry-Logik
   - `BiPro-Webspace Spiegelung Live/api/documents.php` → Backend mit Box-Support
 
@@ -306,7 +312,8 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - Detail: Erste 5 Seiten, max 5000 Zeichen (Stufe 2)
   - OCR-Fallback: Vision-OCR bei Bild-PDFs (150 DPI)
 - **Dateien**:
-  - `src/api/openrouter.py` → `classify_sparte_with_date()`, `_build_keyword_hints()`, `_classify_sparte_request()`, `_classify_sparte_detail()`
+  - `src/api/openrouter/classification.py` → `classify_sparte_with_date()`, `_classify_sparte_request()`, `_classify_sparte_detail()`
+  - `src/api/openrouter/utils.py` → `_build_keyword_hints()`
   - `src/services/document_processor.py` → Verarbeitungslogik mit Confidence-Handling
   - `src/ui/archive_boxes_view.py` → AIRenameWorker, CreditsWorker
   - `BiPro-Webspace Spiegelung Live/api/ai.php` → GET /ai/key
@@ -381,8 +388,12 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 
 ### 2e. Admin-/Rechte-/Logging-System ✅ (v0.9.6, Redesign v1.0.9)
 - **Zweck**: Umfassendes Logging, granulares Rechte-System und Nutzerverwaltung
-- **Kontotypen**: Administrator (alle Rechte) und Benutzer (granulare Rechte)
-- **10 Berechtigungen**: vu_connections_manage, bipro_fetch, documents_manage, documents_delete, documents_upload, documents_download, documents_process, documents_history, gdv_edit, smartscan_send
+- **Kontotypen**: Administrator (alle Standard-Rechte) und Benutzer (granulare Rechte)
+- **12 Berechtigungen**: vu_connections_manage, bipro_fetch, documents_manage, documents_delete, documents_upload, documents_download, documents_process, documents_history, gdv_edit, smartscan_send, provision_access, provision_manage
+- **Provision-Permissions (NEU v3.3.0)**: `provision_access` und `provision_manage` werden NICHT automatisch an Admins vergeben. Muessen explizit zugewiesen werden. Nur Nutzer mit `provision_manage` koennen diese Rechte an andere vergeben (Super-Admin-Konzept).
+  - `provision_access`: Zugriff auf Provisions-/GF-Bereich (alle PM-Endpoints)
+  - `provision_manage`: Darf Provisions-Rechte vergeben + Gefahrenzone (/pm/reset)
+  - `administrator + provision_manage` = Super-Admin (Vollzugriff inkl. Rechtevergabe)
 - **Session-Tracking**: Server-seitige Sessions-Tabelle, Admin kann Sessions einsehen/beenden
 - **Single-Session-Enforcement**: Pro Nutzer nur eine aktive Session erlaubt, bei Neuanmeldung werden alle bestehenden Sessions automatisch beendet
 - **JWT-Gueltigkeit**: 30 Tage (1 Monat), Token + Session laufen nach 30 Tagen ab
@@ -407,7 +418,11 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `BiPro-Webspace Spiegelung Live/api/activity.php` → Aktivitaetslog (nur Admins)
   - `BiPro-Webspace Spiegelung Live/setup/migration_admin.php` → DB-Migration
   - `src/api/admin.py` → AdminAPI Client
-  - `src/ui/admin_view.py` → Admin-View mit vertikaler Sidebar + QStackedWidget (15 Panels)
+  - `src/ui/admin/` → **Admin-Package (21 Dateien, ~5716 Zeilen, Refactoring v3.1.1)**
+  - `src/ui/admin/admin_shell.py` → AdminView Shell mit Sidebar + QStackedWidget + Lazy Loading (372 Zeilen)
+  - `src/ui/admin/workers.py` → 8 Admin-Worker-Klassen (169 Zeilen)
+  - `src/ui/admin/dialogs.py` → 6 Dialog-Klassen + AdminNavButton (693 Zeilen)
+  - `src/ui/admin/panels/` → 15 Panel-Module (je 177-558 Zeilen)
   - `src/ui/main_hub.py` → `_show_admin()` versteckt Haupt-Sidebar, `_leave_admin()` zeigt sie wieder
   - `src/api/auth.py` → User-Model mit account_type, permissions, has_permission()
   - `src/i18n/de.py` → ~80 Admin-/Permission-Texte
@@ -429,7 +444,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 - **Dateien**:
   - `src/services/document_processor.py` → `log_batch_complete()`, `log_delayed_costs()`
   - `src/ui/archive_boxes_view.py` → `DelayedCostWorker`, `_start_delayed_cost_check()`
-  - `src/ui/admin_view.py` → 4. Tab KI-Kosten, `LoadCostDataWorker`
+  - `src/ui/admin/panels/ai_costs.py` → KI-Kosten Panel, `LoadCostDataWorker` aus `ui.admin.workers`
   - `src/api/processing_history.py` → `get_cost_history()`, `get_cost_stats()`
   - `BiPro-Webspace Spiegelung Live/api/processing_history.php` → `getCostHistory()`, `getCostStats()`
   - `src/i18n/de.py` → ~30 neue KI-Kosten Keys
@@ -486,7 +501,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `VERSION` → Zentrale Versionsdatei
   - `src/services/update_service.py` → UpdateService (check, download, verify, install)
   - `src/ui/update_dialog.py` → UpdateDialog (3 Modi, Progress-Bar)
-  - `src/ui/admin_view.py` → 5. Tab Releases (LoadReleasesWorker, UploadReleaseWorker)
+  - `src/ui/admin/panels/releases.py` → Releases Panel (LoadReleasesWorker, UploadReleaseWorker aus `ui.admin.workers`)
   - `src/api/releases.py` → ReleasesAPI Client
   - `src/main.py` → Update-Check nach Login, APP_VERSION aus VERSION-Datei
   - `src/ui/main_hub.py` → Periodischer UpdateCheckWorker (30 Min Timer)
@@ -659,7 +674,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `BiPro-Webspace Spiegelung Live/api/index.php` → Route-Registrierung
   - `src/api/passwords.py` → Python API Client
   - `src/services/pdf_unlock.py` → `get_known_passwords()`, `clear_password_cache()` (dynamisch)
-  - `src/ui/admin_view.py` → Tab 6 Passwoerter + `_PasswordDialog`
+  - `src/ui/admin/panels/passwords.py` → Passwoerter Panel + `PasswordDialog` aus `ui.admin.dialogs`
   - `src/i18n/de.py` → ~35 neue Passwort-Verwaltungs-Keys
   - DB: `known_passwords` Tabelle (Migration 009)
 
@@ -688,7 +703,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `BiPro-Webspace Spiegelung Live/setup/010_smartscan_email.php` → DB-Migration (7 Tabellen)
   - `BiPro-Webspace Spiegelung Live/api/index.php` → Neue Routes
   - `src/api/smartscan.py` → `SmartScanAPI` + `EmailAccountsAPI` Clients
-  - `src/ui/admin_view.py` → 4 neue Tabs (7-10)
+  - `src/ui/admin/panels/` → Panels 7-10 (email_accounts, smartscan_settings, smartscan_history, email_inbox)
   - `src/ui/archive_boxes_view.py` → `SmartScanWorker`, `_SmartScanDialog`, Kontextmenue
   - `src/i18n/de.py` → ~120 neue Keys (SMARTSCAN_, EMAIL_ACCOUNT_, EMAIL_INBOX_)
 
@@ -706,7 +721,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 - **Dateien**:
   - `BiPro-Webspace Spiegelung Live/api/email_accounts.php` → IMAP-Polling + Inbox-Endpoints
   - `src/api/smartscan.py` → `EmailAccountsAPI` mit IMAP-Methoden
-  - `src/ui/admin_view.py` → Panel 12 IMAP Inbox + Settings-Integration
+  - `src/ui/admin/panels/email_inbox.py` → IMAP Inbox Panel + Settings-Integration
   - `src/ui/bipro_view.py` → `MailImportWorker`, `_fetch_mails()` (BiPRO-Button)
   - `src/i18n/de.py` → EMAIL_INBOX_, IMAP_IMPORT_ und BIPRO_MAIL_FETCH_ Keys
 
@@ -924,7 +939,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `BiPro-Webspace Spiegelung Live/setup/017_document_ai_data.php` → DB-Migration
   - `BiPro-Webspace Spiegelung Live/api/documents.php` → POST/GET /documents/{id}/ai-data + CASCADE-Delete
   - `src/api/documents.py` → `save_ai_data()`, `get_ai_data()`, `get_missing_ai_data_documents()`
-  - `src/api/openrouter.py` → _usage/_raw_response/_prompt_text in classify_*-Funktionen
+  - `src/api/openrouter/classification.py` → _usage/_raw_response/_prompt_text in classify_*-Funktionen
   - `src/services/document_processor.py` → `_extract_full_text()`, `_persist_ai_data()`
   - `src/i18n/de.py` → AI_DATA_* Keys (5 Stueck)
 
@@ -1025,9 +1040,9 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `BiPro-Webspace Spiegelung Live/api/index.php` → Route-Registrierung
   - `BiPro-Webspace Spiegelung Live/setup/019_processing_ai_settings.php` → DB-Migration
   - `src/api/processing_settings.py` → Python API Client
-  - `src/api/openrouter.py` → Parametrisierbare classify_sparte_with_date() + Untermethoden
+  - `src/api/openrouter/classification.py` → Parametrisierbare classify_sparte_with_date() + Untermethoden
   - `src/services/document_processor.py` → _load_ai_settings() + _get_classify_kwargs()
-  - `src/ui/admin_view.py` → Panel KI-Klassifikation mit Pipeline + Prompt-Editor + Versionen
+  - `src/ui/admin/panels/ai_classification.py` → KI-Klassifikation Panel mit Pipeline + Prompt-Editor + Versionen
   - `src/i18n/de.py` → ~45 neue PROCESSING_AI_ Keys
 
 ### 2ae. KI-Provider-System (OpenRouter + OpenAI) ✅ (v2.1.2)
@@ -1093,10 +1108,11 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `src/api/model_pricing.py` → Python API Client (ModelPrice, ModelPricingAPI)
   - `src/services/cost_calculator.py` → Token-Zaehlung + Kostenberechnung (tiktoken)
   - `src/config/ai_models.py` → Zentrale Modell-Definitionen pro Provider
-  - `src/api/openrouter.py` → Server-Kosten propagieren (_server_cost_usd), Provider-Log
+  - `src/api/openrouter/classification.py` → Server-Kosten propagieren (_server_cost_usd), Provider-Log
   - `src/services/document_processor.py` → Akkumulierte Kosten (ProcessingResult.cost_usd, BatchProcessingResult)
   - `src/ui/archive_boxes_view.py` → Provider-aware Credits/Kosten, verkuerzter Delay bei OpenAI
-  - `src/ui/admin_view.py` → 3 neue Panels (KI-Provider, Modell-Preise) + erweiterte KI-Kosten
+  - `src/ui/admin/panels/ai_providers.py` → KI-Provider Panel
+  - `src/ui/admin/panels/model_pricing.py` → Modell-Preise Panel + erweiterte KI-Kosten
   - `src/i18n/de.py` → ~65 neue Keys (AI_PROVIDER_, MODEL_PRICING_, AI_COSTS_REQUESTS_)
   - `requirements.txt` → `tiktoken>=0.5.0,<1.0.0`
 
@@ -1125,11 +1141,33 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `BiPro-Webspace Spiegelung Live/api/index.php` → Route-Registrierung (`document-rules`, `admin/document-rules`)
   - `src/api/document_rules.py` → `DocumentRulesSettings` Dataclass + `DocumentRulesAPI` Client
   - `src/services/document_processor.py` → `_load_document_rules()`, `_apply_document_rules()`, `_apply_duplicate_rule()`, `_remove_empty_pages()`
-  - `src/ui/admin_view.py` → Panel 9 Dokumenten-Regeln (`_create_document_rules_tab()`, `_load_document_rules()`, `_save_document_rules()`)
+  - `src/ui/admin/panels/document_rules.py` → Dokumenten-Regeln Panel
   - `src/ui/archive_boxes_view.py` → Preview-Cache-Invalidierung in `_on_processing_finished()`
   - `src/i18n/de.py` → ~35 neue DOC_RULES_* Keys
 
-### 2ag. Cache-Wipe bei ungültiger Session ✅ (v2.1.3)
+### 2ag. Bild-zu-PDF-Konvertierung ✅ (v3.1.1)
+- **Zweck**: Bilddateien (PNG, JPG, TIFF, BMP, GIF, WEBP) automatisch in PDF konvertieren, damit sie die normale KI-Klassifikations-Pipeline durchlaufen koennen
+- **Trigger**: Bilddatei wird hochgeladen (Drag & Drop, Upload-Button, E-Mail-Anhang) — Konvertierung passiert VOR dem Upload, analog zu ZIP-Entpackung und MSG-Extraktion
+- **Unterstuetzte Formate**: `.png`, `.jpg`, `.jpeg`, `.tiff`, `.tif`, `.bmp`, `.gif`, `.webp`
+- **Ablauf**:
+  1. Bilddatei wird in der Upload-Pipeline als Bild erkannt (`is_image_file()`)
+  2. Bild wird per PyMuPDF (`fitz.open()` → `convert_to_pdf()`) in PDF konvertiert
+  3. Konvertiertes PDF → Eingangsbox (normaler Upload, behaelt Farbmarkierung etc.)
+  4. Original-Bild → Roh-Archiv
+  5. PDF durchlaeuft im naechsten Verarbeitungslauf die KI-Pipeline (OCR, Klassifikation, Benennung)
+- **Integrationspunkte** (3 Stellen, jeweils via `_prepare_single_file()` Helper):
+  - `DropUploadWorker._expand_all_files()` in `main_hub.py` (Drag & Drop)
+  - `MultiUploadWorker._expand_all_files()` in `archive/workers.py` (Button-Upload)
+  - `MailImportWorker._expand_attachment()` in `bipro/workers.py` (IMAP-Anhaenge)
+- **Keine neue Abhaengigkeit**: PyMuPDF (`fitz`) ist bereits in requirements.txt
+- **Dateien**:
+  - `src/services/image_converter.py` → `is_image_file()`, `convert_image_to_pdf()`, `IMAGE_EXTENSIONS`
+  - `src/ui/main_hub.py` → `DropUploadWorker._prepare_single_file()` (Bild→PDF + PDF-Unlock)
+  - `src/ui/archive/workers.py` → `MultiUploadWorker._prepare_single_file()`
+  - `src/bipro/workers.py` → `MailImportWorker._prepare_single_file()`
+  - `src/i18n/de.py` → IMAGE_* Keys (5 Stueck)
+
+### 2ah. Cache-Wipe bei ungültiger Session ✅ (v2.1.3)
 - **Zweck**: Lokale Caches loeschen wenn beim App-Start keine gueltige Session vorhanden ist
 - **Trigger**: `_try_auto_login()` in `LoginDialog` stellt fest, dass der gespeicherte Token ungueltig ist oder kein Token existiert
 - **Ablauf**: `_clear_local_caches()` wird aufgerufen und loescht den gesamten `%TEMP%/bipro_preview_cache/` Ordner
@@ -1137,6 +1175,159 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 - **Fehlertoleranz**: Fehler beim Loeschen werden nur im Debug-Log vermerkt, kein Crash
 - **Dateien**:
   - `src/ui/login_dialog.py` → `_clear_local_caches()`, Aufruf in `_try_auto_login()` else-Zweig
+
+### 3. Provisionsmanagement (Geschaeftsfuehrer-Ebene) ✅ (v3.0.0, GF-Rework v3.1.0, Stabilisierung v3.2.1)
+- **Zweck**: Zentrales Modul fuer Provisionsabrechnung, Berater-Verwaltung, VU-Datenimport und Monatsabrechnungen
+- **Phase 1 (aktuell)**: GF/Admin-only (voller Funktionsumfang nur fuer Administratoren mit `provision_manage` Permission)
+- **Phase 2 (geplant)**: Rollenbasierte Sichten (TL sieht Team, Berater sieht sich selbst)
+- **GF-Rework v3.1.0**: Komplettes visuelles und semantisches Rework der Management-Oberflaeche
+  - **Produkt-Prinzipien**: Jede Zahl beantwortet Was/Woher/Was-tun, kein Backend-Vokabular im UI
+  - **Neues Informationsmodell**: 6 Objekte (Abrechnungslauf, Provisionsposition, Vertrag, Zuordnung, Verteilschluessel, Auszahlung)
+  - **Shared Widgets (`widgets.py`)**: PillBadgeDelegate, DonutChartWidget, FilterChipBar, SectionHeader, ThreeDotMenuDelegate, KpiCard, PaginationBar, StatementCard, ActivityFeedWidget
+  - **Rich-Tooltips**: `build_rich_tooltip()` (Definition, Berechnung, Quelle, Hinweis) auf allen KPIs und Spalten
+  - **Pill-Badges**: PILL_COLORS, ROLE_BADGE_COLORS, ART_BADGE_COLORS in tokens.py fuer Status/Rolle/Art
+  - **Activity-Logging**: Alle PM-Aktionen (Employee CRUD, Match, Ignore, Import, Abrechnung, Mapping) werden in activity_log geloggt
+  - **Klaerfall-Counts**: `GET /pm/clearance` liefert aufgeschluesselte Klaerfall-Typen (no_contract, unknown_vermittler, no_model, no_split)
+  - **Audit-Endpunkt**: `GET /pm/audit[/{entity_type}/{entity_id}]` fuer PM-Aktivitaetshistorie
+- **Architektur**: Eigenstaendiger Hub mit eigener Sidebar (wie AdminView), 7 Sub-Panels, Lazy-Loading
+- **Stabilisierung v3.2.1**: 55 Befunde aus Code-Audit behoben:
+  - **Transaktions-Sicherheit**: /match und autoMatchCommissions() in DB-Transactions
+  - **QThread-Worker**: 5 sync API-Calls durch Worker ersetzt (UI blockiert nicht mehr)
+  - **DB-Indizes**: 8 operative Indizes + UNIQUE Constraint (Performance + Race-Condition-Schutz)
+  - **Validierung**: Employee-Felder, Abrechnungs-Status-Transitions, json_error() return
+  - **UI-Fixes**: PillBadgeDelegate Crash, DonutChart NaN, FilterChipBar Stretch, StatementCard Leak
+  - **i18n**: 20 hardcodierte Strings migriert
+  - **SQL-Optimierung**: ROW_NUMBER() statt korrelierter Subquery, N+1 eliminiert
+- **Stabilisierung v3.2.2**: 2 weitere Befunde nach fachlicher Klaerung behoben:
+  - **H-2 VSNR-Normalisierung**: Jetzt werden ALLE Nullen entfernt (nicht nur fuehrende), Migration 026 re-normalisiert Bestandsdaten
+  - **L-15 betrag=0**: 0€-Zeilen werden jetzt importiert als `art='nullmeldung'`, gelbes Badge im UI
+  - **M-20 VU-Abgleich**: Bewusst NICHT implementiert (VSNRs sind eindeutig, VU-Namen inkonsistent)
+- **Berechtigung**: `provision_access` fuer alle PM-Endpoints, `provision_manage` fuer Gefahrenzone + Rechtevergabe (NEU v3.3.0: Nicht automatisch fuer Admins, explizite Zuweisung noetig)
+- **Split-Engine (Batch-SQL, optimiert v3.0.0)**:
+  - `batchRecalculateSplits()` berechnet Splits in 3 Batch-UPDATE-Queries statt per-Row-Loop
+  - **Negative Betraege / Rueckbelastungen**: Berater traegt seinen Anteil allein (`tl_anteil = 0`)
+  - **Positive ohne Teamleiter**: Einfacher Split (Berater-Anteil + AG-Anteil)
+  - **Positive mit Teamleiter**: TL-Override wird vom Berater-Anteil abgezogen (Basis: `berater_anteil` oder `gesamt_courtage`)
+  - **Formel**: `berater_brutto = betrag * rate / 100`, `ag = betrag - berater_brutto`, `tl = berater_brutto * tl_rate / 100` (bei Basis berater_anteil)
+  - **Plausibilitaet**: `berater_anteil + tl_anteil + ag_anteil == betrag` (immer, geprueft)
+  - `recalculateCommissionSplit()` bleibt fuer Einzel-Updates (manuelles Matching)
+- **VSNR-Normalisierung (v3.2.2)**: `normalizeVsnr()` in PHP + Python: Nicht-Ziffern entfernen + ALLE Nullen entfernen (fuehrend UND intern). Ermoeglicht robustes Matching bei unterschiedlichen VSNR-Schreibweisen (z.B. "00123045" und "12345" matchen). Scientific Notation (z.B. aus Excel) wird zu Integer konvertiert.
+- **Vermittler-Normalisierung**: `normalizeVermittlerName()`: Lowercase, Umlaute → ae/oe/ue/ss, Sonderzeichen entfernen
+- **VN-Normalisierung (NEU v3.2.0)**: `normalizeForDb()` in PHP / `normalize_for_db()` in Python: Lowercase, Umlaute→ae/oe/ue/ss, Klammern aufloesen, Sonderzeichen entfernen. Gespeichert als `versicherungsnehmer_normalized` in `pm_commissions` und `pm_contracts` (indexiert).
+- **VB-Name-Parser (NEU v3.2.0)**: `_normalize_vb_name()` in Python: Konvertiert VB-Format "NACHNAME (VORNAME)" in "Nachname Vorname"
+- **Korrigierte VU-Spalten (NEU v3.2.0)**: `vn_col` in VU_COLUMN_MAPPINGS korrigiert: Allianz=AE, SwissLife=U, VB=C (vorher falsche Spalten)
+- **Xempus-ID-Support (NEU v3.2.0)**: Import nutzt Xempus-IDs (Spalte AM=ID, AN=ArbN-ID, AO=ArbG-ID) fuer Vertragserkennung
+- **Xempus-Status-Handling (NEU v3.2.0)**: Skip NUR "Nicht gewünscht"; "Beantragt"→'beantragt', "Unberaten"/"Entscheidung ausstehend"→'offen'
+- **Multi-Level Matching Engine (NEU v3.2.0)**:
+  - `GET /pm/match-suggestions` mit CASE-basiertem Scoring (1 Query, keine Duplikate)
+  - Score 100: VSNR exakt, Score 90: Alt-VSNR, Score 70: Name exakt, Score 40: Name partiell
+  - Forward (Commission→Contract) und Reverse (Contract→Commission) Richtung
+  - Optional: Freitextsuche per `q` Parameter
+  - Helper-Funktionen: `buildScoreSql()`, `buildReasonSql()`, `buildWhereOr()`
+- **Transaktionale Zuordnung (NEU v3.2.0)**:
+  - `PUT /pm/assign` mit Konfliktpruefung und `force_override`
+  - Setzt `contract_id` + `berater_id` synchron + berechnet Splits
+  - Activity-Logging fuer jede manuelle Zuordnung
+- **MatchContractDialog (NEU v3.2.0)**: Dialog fuer manuelle Vertragszuordnung
+  - Zeigt VU-Datensatz oben (VU, VSNR, Kunde, Betrag, Vermittler, Quelle)
+  - Suchfeld mit Server-seitigem Multi-Level-Matching
+  - Ergebnistabelle mit Score, VSNR, Kunde, VU, Sparte, Berater, Treffer-Typ
+  - PillBadge-Delegates fuer Score und Treffer-Typ
+  - Automatische Suche beim Oeffnen
+  - Reassignment-Support mit Bestaetigungsdialog
+- **Server-seitige Pagination (NEU v3.2.0)**:
+  - `GET /pm/commissions` und `GET /pm/contracts` unterstuetzen `page`/`per_page`
+  - Response mit `pagination: { page, per_page, total, total_pages }`
+  - `PaginationInfo` Dataclass in Python API Client
+- **Reverse-Matching (NEU v3.2.0)**:
+  - `GET /pm/contracts/unmatched` liefert Xempus-Vertraege ohne VU-Provision
+  - Mit Datumsfilter (`from`, `to`) und Pagination
+- **VU-Vermittler-Spalte (NEU v3.2.0)**: Neue Spalte in Klaerfall- und Positionstabellen zeigt VU-Vermittlernamen
+- **Erweiterter Mapping-Dialog (NEU v3.2.0)**: Zeigt VU-Vermittlername + Xempus-Berater, Option beide gleichzeitig zu mappen
+- **Auto-Matching (5-Schritt Batch-JOIN)**:
+  1. **VSNR-Match**: `pm_commissions.vsnr_normalized JOIN pm_contracts.vsnr_normalized`
+  2. **Alt-VSNR-Match**: Fallback auf `vsnr_alt_normalized` fuer umbenannte VSNRs
+  3. **Berater-Aufloesung**: `vermittler_name_normalized JOIN pm_vermittler_mapping.vermittler_name_normalized`
+  4. **Split-Berechnung**: `batchRecalculateSplits()` (3 Batch-UPDATEs)
+  5. **Vertragsstatus-Update**: Vertraege auf `provision_erhalten` setzen
+  - Performance: ~11s fuer 15.010 Provisionszeilen (vorher Timeout bei per-Row-Loop)
+- **Abrechnungen**: Snapshot-Prinzip mit Revisionierung (immutabel nach Freigabe)
+  - `generate_abrechnung(monat)`: Erstellt/aktualisiert Abrechnungen pro Berater fuer den Monat
+  - Revision wird bei erneuter Generierung automatisch hochgezaehlt
+  - Felder: brutto_provision, tl_abzug, netto_provision, rueckbelastungen, auszahlung
+  - Status-Workflow: berechnet → geprueft → freigegeben → ausgezahlt
+- **Dashboard (GF-Rework: Entscheidungs-Cockpit)**:
+  - 4 KPI-Karten (2x2 Grid): Gesamtprovision, Zuordnungsquote (mit DonutChart), Klaerfaelle (Server-Counts), Auszahlungen
+  - Jede Karte mit Subline, Tooltip, Extra-Labels und Action-Button
+  - YTD-Werte, Trend vs. Vormonat, Top-3 VU
+  - Per-Berater-Ranking: PillBadgeDelegate fuer Rollen
+- **Import**:
+  - **VU-Provisionslisten**: Excel-Parser fuer 3 VU-Formate (Allianz, SwissLife, VB)
+  - **Xempus-Export**: Beratungen mit VSNR, VN, Sparte, Beitrag, Berater-Zuordnung
+  - **Paralleler Import**: `VuImportWorker` mit `ThreadPoolExecutor` (max 15 Worker, adaptive Chunk-Groesse)
+  - **Duplikat-Erkennung**: SHA256-basierter `row_hash` verhindert doppelte Zeilen
+  - **Column-Mappings**: Hardcodiert in `src/services/provision_import.py` (VU_COLUMN_MAPPINGS, XEMPUS_BERATUNGEN_COLUMNS)
+- **7 Panels (GF-Rework v3.1.0, Settings v3.2.2)** (mit Sidebar-Navigation + Subtexten):
+  1. **Uebersicht**: Entscheidungs-Cockpit mit 4 KPI-Karten (DonutChart, Klaerfall-Counts, Auszahlungen) + Berater-Ranking
+  2. **Abrechnungslaeufe**: VU-Abrechnung importieren, Import-Batch-Historie, Validierungsstatus-Badges
+  3. **Provisionspositionen**: Master-Detail-Tabelle mit FilterChips, PillBadges, ThreeDotMenu, Detail-Seitenpanel (Originaldaten, Matching, Verteilung, Auditlog)
+  4. **Zuordnung & Klaerfaelle**: Klaerfall-Typen mit FilterChips, ungematchte Positionen, Vermittler-Zuordnungen
+  5. **Verteilschluessel & Rollen**: Provisionsmodelle als Karten mit Beispielrechnung + Mitarbeiter-Tabelle mit Rollen-Badges
+  6. **Auszahlungen & Reports**: Monatsabrechnungen mit StatementCards, Status-Workflow, CSV/Excel-Export
+  7. **Einstellungen (NEU v3.2.2)**: Gefahrenzone mit Daten-Reset (3s-Countdown-Bestaetigung, loescht Commissions/Contracts/Batches/Abrechnungen, behaelt Employees/Models/Mappings)
+- **DB-Tabellen**: 7 neue `pm_*` Tabellen + 2 Permissions (`provision_access`, `provision_manage`)
+  - `pm_commission_models`: Provisionssatzmodelle (Name, Rate, is_active)
+  - `pm_employees`: Mitarbeiter (Name, Rolle, Model-ID, TL-Override-Rate/-Basis, Teamleiter-ID)
+  - `pm_contracts`: Vertraege aus Xempus (VSNR, VU, Berater-ID, Status, xempus_id, versicherungsnehmer_normalized)
+  - `pm_commissions`: Provisionsbuchungen (VSNR, Betrag, Art, Match-Status, Splits, versicherungsnehmer_normalized)
+  - `pm_vermittler_mapping`: VU-Vermittlername → interner Berater
+  - `pm_berater_abrechnungen`: Monatsabrechnungen pro Berater (Snapshot)
+  - `pm_import_batches`: Import-Historie (Source, Filename, Sheet, Rows)
+- **PHP-Endpoints (alle unter `/pm/...`)**:
+  | Route | Methoden | Beschreibung |
+  |-------|----------|--------------|
+  | `/pm/employees[/{id}]` | GET/POST/PUT/DELETE | Mitarbeiter-CRUD |
+  | `/pm/contracts[/{id}]` | GET/PUT | Vertraege + Berater-Zuweisung |
+  | `/pm/commissions` | GET | Provisionen (Filter: match_status, berater_id, von, bis, versicherer) |
+  | `/pm/commissions/{id}/match` | PUT | Manuelles Matching |
+  | `/pm/commissions/{id}/ignore` | PUT | Provision ignorieren |
+  | `/pm/commissions/recalculate` | POST | Splits neu berechnen |
+  | `/pm/import/vu-liste` | POST | VU-Provisionsliste importieren |
+  | `/pm/import/xempus` | POST | Xempus-Beratungen importieren |
+  | `/pm/import/match` | POST | Auto-Matching ausloesen |
+  | `/pm/import/batches` | GET | Import-Historie |
+  | `/pm/dashboard/summary` | GET | Dashboard KPI-Daten |
+  | `/pm/dashboard/berater/{id}` | GET | Berater-Detail mit Provisionen |
+  | `/pm/mappings` | GET/POST | Vermittler-Mappings (GET: include_unmapped=1 fuer ungeloeste) |
+  | `/pm/mappings/{id}` | DELETE | Mapping loeschen |
+  | `/pm/abrechnungen[/{id}]` | GET/POST/PUT | Abrechnungen generieren/laden/Status aendern |
+  | `/pm/models[/{id}]` | GET/POST/PUT | Provisionsmodelle CRUD |
+  | `/pm/clearance` | GET | **NEU v3.1.0**: Klaerfall-Counts (no_contract, unknown_vermittler, no_model, no_split) |
+  | `/pm/audit[/{type}/{id}]` | GET | **NEU v3.1.0**: PM-Aktivitaetshistorie (action_category=provision) |
+  | `/pm/match-suggestions` | GET | **NEU v3.2.0**: Multi-Level-Matching (forward/reverse, CASE-Scoring) |
+  | `/pm/assign` | PUT | **NEU v3.2.0**: Transaktionale Zuordnung (commission→contract, force_override) |
+  | `/pm/contracts/unmatched` | GET | **NEU v3.2.0**: Xempus-Vertraege ohne VU-Provision (Pagination + Datumsfilter) |
+  | `/pm/reset` | POST | **NEU v3.2.2**: Gefahrenzone - Loescht alle Import-Daten (Admin-only, behaelt Employees/Models/Mappings) |
+- **Dateien**:
+  - `BiPro-Webspace Spiegelung Live/api/provision.php` → PHP Backend (~1400 Zeilen, Split-Engine, Auto-Matching, Activity-Logging, Clearance, Audit, Match-Suggestions, Assign, Pagination)
+  - `BiPro-Webspace Spiegelung Live/api/index.php` → Route `case 'pm'` → `handleProvisionRequest()`, + `match-suggestions`, `assign`
+  - `BiPro-Webspace Spiegelung Live/setup/024_provision_matching_v2.php` → **NEU v3.2.0**: DB-Migration (VN-Normalisierung, Indizes, UNIQUE Constraints, Backfill)
+  - `BiPro-Webspace Spiegelung Live/setup/025_provision_indexes.php` → **NEU v3.2.1**: DB-Migration (8 operative Indizes auf pm_commissions/pm_contracts + UNIQUE auf pm_berater_abrechnungen)
+  - `BiPro-Webspace Spiegelung Live/setup/026_vsnr_renormalize.php` → **NEU v3.2.2**: DB-Migration (Re-Normalisierung aller VSNRs: alle Nullen entfernen)
+  - `BiPro-Webspace Spiegelung Live/setup/029_provision_role_permissions.php` → **NEU v3.3.0**: DB-Migration (provision_access + provision_manage Permissions + admin-User Zuweisung)
+  - `src/api/provision.py` → Python API Client (~830 Zeilen, 11 Dataclasses inkl. ContractSearchResult + PaginationInfo + ProvisionAPI)
+  - `src/services/provision_import.py` → VU/Xempus-Parser (~650 Zeilen, Column-Mappings, normalize_vsnr/normalize_vermittler_name/normalize_for_db, Xempus-ID-Support)
+  - `src/ui/provision/provision_hub.py` → ProvisionHub (~217 Zeilen, 6-Panel Sidebar + QStackedWidget, Lazy-Loading, Subtexte)
+  - `src/ui/provision/widgets.py` → **NEU v3.1.0**: Shared Widgets (9 Klassen: PillBadgeDelegate, DonutChartWidget, FilterChipBar, SectionHeader, ThreeDotMenuDelegate, KpiCard, PaginationBar, StatementCard, ActivityFeedWidget)
+  - `src/ui/provision/dashboard_panel.py` → Dashboard (~383 Zeilen, 4 KPI-Karten mit DonutChart, Klaerfall-Counts vom Server, Berater-Ranking)
+  - `src/ui/provision/provisionspositionen_panel.py` → Provisionspositionen (~820 Zeilen, Master-Detail mit FilterChips, PillBadges, VU-Vermittler-Spalte, Mapping-Dialog, Detail-Seitenpanel)
+  - `src/ui/provision/zuordnung_panel.py` → Zuordnung & Klaerfaelle (~880 Zeilen, Klaerfall-Typen, VU-Vermittler-Spalte, MatchContractDialog, Mapping-Dialog, Reverse-Matching)
+  - `src/ui/provision/abrechnungslaeufe_panel.py` → **NEU v3.1.0**: Abrechnungslaeufe (~300 Zeilen, Import mit GF-Terminologie, Batch-Historie)
+  - `src/ui/provision/verteilschluessel_panel.py` → **NEU v3.1.0**: Verteilschluessel & Rollen (~250 Zeilen, Modell-Karten + Mitarbeiter-Tabelle)
+  - `src/ui/provision/auszahlungen_panel.py` → **NEU v3.1.0**: Auszahlungen & Reports (~340 Zeilen, StatementCards, Status-Workflow, Export)
+  - `src/ui/main_hub.py` → Nav-Button + show/leave Pattern + dynamische Stack-Indizes
+  - `src/ui/styles/tokens.py` → PILL_COLORS, ROLE_BADGE_COLORS, ART_BADGE_COLORS, build_rich_tooltip(), get_provision_table_style()
+  - `src/i18n/de.py` → ~320 PROVISION_* Keys (6 Sektionen: Navigation, Dashboard, Positionen, Zuordnung, Verteilschluessel, Auszahlungen, Laeufe + Tooltips + Widget-Labels + Matching V2)
 
 ### 2x. Mitteilungszentrale / Communication Hub ✅ (v2.0.0)
 - **Zweck**: Zentrales Kommunikations- und Informationsportal in der App
@@ -1163,7 +1354,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `src/ui/message_center_view.py` → Dashboard-View (3 Kacheln)
   - `src/ui/chat_view.py` → Vollbild-Chat-View
   - `src/ui/main_hub.py` → NavButton + Badge + NotificationPoller + Chat-Sidebar-Hide
-  - `src/ui/admin_view.py` → Panel 14 Mitteilungen
+  - `src/ui/admin/panels/messages.py` → Mitteilungen Panel
   - `src/i18n/de.py` → ~60 neue Keys (MSG_CENTER_, CHAT_, ADMIN_MSG_)
 
 ### 3. Datei öffnen/speichern
@@ -1283,7 +1474,7 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 
 ---
 
-## Aktueller Stand (18. Februar 2026)
+## Aktueller Stand (19. Februar 2026)
 
 ### Implementiert ✅
 - ✅ GDV-Dateien öffnen/parsen/speichern
@@ -1604,6 +1795,63 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 - ✅ **Python DocumentRulesAPI Client: get_rules() + save_rules() (v2.1.3)**
 - ✅ **Cache-Wipe bei ungültiger Session: Preview-Cache wird beim Start geleert wenn Session abgelaufen (v2.1.3)**
 - ✅ **i18n: ~40 neue Keys (DOC_RULES_*, PDF_EDIT_DELETE_MULTI_*, PDF_EDIT_MIN_ONE_*, PDF_EDIT_MULTI_*, PDF_EDIT_REFRESH*) (v2.1.3)**
+- ✅ **Bild-zu-PDF-Konvertierung: Bilddateien (PNG/JPG/TIFF/BMP/GIF/WEBP) automatisch in PDF konvertieren beim Upload (v3.1.1)**
+- ✅ **image_converter.py: Neues Service-Modul mit convert_image_to_pdf() via PyMuPDF (v3.1.1)**
+- ✅ **Upload-Pipeline: _prepare_single_file() in 3 Workern (DragDrop, ButtonUpload, MailImport) — Bild→PDF + Original→Roh (v3.1.1)**
+- ✅ **i18n: 5 neue IMAGE_* Keys fuer Bildkonvertierung (v3.1.1)**
+- ✅ **Provisionsmanagement: Eigenstaendiger Hub mit 7 Sub-Panels (Dashboard, Mitarbeiter, Vertraege, Provisionen, Import, Mappings, Abrechnungen) (v3.0.0)**
+- ✅ **ProvisionHub: Vollbild-Ansicht mit eigener Sidebar (wie Admin), Lazy-Loading, Permission provision_manage (v3.0.0)**
+- ✅ **Dashboard: KPI-Karten (Eingang, Rueckbelastung, AG-Anteil, TL, Berater, YTD-Werte) + Berater-Ranking (v3.0.0)**
+- ✅ **Mitarbeiter-CRUD: Rollen (Consulter/Teamleiter/Backoffice), Provisionssaetze, TL-Override-Rate/-Basis (v3.0.0)**
+- ✅ **VU-Provisionslisten Import: 3 Formate (Allianz/SwissLife/VB), paralleler Import mit ThreadPoolExecutor (max 15 Worker) (v3.0.0)**
+- ✅ **Xempus-Beratungen Import: VSNR, VN, Sparte, Beitrag, Berater-Zuordnung, Duplikat-Erkennung (v3.0.0)**
+- ✅ **Auto-Matching: 5-Schritt Batch-JOIN (VSNR + Alt-VSNR + Vermittler-Mapping + Splits + Vertragsstatus), ~11s fuer 15.010 Zeilen (v3.0.0)**
+- ✅ **Split-Engine (Batch-SQL): 3 Batch-UPDATEs statt per-Row-Loop (Negative/Positive ohne TL/Positive mit TL) (v3.0.0)**
+- ✅ **Vermittler-Mapping: Case-insensitive Normalisierung, Umlaute→ae/oe/ue, ungeloeste Vermittler-Anzeige (v3.0.0)**
+- ✅ **Monatsabrechnungen: Snapshot-Prinzip, Revisionierung, Status-Workflow (berechnet→geprueft→freigegeben→ausgezahlt) (v3.0.0)**
+- ✅ **PHP Backend provision.php: ~1100 Zeilen, 15+ Route-Handler, Split-Engine, Auto-Matching (v3.0.0)**
+- ✅ **Python ProvisionAPI: 9 Dataclasses (Employee, Contract, Commission, etc.), defensive .get()-Zugriffe (v3.0.0)**
+- ✅ **VU/Xempus-Parser: provision_import.py (~595 Zeilen), Column-Mappings, normalize_vsnr, normalize_vermittler_name (v3.0.0)**
+- ✅ **7 pm_* DB-Tabellen: pm_commission_models, pm_employees, pm_contracts, pm_commissions, pm_vermittler_mapping, pm_berater_abrechnungen, pm_import_batches (v3.0.0)**
+- ✅ **i18n: ~214 neue PROVISION_* Keys (Navigation, Dashboard, Employees, Contracts, Commissions, Import, Mappings, Billing, Models) (v3.0.0)**
+- ✅ **Matching V2: DB-Migration 024 mit versicherungsnehmer_normalized Spalte + 11 Indizes + UNIQUE Constraints + Backfill (v3.2.0)**
+- ✅ **VN-Normalisierung: normalizeForDb() in PHP + Python fuer performante LIKE-Suche auf indexierter Spalte (v3.2.0)**
+- ✅ **VU-Spalten-Korrektur: vn_col korrigiert (Allianz AE, SwissLife U, VB C) + VB-Name-Parser NACHNAME(VORNAME) (v3.2.0)**
+- ✅ **Xempus-ID-Support: Import nutzt Xempus-IDs (AM/AN/AO) fuer Vertragserkennung + Status-Handling (beantragt/offen) (v3.2.0)**
+- ✅ **Multi-Level Matching Engine: GET /pm/match-suggestions mit CASE-Scoring (100/90/70/40), forward + reverse (v3.2.0)**
+- ✅ **Transaktionale Zuordnung: PUT /pm/assign mit Konfliktpruefung, berater_id-Sync, Split-Berechnung, Audit-Log (v3.2.0)**
+- ✅ **MatchContractDialog: UI-Dialog mit VU-Datensatz-Header, Suchfeld, Score-Tabelle, PillBadge-Delegates (v3.2.0)**
+- ✅ **Server-seitige Pagination: page/per_page in GET /pm/commissions + /pm/contracts + PaginationInfo Dataclass (v3.2.0)**
+- ✅ **Reverse-Matching: GET /pm/contracts/unmatched fuer Xempus-Vertraege ohne VU-Provision (v3.2.0)**
+- ✅ **VU-Vermittler-Spalte: Neue Spalte in Klaerfall- und Positionstabellen + Detail-Panel (v3.2.0)**
+- ✅ **Erweiterter Mapping-Dialog: VU-Vermittlername + Xempus-Berater + Option beide gleichzeitig zu mappen (v3.2.0)**
+- ✅ **Rechtsklick-Menue erweitert: Vertrag zuordnen, Vertrag neu zuordnen, Berater-Mapping erstellen in allen Tabellen (v3.2.0)**
+- ✅ **i18n: ~40 neue Keys fuer Matching V2 (PROVISION_MATCH_DLG_*, PROVISION_MAPPING_DLG_*, PROVISION_COL_VERMITTLER, etc.) (v3.2.0)**
+- ✅ **Stabilisierung GF-Provision: 55 von 67 Befunden behoben (v3.2.1)**
+- ✅ **C-2 PillBadgeDelegate Crash: Argument-Reihenfolge in xempus_panel.py korrigiert (v3.2.1)**
+- ✅ **C-1 Transaction /match: beginTransaction/commit/rollBack um assignContractToCommission (v3.2.1)**
+- ✅ **C-3 Auto-Matching Transaction: Gesamte autoMatchCommissions() in Transaction, batch_filter konsistent (v3.2.1)**
+- ✅ **H-1 DB-Indizes: 8 operative Indizes auf pm_commissions/pm_contracts + UNIQUE pm_berater_abrechnungen (v3.2.1)**
+- ✅ **H-4 bis H-7 QThread-Worker: 5 neue Worker (Audit, Ignore, Mapping, BeraterDetail, Positionen) statt sync API-Calls (v3.2.1)**
+- ✅ **H-8 bis H-13 i18n: 20 hardcodierte Strings in 6 Panels durch 19 neue PROVISION_*-Keys ersetzt (v3.2.1)**
+- ✅ **M-5 N+1 syncBerater: recalculateCommissionSplit()-Loop durch batchRecalculateSplits() ersetzt (v3.2.1)**
+- ✅ **M-17 Employee-Validierung: Rate 0-100, TL-Basis Whitelist, Selbstreferenz-Check (POST+PUT) (v3.2.1)**
+- ✅ **M-18 Status-Transitions: State-Machine fuer Abrechnungs-Status (berechnet→geprueft→freigegeben→ausgezahlt) (v3.2.1)**
+- ✅ **M-16 Race Condition Revision: Atomares INSERT mit SELECT MAX(revision)+1 + UNIQUE Constraint (v3.2.1)**
+- ✅ **M-22/M-27 Worker-Management: get_blocking_operations() prueft alle Panel-Worker (v3.2.1)**
+- ✅ **M-28 Pagination: page_changed Signal verbunden, Client-seitige Paginierung implementiert (v3.2.1)**
+- ✅ **M-30 DonutChart: NaN/Infinity Guard in set_percent() (v3.2.1)**
+- ✅ **M-29 FilterChipBar: Stretch-Akkumulation beim Chip-Rebuild behoben (v3.2.1)**
+- ✅ **M-7 Abrechnungen SQL: ROW_NUMBER() OVER PARTITION statt korrelierter MAX-Subquery (v3.2.1)**
+- ✅ **M-26 Import-Worker: Chunk-Ergebnisse werden akkumuliert statt nur letztes emittiert (v3.2.1)**
+- ✅ **M-10 Employee-Einzelabruf: SELECT mit LEFT JOINs (model_name, teamleiter_name) statt SELECT * (v3.2.1)**
+- ✅ **M-21 json_error() return: 10+ Stellen in provision.php mit explizitem return abgesichert (v3.2.1)**
+- ✅ **M-24 PillBadge-Keys: Feste Server-Keys mit label_map statt i18n-generierte Keys (v3.2.1)**
+- ✅ **M-25 _all_unmatched init: Attribut im __init__ deklariert (v3.2.1)**
+- ✅ **L-4 Loose comparison: $betrag == 0 durch === 0.0 ersetzt (v3.2.1)**
+- ✅ **L-18 StatementCard Leak: clear_rows() entfernt Sub-Layout-Widgets korrekt (v3.2.1)**
+- ✅ **Toter Code entfernt: getEffectiveRate(), _detect_vb_columns*, XEMPUS_BERATUNGEN_COLUMNS, unreachbares return (v3.2.1)**
+- ✅ **Header-Doku: Endpoint-Liste in provision.php aktualisiert (match-suggestions, assign, clearance, audit) (v3.2.1)**
 
 ### TODO - DRINGEND
 - ✅ ~~OpenRouter als Mittelsmann eliminieren~~ → **ERLEDIGT v2.1.2**: KI-Provider-System unterstuetzt jetzt OpenRouter UND direkte OpenAI-API. Umschaltbar im Admin. ~96% Kostenersparnis bei OpenAI-Direktanbindung.
@@ -1617,15 +1865,16 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 - ⚠️ Nach Migration: Alle bestehenden JWTs ungueltig (Session-Check), Nutzer muessen sich neu einloggen
 
 ### Tech Debt
-- `bipro_view.py` ist sehr gross (~4900+ Zeilen) → Aufteilen: ParallelDownloadManager + MailImportWorker in eigene Dateien
-- `archive_boxes_view.py` ist sehr gross (~6350 Zeilen) → SmartScanWorker, BoxDownloadWorker, AtlasIndexWidget in eigene Dateien
-- `admin_view.py` ist sehr gross (~5200+ Zeilen) → 15 Panels in separate Dateien aufteilen
+- ~~`bipro_view.py` ist sehr gross (~4836 Zeilen) → Aufteilen: ParallelDownloadManager + MailImportWorker in eigene Dateien~~ → ✅ Worker ausgelagert nach `src/bipro/workers.py` (Schritt 2 Refactoring, 4836 → 3530 Zeilen)
+- ~~`archive_boxes_view.py` Worker extrahieren~~ → ✅ 16 Worker ausgelagert nach `src/ui/archive/workers.py` (Schritt 3 Refactoring, 6457 → 5645 Zeilen)
+- `archive_boxes_view.py` ist noch gross (~5645 Zeilen) → AtlasIndexWidget, BoxSidebar, DocumentHistoryPanel, ProcessingProgressOverlay in eigene Dateien
+- ~~`admin_view.py` ist sehr gross (~5200+ Zeilen) → 15 Panels in separate Dateien aufteilen~~ → ✅ Aufgeteilt in `src/ui/admin/` Package (21 Dateien, groesste: 693 Zeilen)
 - `main_hub.py` ist gewachsen (~1324 Zeilen) → NotificationPoller + DropUploadWorker auslagern
 - `main_window.py` ist zu gross (~1060 Zeilen) → Aufteilen
-- `openrouter.py` ist gross (~1760+ Zeilen) → Triage/Klassifikation separieren
+- ~~`openrouter.py` ist gross (~1760+ Zeilen) → Triage/Klassifikation separieren~~ → ✅ Aufgeteilt in `src/api/openrouter/` Package (6 Dateien, groesste: 1318 Zeilen classification.py)
 - `partner_view.py` enthaelt viel Datenextraktion → nach `domain/` verschieben
 - Inline-Styles in Qt (gegen User-Rule) → CSS-Module einfuehren
-- MTOM-Parser in `bipro_view.py` ist Duplikat von `transfer_service.py` → Konsolidieren
+- ~~MTOM-Parser in `bipro_view.py` ist Duplikat von `transfer_service.py`~~ → ✅ Konsolidiert in `src/bipro/mtom_parser.py` (Refactoring Schritt 1)
 - `QFont::setPointSize: Point size <= 0 (-1)` Warnings beim Start → Font-Initialisierung pruefen
 - Chat-Polling (30s) erzeugt bei vielen Nutzern Last → WebSocket-Migration in Phase 2 geplant
 
@@ -1775,13 +2024,14 @@ python test_roundtrip.py
 | `src/ui/chat_view.py` | **Vollbild-Chat-View (1:1 Nachrichten) NEU v2.0.0** |
 | `src/ui/main_window.py` | GDV-Editor Hauptfenster |
 | `src/ui/partner_view.py` | Partner-Übersicht |
-| `src/ui/bipro_view.py` | **BiPRO UI (~4900 Zeilen) (VU-Verwaltung, ParallelDownloadManager, MailImportWorker)** |
-| `src/ui/archive_boxes_view.py` | **Dokumentenarchiv mit Box-System + QTableView/Model-Architektur + SmartScan + Duplikat + Schliess-Schutz + ATLAS Index (~6350 Zeilen)** |
+| `src/ui/bipro_view.py` | **BiPRO UI (~3530 Zeilen) (VU-Verwaltung, Signal-Handling) — Worker ausgelagert nach bipro/workers.py** |
+| `src/ui/archive_boxes_view.py` | **Dokumentenarchiv mit Box-System + QTableView/Model-Architektur + SmartScan + Duplikat + Schliess-Schutz + ATLAS Index (~5645 Zeilen) — Worker ausgelagert nach ui/archive/workers.py** |
+| `src/ui/archive/workers.py` | **Archiv-Worker-Klassen (~845 Zeilen) — 16 QThread-Worker (Cache, Upload, Download, Processing, SmartScan, Credits, etc.)** |
 | `src/ui/archive_view.py` | Legacy-Archiv-View + `PDFViewerDialog` (Multi-Selection + PDFRefreshWorker) + `DuplicateCompareDialog` (Side-by-Side-Vergleich) |
 | `src/api/client.py` | API-Base-Client |
 | `src/api/documents.py` | **Dokumenten-API (Box-Support, Bulk-Ops, Duplikat-Erkennung, Farbmarkierung, ATLAS Index Suche)** |
 | `src/api/vu_connections.py` | VU-Verbindungen API |
-| `src/api/openrouter.py` | **OpenRouter Client (Zweistufige KI-Klassifikation + Confidence)** |
+| `src/api/openrouter/` | **OpenRouter Package (6 Dateien, ~2217 Zeilen): client.py (HTTP+Semaphore), classification.py (Klassifikation), ocr.py (OCR), models.py (Dataclasses), utils.py (Helpers)** |
 | `src/api/processing_history.py` | **Processing-History API Client (Audit-Trail)** |
 | `src/api/processing_settings.py` | **Processing-Settings API Client (KI-Klassifikation) NEU v2.1.1** |
 | `src/api/document_rules.py` | **DocumentRulesSettings + DocumentRulesAPI Client NEU v2.1.3** |
@@ -1792,12 +2042,15 @@ python test_roundtrip.py
 | `src/services/document_processor.py` | **Automatische Dokumenten-Klassifikation mit Confidence-Handling + AI-Daten-Persistierung + dynamische KI-Settings + akkumulierte Kosten + Dokumenten-Regeln** |
 | `src/services/data_cache.py` | **DataCacheService (Cache + Auto-Refresh, Thread-safe v0.9.4)** |
 | `src/config/processing_rules.py` | **Konfigurierbare Verarbeitungsregeln + BiPRO-Codes** |
-| `src/bipro/transfer_service.py` | BiPRO 430 Client (STS + Transfer + SharedTokenManager, ~1334 Zeilen) |
+| `src/bipro/transfer_service.py` | BiPRO 430 Client (STS + Transfer + SharedTokenManager, ~1329 Zeilen) |
+| `src/bipro/mtom_parser.py` | **Gemeinsamer MTOM/XOP Parser (~282 Zeilen) — parse_mtom_response, extract_boundary, split_multipart** |
 | `src/bipro/bipro_connector.py` | **BiPRO-Verbindungsabstraktion (SmartAdmin vs. Standard, ~397 Zeilen)** |
+| `src/bipro/workers.py` | **BiPRO Worker-Klassen (~1336 Zeilen) — FetchShipmentsWorker, DownloadShipmentWorker, AcknowledgeShipmentWorker, MailImportWorker, ParallelDownloadManager** |
 | `src/bipro/rate_limiter.py` | **AdaptiveRateLimiter (NEU v0.9.1)** |
 | `src/bipro/categories.py` | Kategorie-Code Mapping |
 | `src/services/update_service.py` | **UpdateService (Auto-Update Check + Download + Install)** |
 | `src/services/zip_handler.py` | **ZIP-Handler (Entpacken, Passwort, rekursiv) NEU v1.0.5** |
+| `src/services/image_converter.py` | **Bild-zu-PDF-Konvertierung (PNG/JPG/TIFF/BMP/GIF/WEBP → PDF via PyMuPDF) NEU v3.1.1** |
 | `src/services/pdf_unlock.py` | **PDF-Unlock (dynamische Passwoerter aus DB) v1.0.5** |
 | `src/services/empty_page_detector.py` | **Leere-Seiten-Erkennung (4-Stufen: Text, Vektoren, Bilder, Pixel) NEU v2.0.2** |
 | `src/services/msg_handler.py` | **MSG-Handler (Outlook .msg Anhaenge extrahieren) NEU v1.0.4** |
@@ -1815,13 +2068,24 @@ python test_roundtrip.py
 | `src/api/smartscan.py` | **SmartScanAPI + EmailAccountsAPI Clients (NEU v1.0.6)** |
 | `src/api/messages.py` | **MessagesAPI Client (Mitteilungen + Polling) NEU v2.0.0** |
 | `src/api/chat.py` | **ChatAPI Client (1:1 Chat-Nachrichten) NEU v2.0.0** |
+| `src/api/provision.py` | **Provisions-API Client (~640 Zeilen, 9 Dataclasses + ProvisionAPI) NEU v3.0.0** |
+| `src/services/provision_import.py` | **VU/Xempus-Parser (~595 Zeilen, Column-Mappings, Normalisierung) NEU v3.0.0** |
+| `src/ui/provision/provision_hub.py` | **ProvisionHub (~230 Zeilen, eigene Sidebar + 7 Panels) NEU v3.0.0** |
+| `src/ui/provision/dashboard_panel.py` | **Dashboard (~232 Zeilen, KPI-Karten + BeraterRankingModel) NEU v3.0.0** |
+| `src/ui/provision/employees_panel.py` | **Mitarbeiter-CRUD (~312 Zeilen, EmployeeDialog, Rollenfarben) NEU v3.0.0** |
+| `src/ui/provision/contracts_panel.py` | **Vertraege-Tabelle (~183 Zeilen, Status-Filter, Berater-Zuweisung) NEU v3.0.0** |
+| `src/ui/provision/commissions_panel.py` | **Provisionen (~233 Zeilen, AutoMatchWorker, Status-Filter) NEU v3.0.0** |
+| `src/ui/provision/import_panel.py` | **VU/Xempus-Import (~739 Zeilen, VuImportWorker, ThreadPoolExecutor) NEU v3.0.0** |
+| `src/ui/provision/mappings_panel.py` | **Vermittler-Zuordnung (~202 Zeilen, MappingDialog) NEU v3.0.0** |
+| `src/ui/provision/billing_panel.py` | **Monatsabrechnungen (~247 Zeilen, GenerateWorker, Status-Workflow) NEU v3.0.0** |
+| `src/ui/provision/settings_panel.py` | **Einstellungen + Gefahrenzone (~280 Zeilen, ResetConfirmDialog mit 3s-Countdown, ResetWorker) NEU v3.2.2** |
 | `src/api/auth.py` | **AuthAPI Client (Login, User-Model mit Permissions)** |
 | `src/api/gdv_api.py` | **GDV API Client (GDV-Dateien server-seitig parsen/speichern)** |
 | `src/api/xml_index.py` | **XML-Index API Client (BiPRO-XML-Rohdaten-Index)** |
 | `src/api/smartadmin_auth.py` | **SmartAdmin-Authentifizierung (SAML-Token, 47 VUs, ~640 Zeilen)** |
 | `src/config/smartadmin_endpoints.py` | **SmartAdmin VU-Endpunkte (47 Versicherer, Auth-Typen)** |
 | `src/config/certificates.py` | **Zertifikat-Manager (PFX/P12, X.509)** |
-| `src/i18n/de.py` | **Zentrale i18n-Datei (~1170 Keys: DOC_RULES_, AI_PROVIDER_, MODEL_PRICING_, AI_COSTS_REQUESTS_, PROCESSING_AI_, ATLAS_INDEX_, MSG_CENTER_, CHAT_, ADMIN_MSG_, CLOSE_BLOCKED_, DUPLICATE_, SHORTCUT_, SMARTSCAN_, EMAIL_, etc.)** |
+| `src/i18n/de.py` | **Zentrale i18n-Datei (~1380+ Keys: PROVISION_, DOC_RULES_, AI_PROVIDER_, MODEL_PRICING_, AI_COSTS_REQUESTS_, PROCESSING_AI_, ATLAS_INDEX_, MSG_CENTER_, CHAT_, ADMIN_MSG_, CLOSE_BLOCKED_, DUPLICATE_, SHORTCUT_, SMARTSCAN_, EMAIL_, etc.)** |
 | `VERSION` | **Zentrale Versionsdatei (Single Source of Truth)** |
 | `BIPRO_STATUS.md` | Aktueller Stand der BiPRO-Integration |
 
@@ -1843,6 +2107,7 @@ python test_roundtrip.py
 | `→ api/ai_providers.php` | **KI-Provider-Verwaltung (CRUD, Aktivierung, Test) NEU v2.1.2** |
 | `→ api/model_pricing.php` | **Modell-Preise + Kosten-Helpers + Request-Logging NEU v2.1.2** |
 | `→ api/document_rules.php` | **Dokumenten-Regeln Settings (Public GET + Admin PUT) NEU v2.1.3** |
+| `→ api/provision.php` | **Provisionsmanagement Backend (~1100 Zeilen, Split-Engine, Auto-Matching, 15+ Routen) NEU v3.0.0** |
 | `→ api/releases.php` | **Release-Verwaltung + Update-Check (NEU v0.9.9)** |
 | `→ api/incoming_scans.php` | **Scan-Upload fuer Power Automate (API-Key-Auth) (NEU v1.0.2)** |
 | `→ api/passwords.php` | **Passwort-Verwaltung (PDF/ZIP) Public + Admin (NEU v1.0.5)** |

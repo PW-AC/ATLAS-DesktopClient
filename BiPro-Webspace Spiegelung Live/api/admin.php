@@ -198,8 +198,13 @@ function handleCreateUser(array $adminPayload): void {
         [$username, $passwordHash, $email, $accountType]
     );
     
-    // Permissions setzen
-    if (!empty($permissions) && $accountType !== 'admin') {
+    // Permissions setzen (auch fuer Admins, da Provision-Perms explizit sein muessen)
+    if (!empty($permissions)) {
+        if (!hasPermission($adminPayload['user_id'], 'provision_manage')) {
+            $permissions = array_values(array_filter($permissions, function($p) {
+                return !in_array($p, PROVISION_PERMISSIONS);
+            }));
+        }
         setUserPermissions($userId, $permissions, $adminPayload['user_id']);
     }
     
@@ -247,8 +252,17 @@ function handleUpdateUser(int $userId, array $adminPayload): void {
     
     // Permissions aendern
     if (isset($data['permissions']) && is_array($data['permissions'])) {
-        setUserPermissions($userId, $data['permissions'], $adminPayload['user_id']);
-        $changes['permissions'] = $data['permissions'];
+        $permissions = $data['permissions'];
+        if (!hasPermission($adminPayload['user_id'], 'provision_manage')) {
+            $currentPerms = getUserPermissions($userId);
+            $currentProvision = array_intersect($currentPerms, PROVISION_PERMISSIONS);
+            $permissions = array_values(array_filter($permissions, function($p) {
+                return !in_array($p, PROVISION_PERMISSIONS);
+            }));
+            $permissions = array_values(array_merge($permissions, $currentProvision));
+        }
+        setUserPermissions($userId, $permissions, $adminPayload['user_id']);
+        $changes['permissions'] = $permissions;
     }
     
     // Activity Log

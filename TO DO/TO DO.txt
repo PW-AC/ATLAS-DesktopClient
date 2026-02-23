@@ -1,1 +1,0 @@
-"OpenRouter als Mittelsmann eliminieren und direkt die OpenAI API nutzen." wegen kosten!

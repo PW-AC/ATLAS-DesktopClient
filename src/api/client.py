@@ -176,7 +176,7 @@ class APIClient:
         
         return data
     
-    def _request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
+    def _request_with_retry(self, method: str, url: str, max_retries: int = None, **kwargs) -> requests.Response:
         """
         Fuehrt einen HTTP-Request mit Retry-Logik aus.
         
@@ -186,6 +186,7 @@ class APIClient:
         Args:
             method: HTTP-Methode ('GET', 'POST', 'PUT', 'DELETE')
             url: Vollstaendige URL
+            max_retries: Maximale Anzahl Versuche (None = globaler Default)
             **kwargs: Werden an requests.Session.request() weitergegeben
             
         Returns:
@@ -194,18 +195,19 @@ class APIClient:
         Raises:
             requests.RequestException nach allen fehlgeschlagenen Retries
         """
+        retries = max_retries if max_retries is not None else MAX_RETRIES
         last_error = None
         
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(retries):
             try:
                 response = self._session.request(method, url, **kwargs)
                 
                 # Retryable Status Codes
-                if response.status_code in RETRY_STATUS_CODES and attempt < MAX_RETRIES - 1:
+                if response.status_code in RETRY_STATUS_CODES and attempt < retries - 1:
                     wait_time = RETRY_BACKOFF_FACTOR * (2 ** attempt)
                     logger.warning(
                         f"{method} {url} HTTP {response.status_code}, "
-                        f"Retry {attempt + 1}/{MAX_RETRIES} in {wait_time:.1f}s"
+                        f"Retry {attempt + 1}/{retries} in {wait_time:.1f}s"
                     )
                     time.sleep(wait_time)
                     continue
@@ -214,11 +216,11 @@ class APIClient:
                 
             except requests.Timeout as e:
                 last_error = e
-                if attempt < MAX_RETRIES - 1:
+                if attempt < retries - 1:
                     wait_time = RETRY_BACKOFF_FACTOR * (2 ** attempt)
                     logger.warning(
                         f"{method} {url} Timeout, "
-                        f"Retry {attempt + 1}/{MAX_RETRIES} in {wait_time:.1f}s"
+                        f"Retry {attempt + 1}/{retries} in {wait_time:.1f}s"
                     )
                     time.sleep(wait_time)
                 else:
@@ -226,18 +228,18 @@ class APIClient:
                     
             except requests.ConnectionError as e:
                 last_error = e
-                if attempt < MAX_RETRIES - 1:
+                if attempt < retries - 1:
                     wait_time = RETRY_BACKOFF_FACTOR * (2 ** attempt)
                     logger.warning(
                         f"{method} {url} Verbindungsfehler, "
-                        f"Retry {attempt + 1}/{MAX_RETRIES} in {wait_time:.1f}s"
+                        f"Retry {attempt + 1}/{retries} in {wait_time:.1f}s"
                     )
                     time.sleep(wait_time)
                 else:
                     raise
         
         # Sollte nicht erreicht werden, aber Sicherheit
-        raise requests.RequestException(f"Request fehlgeschlagen nach {MAX_RETRIES} Versuchen: {last_error}")
+        raise requests.RequestException(f"Request fehlgeschlagen nach {retries} Versuchen: {last_error}")
     
     def get(self, endpoint: str, params: Dict = None) -> Dict[str, Any]:
         """GET-Anfrage an die API."""
@@ -273,8 +275,13 @@ class APIClient:
             logger.error(f"Netzwerkfehler: {e}")
             raise APIError(f"Netzwerkfehler: {e}")
     
-    def post(self, endpoint: str, data: Dict = None, json_data: Dict = None, timeout: int = None) -> Dict[str, Any]:
-        """POST-Anfrage an die API."""
+    def post(self, endpoint: str, data: Dict = None, json_data: Dict = None,
+             timeout: int = None, retries: int = None) -> Dict[str, Any]:
+        """POST-Anfrage an die API.
+        
+        Args:
+            retries: Max Versuche (1 = kein Retry). None = globaler Default.
+        """
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         logger.debug(f"POST {url}")
         req_timeout = timeout or self.config.timeout
@@ -282,6 +289,7 @@ class APIClient:
         try:
             response = self._request_with_retry(
                 'POST', url,
+                max_retries=retries,
                 headers=self._get_headers(),
                 data=data,
                 json=json_data,
@@ -296,6 +304,7 @@ class APIClient:
                 try:
                     response = self._request_with_retry(
                         'POST', url,
+                        max_retries=retries,
                         headers=self._get_headers(),
                         data=data,
                         json=json_data,

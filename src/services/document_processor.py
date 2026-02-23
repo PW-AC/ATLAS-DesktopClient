@@ -1990,6 +1990,7 @@ class DocumentProcessor:
         ext = doc.file_extension.lower()
         return ext in ['.csv', '.tsv', '.xlsx', '.xls']
     
+    
     def _extract_spreadsheet_text(self, file_path: str, max_lines: int = 50) -> str:
         """
         Extrahiert Text aus einer Tabellendatei fuer KI-Klassifikation.

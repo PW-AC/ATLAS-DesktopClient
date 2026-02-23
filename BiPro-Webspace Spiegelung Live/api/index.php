@@ -113,6 +113,14 @@ try {
             handleProcessingSettingsRequest($action ?: '', $method);
             break;
         
+        case 'pm':
+            // Provisionsmanagement (Geschaeftsfuehrer-Ebene)
+            // /pm/{action}[/{id}][/{sub}]
+            require_once __DIR__ . '/provision.php';
+            $pmSub = $parts[3] ?? null;
+            handleProvisionRequest($action ?: null, $method, $id ?: null, $pmSub);
+            break;
+        
         case 'document-rules':
             // Dokumenten-Regeln (oeffentlich: GET)
             require_once __DIR__ . '/document_rules.php';
