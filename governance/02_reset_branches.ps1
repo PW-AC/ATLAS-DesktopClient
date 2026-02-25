@@ -70,12 +70,12 @@ else {
 }
 
 Write-Step "main aktualisieren..."
-git checkout main 2>&1 | Out-Null
+Invoke-GitSilent checkout main
 if ($LASTEXITCODE -ne 0) {
     Write-Err "Konnte nicht auf main wechseln"
     exit 1
 }
-git pull origin main 2>&1 | Out-Null
+Invoke-GitSilent pull origin main
 if ($LASTEXITCODE -ne 0) {
     Write-Err "git pull origin main fehlgeschlagen"
     exit 1
@@ -84,24 +84,26 @@ Write-Ok "main ist aktuell"
 
 Write-Step "beta auf main zuruecksetzen..."
 
+$prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 $betaExists = git branch -r --list "origin/beta" 2>&1
+$ErrorActionPreference = $prev
 if ($betaExists) {
-    git checkout beta 2>&1 | Out-Null
+    Invoke-GitSilent checkout beta
     if ($LASTEXITCODE -ne 0) {
-        git checkout -b beta origin/main 2>&1 | Out-Null
+        Invoke-GitSilent checkout -b beta origin/main
     }
 }
 else {
-    git checkout -b beta 2>&1 | Out-Null
+    Invoke-GitSilent checkout -b beta
 }
 
-git reset --hard origin/main 2>&1 | Out-Null
+Invoke-GitSilent reset --hard origin/main
 if ($LASTEXITCODE -ne 0) {
     Write-Err "Reset von beta fehlgeschlagen"
     exit 1
 }
 
-git push -f origin beta 2>&1 | Out-Null
+Invoke-GitSilent push -f origin beta
 if ($LASTEXITCODE -ne 0) {
     Write-Err "Force-Push auf beta fehlgeschlagen"
     exit 1
@@ -110,24 +112,26 @@ Write-Ok "beta = main (force-pushed)"
 
 Write-Step "dev auf main zuruecksetzen..."
 
+$prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 $devExists = git branch -r --list "origin/dev" 2>&1
+$ErrorActionPreference = $prev
 if ($devExists) {
-    git checkout dev 2>&1 | Out-Null
+    Invoke-GitSilent checkout dev
     if ($LASTEXITCODE -ne 0) {
-        git checkout -b dev origin/main 2>&1 | Out-Null
+        Invoke-GitSilent checkout -b dev origin/main
     }
 }
 else {
-    git checkout -b dev 2>&1 | Out-Null
+    Invoke-GitSilent checkout -b dev
 }
 
-git reset --hard origin/main 2>&1 | Out-Null
+Invoke-GitSilent reset --hard origin/main
 if ($LASTEXITCODE -ne 0) {
     Write-Err "Reset von dev fehlgeschlagen"
     exit 1
 }
 
-git push -f origin dev 2>&1 | Out-Null
+Invoke-GitSilent push -f origin dev
 if ($LASTEXITCODE -ne 0) {
     Write-Err "Force-Push auf dev fehlgeschlagen"
     exit 1
@@ -135,7 +139,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Ok "dev = main (force-pushed)"
 
 Write-Step "Zurueck auf main wechseln..."
-git checkout main 2>&1 | Out-Null
+Invoke-GitSilent checkout main
 Write-Ok "Auf main"
 
 Write-Host ""
