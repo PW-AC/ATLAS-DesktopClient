@@ -31,7 +31,7 @@ foreach ($branch in @("beta", "dev")) {
     $remoteRef = "origin/$branch"
     $exists = git rev-parse --verify $remoteRef 2>$null
     if ($LASTEXITCODE -ne 0) {
-        Write-Info "$branch: Branch existiert nicht remote (wird neu erstellt)"
+        Write-Info "${branch}: Branch existiert nicht remote (wird neu erstellt)"
         continue
     }
 
@@ -39,10 +39,10 @@ foreach ($branch in @("beta", "dev")) {
     $behind = git rev-list --count "$remoteRef..origin/main" 2>$null
 
     if ($ahead -eq "0" -and $behind -eq "0") {
-        Write-Ok "$branch ist identisch mit main"
+        Write-Ok "${branch} ist identisch mit main"
     }
     else {
-        Write-Warn "$branch: $ahead Commit(s) AHEAD (werden GELOESCHT), $behind Commit(s) BEHIND"
+        Write-Warn "${branch}: $ahead Commit(s) AHEAD (werden GELOESCHT), $behind Commit(s) BEHIND"
         if ([int]$ahead -gt 0) {
             $lostCommits = git log --oneline "origin/main..$remoteRef" 2>$null
             foreach ($c in $lostCommits) {

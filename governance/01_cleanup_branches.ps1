@@ -31,11 +31,11 @@ Write-Ok "Remote synchronisiert"
 
 Write-Step "Remote-Branches zum Loeschen ermitteln..."
 
-$remoteBranches = git branch -r 2>&1 |
+$remoteBranches = @(git branch -r 2>&1 |
     ForEach-Object { $_.Trim() } |
     Where-Object { $_ -notmatch "HEAD" } |
     ForEach-Object { $_ -replace "^origin/", "" } |
-    Where-Object { $_ -notin $script:PROTECTED_BRANCHES }
+    Where-Object { $_ -notin $script:PROTECTED_BRANCHES })
 
 if ($remoteBranches.Count -eq 0) {
     Write-Ok "Keine Remote-Branches zum Loeschen gefunden"
@@ -67,9 +67,9 @@ else {
 
 Write-Step "Lokale Branches zum Loeschen ermitteln..."
 
-$localBranches = git branch 2>&1 |
+$localBranches = @(git branch 2>&1 |
     ForEach-Object { $_.Trim().TrimStart("* ") } |
-    Where-Object { $_ -notin $script:PROTECTED_BRANCHES -and $_ -ne "" }
+    Where-Object { $_ -notin $script:PROTECTED_BRANCHES -and $_ -ne "" })
 
 if ($localBranches.Count -eq 0) {
     Write-Ok "Keine lokalen Branches zum Loeschen gefunden"
