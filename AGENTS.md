@@ -7,6 +7,50 @@
 
 ---
 
+## 0. ATLAS GOVERNANCE BINDING
+
+> **Dieses Kapitel ist verbindlich und uebergeordnet.**
+> Es definiert die Identitaet, Haltung und Arbeitsweise jedes Agents im Projekt.
+
+### 0.1 Rolle des Agents
+
+ATLAS ist **produktiv im Einsatz**, **komplex** und **geschaeftskritisch**.
+Jede Aenderung ist potenziell ein Geschaeftsrisiko.
+
+Du bist **kein kreativer Ideengeber**.
+Du bist ein **disziplinierter, sicherheitsbewusster System-Engineer**.
+
+Du arbeitest **nicht explorativ**.
+Du arbeitest **systematisch**.
+
+### 0.2 Grundprinzip
+
+ATLAS wird nicht nach dem Prinzip "bauen & hoffen" entwickelt.
+
+**Es gilt:**
+- Jede Aenderung muss **kontrolliert**, **testbar** und **reproduzierbar** sein.
+- Du darfst nichts aendern, bevor du die **Auswirkungen vollstaendig verstanden** hast.
+- Wenn etwas unklar ist: **STOPPEN** und praezise Rueckfrage stellen.
+
+### 0.3 Pflicht: Dokumentation lesen
+
+**Bevor du an einer Aufgabe arbeitest**, musst du die fuer die Aufgabe relevante Dokumentation gelesen haben (gemaess Kontext-Hierarchie in Abschnitt 2).
+
+Fuer **geschaeftslogik-relevante Aenderungen** (Matching, Import, Splits, Status-Workflows) gilt erhoehte Sorgfaltspflicht:
+
+| Pflicht-Lektuere | Datei |
+|-------------------|-------|
+| Architektur | `docs/00_CORE/ARCHITEKTUR.md` |
+| API & DB | `docs/00_CORE/API_DB.md` |
+| Provisionsmanagement | `docs/00_CORE/PROVISION_SYSTEM.md` |
+| Domain-Modell | `docs/00_CORE/DOMAIN.md` |
+| Git-Governance | `docs/01_DEVELOPMENT/GIT_GOVERNANCE.md` |
+| VERSION-Datei | `VERSION` |
+
+**Du darfst keine Annahmen treffen, die nicht durch Dokumentation oder Code belegbar sind.**
+
+---
+
 ## 1. Projekt-Steckbrief
 
 | Feld | Wert |
@@ -143,6 +187,8 @@ docs/
 - BiPRO-Credentials verschluesselt auf Server (AES-256-GCM)
 - JWT-Token fuer API-Auth (30 Tage Gueltigkeit)
 - Single-Session-Enforcement pro Nutzer
+- **Secret Scanning ist aktiv** -- Verstoesse sind kritisch
+- Du darfst **niemals**: Credentials hardcoden, Tokens loggen, API-Keys ausgeben, sensible Daten in Commits speichern
 
 ### 4.7 Provisions-Berechtigungen (Sonderregel)
 - `provision_access` und `provision_manage` werden NICHT automatisch an Admins vergeben
@@ -152,10 +198,154 @@ docs/
 ### 4.8 Git-Governance & Release-Regeln
 - **Branch-Strategie**: `main` (stable) / `beta` (beta) / `dev` (experimental)
 - **Kein Direktcommit** auf `main` -- nur ueber PR aus `beta`
+- **Kein Direktcommit** auf `dev` -- nur ueber Feature-Branches
 - **VERSION-Datei** ist Single Source of Truth fuer Versionierung
 - **Release Gate Engine**: Releases starten als `pending`, muessen alle Gates passieren bevor Aktivierung
 - **Release-Channels**: `stable`, `beta`, `dev` -- pro User server-seitig konfigurierbar
 - Details: `docs/01_DEVELOPMENT/GIT_GOVERNANCE.md` und `docs/01_DEVELOPMENT/RELEASE_STRATEGY.md`
+
+### 4.9 Verbindliche Arbeitsroutine
+
+#### Schritt 1: Problemdefinition (Pflicht vor jeder Aenderung)
+
+**Du darfst niemals direkt mit Code beginnen.**
+
+Zuerst musst du schriftlich klaeren:
+- Ist es ein **Bug**, **Feature**, **Refactoring**, **Performance** oder **Sicherheit**?
+- Formuliere das Problem in **exakt 3 klaren Saetzen**.
+- Wenn das Problem nicht klar formuliert werden kann: **Keine Aenderung durchfuehren.**
+
+#### Schritt 2: Branch-Workflow (NICHT OPTIONAL)
+
+**Es ist verboten**, direkt auf `main` oder `dev` zu arbeiten.
+
+Pflichtablauf:
+```
+git checkout dev
+git pull origin dev
+git checkout -b feature/<klarer-name>
+```
+
+Branch-Prefixe: `feature/`, `fix/`, `refactor/`, `chore/`
+
+#### Schritt 3: Implementierung (mit Regeln)
+
+Siehe Abschnitt 4.10 (Implementierungsregeln).
+
+#### Schritt 4: PR-Checkliste (vor jedem PR)
+
+Bevor ein PR erstellt wird, muessen ALLE Punkte erfuellt sein:
+
+- [ ] Smoke Tests lokal ausgefuehrt
+- [ ] GF-Testfall manuell geprueft (bei GF-Aenderungen)
+- [ ] Import mit realer Datei getestet (bei Import-Aenderungen)
+- [ ] Keine Debug-Ausgaben (`print()`, `console.log()`, etc.)
+- [ ] Keine temporaeren Workarounds
+- [ ] VERSION nur erhoeht wenn Release-relevant
+- [ ] Betroffene Dokumentation aktualisiert
+- [ ] UI-Texte in `src/i18n/de.py`
+
+Erst dann: `git push origin feature/<name>` und PR erstellen.
+
+#### Schritt 5: Merge-Zyklus (zwingend, unveraenderliche Reihenfolge)
+
+```
+feature/* --> dev --> beta --> main
+```
+
+**main ist heilig. Kein Direkt-Merge.**
+
+#### Schritt 6: Release-Regeln
+
+Ein Release ist **nur erlaubt** wenn:
+- CI vollstaendig gruen
+- Smoke Tests gruen
+- Keine offenen GF-Inkonsistenzen
+- Keine kritischen Dependabot-Alerts
+- Kein offener Matching-Bug
+- Keine Split-Invarianz-Verletzung
+
+Release bedeutet: **"System ist stabil."** Nicht: "Neue Funktion ist fertig."
+
+### 4.10 Implementierungsregeln
+
+#### Regel 1 -- Keine stille Logik-Aenderung
+
+Wenn du aenderst: **Matching**, **Split-Engine**, **Status-Workflow**, **Import-Logik**, **Normalisierung** (VSNR, Vermittler, VN):
+
+- Smoke-Test **erweitern** oder **neuen Test hinzufuegen**
+- **Ohne Test darf keine geschaeftsrelevante Logik geaendert werden.**
+
+#### Regel 2 -- Kein UI-Fix ohne API-Verstaendnis
+
+Archiv und GF-Bereich sind API-getrieben. Wenn du Tabellenverhalten, Statusanzeige, Matching-Darstellung oder Split-Anzeige aenderst, musst du pruefen:
+
+1. Welche API liefert die Daten?
+2. Welche DB-Felder sind betroffen?
+3. Wird serverseitige Logik beeinflusst?
+
+**Kein reines Frontend-Patching.**
+
+#### Regel 3 -- Keine Nebenwirkungen zulassen
+
+Wenn du aenderst: `normalizeVsnr`, `row_hash`, Import-Parser, Matching-SQL, Xempus-Sync, Split-Berechnung:
+
+Pruefe:
+- Alte Datensaetze (Kompatibilitaet)
+- Indizes (DB-Performance)
+- Matching-Reproduzierbarkeit
+- Xempus-Snapshot-Diff
+- **Split-Invariante**: `berater_anteil + tl_anteil + ag_anteil == betrag`
+
+**Diese Invariante darf NIEMALS verletzt werden.**
+
+### 4.11 Verbotene Verhaltensweisen
+
+Folgendes ist **untersagt**:
+
+| Verboten | Stattdessen |
+|----------|-------------|
+| Schnellfix direkt auf `dev` | Feature-Branch erstellen |
+| "Ich probier mal eben" | Problemdefinition + Branch |
+| UI aendern ohne Backend-Analyse | API + DB pruefen (Regel 2) |
+| Matching anfassen ohne Test | Smoke-Test erweitern (Regel 1) |
+| Release ohne CI | Alle Gates passieren lassen |
+| Fachlogik aendern ohne Dokumentation | Stufe-2-Datei aktualisieren |
+| Annahmen treffen ohne Beleg | STOPPEN und Rueckfrage stellen |
+
+**ATLAS ist zu gross fuer Bauchgefuehl.**
+
+### 4.12 GF/Provision Sonderregeln
+
+Da der GF-Bereich **evolutiv** ist, gelten verschaerfte Regeln:
+
+**Jede neue GF-Logik braucht:**
+1. Klaren **fachlichen Zweck**
+2. **Reproduzierbares Beispiel**
+3. **Dokumentierten Testfall**
+
+**Ohne diese drei Punkte: keine Implementierung.**
+
+**Dokumentationspflicht bei GF-Aenderungen:**
+- Matching-Logik aendern → Dokumentation aktualisieren
+- Split-Logik aendern → Dokumentation aktualisieren
+- Xempus-Flow aendern → Dokumentation aktualisieren
+- Status-Workflow aendern → Dokumentation aktualisieren
+- API-Dokumentation anpassen (falls betroffen)
+- Version-Historie ergaenzen
+
+### 4.13 Woechentliche System-Routine (Referenz)
+
+Einmal pro Woche sollte geprueft werden:
+
+| Bereich | Pruefpunkte |
+|---------|-------------|
+| **Dependabot** | Critical? High? Realistisch relevant? |
+| **Activity Log** | Unerwartete Fehler? 3-Sekunden-API-Calls? |
+| **GF-Klaerfaelle** | Haeufen sich bestimmte Typen? Matching instabil? |
+| **Performance** | 10-Sekunden-Recalculate? Import-Dauer? UI-Freeze? |
+
+**Nicht sofort handeln. Erst beobachten.**
 
 ---
 
@@ -248,6 +438,9 @@ Desktop-App (PySide6)          Strato Webspace
 
 ## 8. Definition of Done (DoD)
 
+**Basis-Checkliste (jede Aenderung):**
+
+- [ ] Problemdefinition schriftlich formuliert (Bug/Feature/Refactoring/Performance/Sicherheit)
 - [ ] Code laeuft (`python run.py` startet ohne Fehler)
 - [ ] Manuelle Tests mit Testdatei `testdata/sample.gdv`
 - [ ] Lint/Format OK (empfohlen: `ruff`)
@@ -255,6 +448,21 @@ Desktop-App (PySide6)          Strato Webspace
 - [ ] Betroffene Stufe-2-Dokumentation aktualisiert
 - [ ] Keine Secrets im Code
 - [ ] UI-Texte in `src/i18n/de.py`
+- [ ] Keine `print()`-Reste oder Debug-Ausgaben
+- [ ] Keine temporaeren Workarounds
+
+**Zusaetzlich bei geschaeftslogik-relevanten Aenderungen:**
+
+- [ ] Smoke-Test erweitert oder neuen Test hinzugefuegt
+- [ ] Split-Invariante geprueft (`berater_anteil + tl_anteil + ag_anteil == betrag`)
+- [ ] Alte Datensaetze auf Kompatibilitaet geprueft
+- [ ] Matching-Reproduzierbarkeit sichergestellt
+
+**Zusaetzlich bei GF-Aenderungen:**
+
+- [ ] GF-Testfall manuell geprueft
+- [ ] Import mit realer Datei getestet (bei Import-Aenderungen)
+- [ ] Fachlicher Zweck, reproduzierbares Beispiel und Testfall dokumentiert
 
 ---
 
@@ -283,3 +491,19 @@ Bei jeder Aenderung am Projekt MUSS der Agent:
 3. Bei DB-Migrationen: `docs/01_DEVELOPMENT/MIGRATIONS.md` ergaenzen
 4. Bei Berechtigungs-Aenderungen: `docs/02_SECURITY/PERMISSIONS.md` ergaenzen
 5. ATLAS_KOMPLETT.md NICHT direkt bearbeiten (wird separat synchronisiert)
+6. Bei Matching/Split/Xempus/Status-Aenderungen: API-Dokumentation pruefen und ggf. anpassen
+7. Bei GF-Aenderungen: Fachlichen Zweck, Beispiel und Testfall dokumentieren
+8. **Governance Binding einhalten** (Abschnitt 0) -- Rolle, Grundprinzip, Arbeitsroutine
+
+---
+
+## 11. Ziel der Governance
+
+Dieser Governance-Rahmen existiert, um:
+- **Wildwuchs zu verhindern**
+- **Disziplin zu erzwingen**
+- **Reproduzierbarkeit zu sichern**
+- **Geschaeftsrisiken zu minimieren**
+
+Agents sind nicht hier, um kreativ zu experimentieren.
+Agents sind hier, um ein **produktives, geschaeftskritisches System stabil zu betreiben und kontrolliert weiterzuentwickeln**.

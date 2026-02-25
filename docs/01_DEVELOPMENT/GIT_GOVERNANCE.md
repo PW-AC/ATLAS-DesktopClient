@@ -27,6 +27,21 @@ refactor/* --> dev --> PR --> beta --> PR --> main
 chore/*   --> dev --> PR --> beta --> PR --> main
 ```
 
+**Verbote:**
+- Kein Direktcommit auf `main` (nur PR aus `beta`)
+- Kein Direktcommit auf `dev` (nur PR aus Feature-Branches)
+- **main ist heilig. Kein Direkt-Merge.**
+
+### Merge-Zyklus (zwingend, unveraenderlich)
+
+Die Reihenfolge ist **unveraenderlich**:
+
+```
+feature/* --> dev --> beta --> main
+```
+
+Es gibt keine Abkuerzungen. Jede Stufe muss durchlaufen werden.
+
 ### Branch-Naming-Konventionen
 
 - `feature/beschreibung` -- Neues Feature
@@ -44,6 +59,19 @@ Ein PR darf **nicht** gemerged werden wenn:
 4. Betroffene Dokumentation nicht aktualisiert
 5. UI-Texte nicht in `src/i18n/de.py`
 6. `QMessageBox.information/warning/critical` verwendet (ToastManager nutzen!)
+
+### Erweiterte PR-Checkliste (Governance Binding)
+
+Zusaetzlich zu den obigen Regeln muessen vor PR-Erstellung ALLE Punkte erfuellt sein:
+
+- [ ] Problemdefinition formuliert (Bug/Feature/Refactoring/Performance/Sicherheit)
+- [ ] Smoke Tests lokal ausgefuehrt
+- [ ] GF-Testfall manuell geprueft (bei GF-Aenderungen)
+- [ ] Import mit realer Datei getestet (bei Import-Aenderungen)
+- [ ] Keine Debug-Ausgaben (`print()`, `console.log()`, temporaere Logs)
+- [ ] Keine temporaeren Workarounds im Code
+- [ ] Split-Invariante geprueft (bei Provisions-Aenderungen): `berater_anteil + tl_anteil + ag_anteil == betrag`
+- [ ] Alte Datensaetze auf Kompatibilitaet geprueft (bei Normalisierungs-/Hash-Aenderungen)
 
 ## Branch Protection Rules (GitHub)
 
@@ -115,3 +143,47 @@ GitHub Actions Workflow: `.github/workflows/smoke-tests.yml`
 **Handlungsbedarf:**
 - `cryptography` auf >=44.0.0 aktualisieren (behebt High-Alerts)
 - `requests`/`urllib3` auf aktuelle Version pruefen
+
+---
+
+## Release-Regeln (Governance Binding)
+
+Ein Release ist **nur erlaubt** wenn:
+
+| Gate | Beschreibung |
+|------|-------------|
+| CI gruen | Alle GitHub Actions Workflows bestanden |
+| Smoke Tests gruen | `python -m src.tests.run_smoke_tests` ohne Fehler |
+| Keine GF-Inkonsistenzen | Keine offenen Klaerfaelle im Provisionsbereich |
+| Keine kritischen Dependabot-Alerts | Critical/High-Alerts bewertet und bearbeitet |
+| Kein offener Matching-Bug | Matching-Logik stabil |
+| Split-Invarianz | `berater_anteil + tl_anteil + ag_anteil == betrag` fuer alle Datensaetze |
+
+**Release bedeutet:** "System ist stabil."
+**Release bedeutet NICHT:** "Neue Funktion ist fertig."
+
+---
+
+## Implementierungsregeln fuer Agents
+
+### Regel 1 -- Keine stille Logik-Aenderung
+
+Aenderungen an Matching, Split-Engine, Status-Workflow, Import-Logik oder Normalisierung (VSNR, Vermittler, VN) erfordern:
+- Erweiterung bestehender Smoke-Tests ODER neuen Test
+- **Ohne Test darf keine geschaeftsrelevante Logik geaendert werden.**
+
+### Regel 2 -- Kein UI-Fix ohne API-Verstaendnis
+
+Archiv und GF-Bereich sind API-getrieben. Vor UI-Aenderungen an Tabellen, Status, Matching oder Splits muss geprueft werden:
+1. Welche API liefert die Daten?
+2. Welche DB-Felder sind betroffen?
+3. Wird serverseitige Logik beeinflusst?
+
+### Regel 3 -- Keine Nebenwirkungen
+
+Aenderungen an `normalizeVsnr`, `row_hash`, Import-Parser, Matching-SQL, Xempus-Sync oder Split-Berechnung erfordern Pruefung von:
+- Kompatibilitaet mit alten Datensaetzen
+- DB-Indizes
+- Matching-Reproduzierbarkeit
+- Xempus-Snapshot-Diff
+- **Split-Invariante** (darf NIEMALS verletzt werden)
