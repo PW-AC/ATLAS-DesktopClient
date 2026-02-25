@@ -1,3 +1,15 @@
+Governance Phase 1+2 (25.02.2026) - Repository-Absicherung
+- Git Tag v2.2.6 auf main gesetzt (Governance Freeze)
+- Branch-Strategie: main/beta/dev mit Branch Protection Rules aktiv
+- CI-Pipeline: smoke-tests.yml + CodeQL Analysis auf main und beta
+- Security: Secret Scanning, Push Protection, Dependabot Alerts aktiviert
+- Dokumentation: GIT_GOVERNANCE.md, SYSTEM_OVERVIEW.md korrigiert und erweitert
+- Hygiene: RELEASE_FEATURES_HISTORY.txt konsolidiert (Root -> docs/)
+- Hygiene: Design-Mockups aus Repo entfernt (.gitignore)
+- Smoke Tests: Document-Dataclass-Tests an neue Pflichtfelder angepasst
+- Voller PR-Zyklus validiert: dev -> beta -> main mit CI-Gates (PRs #6, #7, #8)
+- Dependabot: 21 Alerts dokumentiert, Handlungsbedarf fuer cryptography/requests identifiziert
+
 v2.2.5 (24.02.2026) - Performance & Stabilitaet
 - Performance: Update-Check beim App-Start ist jetzt asynchron (kein UI-Freeze mehr bei langsamer Verbindung)
 - Performance: Outlook Drag&Drop-Extraktion laeuft im Hintergrund-Thread (kein UI-Freeze bei vielen E-Mails)

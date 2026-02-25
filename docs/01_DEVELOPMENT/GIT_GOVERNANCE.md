@@ -82,3 +82,36 @@ Definiert in `.github/CODEOWNERS`. Repository-Owner wird automatisch als Reviewe
 GitHub Actions Workflow: `.github/workflows/smoke-tests.yml`
 - Trigger: PRs und Pushes auf `main` und `beta`
 - Steps: Python Setup, Dependencies, Smoke Tests, VERSION-Check
+
+### Weitere Workflows
+
+| Workflow | Trigger | Zweck |
+|----------|---------|-------|
+| CodeQL Analysis | PR + Push auf main/beta | SAST-Scanning (Python, Actions) |
+| Dependabot | Automatisch | Vulnerability-Alerts fuer Dependencies |
+
+## Security Features (GitHub)
+
+| Feature | Status | Aktiviert seit |
+|---------|--------|----------------|
+| Secret Scanning | Aktiv | 25.02.2026 |
+| Push Protection | Aktiv | 25.02.2026 |
+| Dependabot Alerts | Aktiv | 25.02.2026 |
+| CodeQL Analysis | Aktiv | 25.02.2026 |
+
+## Dependabot-Alerts (Stand 25.02.2026)
+
+21 offene Alerts, davon:
+
+| Severity | Anzahl | Pakete |
+|----------|--------|--------|
+| Critical | 1 | waitress |
+| High | 7 | cryptography (3x), urllib3 (3x), waitress |
+| Medium | 11 | werkzeug (4x), jinja2 (3x), requests, cryptography (2x), Jinja2 |
+| Low | 2 | flask, cryptography |
+
+**Bewertung:** Nur `requests` und `cryptography` sind direkte Abhaengigkeiten (requirements.txt). `urllib3` ist transitive Abhaengigkeit von `requests`. Flask, Werkzeug, Waitress und Jinja2 sind KEINE Abhaengigkeiten dieses Projekts -- die Alerts stammen vermutlich aus dem GitHub-Dependency-Graph (Lockfile oder vergangene Installationen).
+
+**Handlungsbedarf:**
+- `cryptography` auf >=44.0.0 aktualisieren (behebt High-Alerts)
+- `requests`/`urllib3` auf aktuelle Version pruefen
