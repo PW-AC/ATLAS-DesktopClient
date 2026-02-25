@@ -229,23 +229,25 @@ except ImportError as e:
     documents_available = False
 
 if documents_available:
+    _doc_defaults = dict(mime_type='application/pdf', file_size=1024, source_type='manual_upload', is_gdv=False, created_at='2026-01-01')
+
     @test("Document hat validation_status")
     def test_doc_validation_status():
-        doc = Document(id=1, filename='t.pdf', original_filename='t.pdf', validation_status='PDF_ENCRYPTED')
+        doc = Document(id=1, filename='t.pdf', original_filename='t.pdf', validation_status='PDF_ENCRYPTED', **_doc_defaults)
         assert doc.validation_status == 'PDF_ENCRYPTED'
     
     test_doc_validation_status()
     
     @test("Document hat content_hash")
     def test_doc_content_hash():
-        doc = Document(id=1, filename='t.pdf', original_filename='t.pdf', content_hash='abc123')
+        doc = Document(id=1, filename='t.pdf', original_filename='t.pdf', content_hash='abc123', **_doc_defaults)
         assert doc.content_hash == 'abc123'
     
     test_doc_content_hash()
     
     @test("Document hat Versionierungs-Felder")
     def test_doc_version():
-        doc = Document(id=2, filename='t.pdf', original_filename='t.pdf', version=2, previous_version_id=1)
+        doc = Document(id=2, filename='t.pdf', original_filename='t.pdf', version=2, previous_version_id=1, **_doc_defaults)
         assert doc.version == 2
         assert doc.previous_version_id == 1
         assert doc.is_duplicate
@@ -259,7 +261,8 @@ if documents_available:
             classification_source='ki_gpt4o',
             classification_confidence='high',
             classification_reason='Test',
-            classification_timestamp='2026-02-05 10:00:00'
+            classification_timestamp='2026-02-05 10:00:00',
+            **_doc_defaults
         )
         assert doc.classification_source == 'ki_gpt4o'
         assert doc.classification_confidence == 'high'

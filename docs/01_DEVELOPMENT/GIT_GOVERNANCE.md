@@ -7,7 +7,7 @@
 | Feld | Wert |
 |------|------|
 | **Name** | acencia-atlas-desktop (ATLAS-DesktopClient) |
-| **Hosting** | GitHub (private) |
+| **Hosting** | GitHub (public) |
 | **Remote** | `https://github.com/paulweimert2006-commits/ATLAS-DesktopClient.git` |
 
 ## Branch-Strategie

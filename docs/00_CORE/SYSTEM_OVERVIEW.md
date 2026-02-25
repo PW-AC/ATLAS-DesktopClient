@@ -1,7 +1,7 @@
 # ACENCIA ATLAS - Projektuebersicht
 
 **Letzte Aktualisierung:** 24. Februar 2026
-**Aktuelle Version:** 2.2.2 (VERSION-Datei)
+**Aktuelle Version:** 2.2.6 (VERSION-Datei)
 **Projektname:** ACENCIA ATLAS ("Der Datenkern.")
 
 ---
