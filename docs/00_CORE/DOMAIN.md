@@ -428,6 +428,8 @@ Provisionssatzmodell (z.B. "Standard 80%", "Senior 85%").
 | `id` | int | Primaerschluessel |
 | `name` | str | Modell-Name (z.B. "Standard") |
 | `commission_rate` | float | Provisionssatz in % (0-100) |
+| `tl_rate` | float | Teamleiter-Rate in % (0-100, NULL = kein TL-Abzug) |
+| `tl_basis` | enum | `berater_anteil` oder `gesamt_courtage` (Basis fuer TL-Berechnung) |
 | `is_active` | bool | Aktiv/Inaktiv |
 
 #### Employee (pm_employees)

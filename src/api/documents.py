@@ -371,7 +371,8 @@ class DocumentsAPI:
                        from_date: Optional[str] = None,
                        to_date: Optional[str] = None,
                        processing_status: Optional[str] = None,
-                       is_archived: Optional[bool] = None) -> List[Document]:
+                       is_archived: Optional[bool] = None,
+                       limit: Optional[int] = None) -> List[Document]:
         """
         Liste aller Dokumente abrufen.
         
@@ -384,6 +385,7 @@ class DocumentsAPI:
             from_date: Ab Datum (YYYY-MM-DD)
             to_date: Bis Datum (YYYY-MM-DD)
             processing_status: Filter nach Verarbeitungsstatus
+            limit: Maximale Anzahl Ergebnisse (1-10000, Server-Default: 10000)
             
         Returns:
             Liste von Document-Objekten
@@ -405,6 +407,8 @@ class DocumentsAPI:
             params['processing_status'] = processing_status
         if is_archived is not None:
             params['is_archived'] = '1' if is_archived else '0'
+        if limit is not None:
+            params['limit'] = str(limit)
         
         try:
             response = self.client.get('/documents', params=params)

@@ -105,6 +105,11 @@ _COURTAGE_KEYWORDS = [
     'provisionsabrechnung', 'courtageabrechnung',
     'courtagenote', 'provisionsnote',
     'vermittlerabrechnung', 'inkassoprovision',
+    'buchnote', 'provisionskonto',
+    'bestandsprovision', 'abschlussprovision',
+    'stornoreserve', 'di-provision',
+    'provisionsnachweis', 'vergütungsnachweis',
+    'verguetungsnachweis',
 ]
 _SACH_KEYWORDS = [
     'unfallversicherung', 'haftpflichtversicherung',
@@ -123,6 +128,26 @@ _KRANKEN_KEYWORDS = [
 ]
 
 
+_MAHNUNG_KEYWORDS = [
+    'rückstandsliste', 'rueckstandsliste',
+    'zahlungserinnerung', 'mahnbetrag',
+    'beitragsrückstand', 'beitragsrueckstand',
+    'mahnung',
+]
+
+_SPARTEN_CODE_MAP = {
+    'mkf': 'sach', 'mfk': 'sach', 'kfz': 'sach', 'kh ': 'sach',
+    'rr ': 'sach', ' rs ': 'sach', 'rechtsschutz': 'sach',
+    'hv ': 'sach', 'phv': 'sach', 'haftpflicht': 'sach',
+    'hr ': 'sach', 'hausrat': 'sach',
+    'wg ': 'sach', 'wgb': 'sach', 'wohngebäude': 'sach', 'wohngebaeude': 'sach',
+    'uv ': 'sach', 'unf': 'sach', 'unfall': 'sach',
+    'lv ': 'leben', 'leb': 'leben',
+    'bu ': 'leben', 'berufsunfähigkeit': 'leben',
+    'kv ': 'kranken', 'pkv': 'kranken',
+}
+
+
 def _build_keyword_hints(text: str) -> str:
     """Generiert Hint-String NUR bei Keyword-Konflikten oder bekannten Problemmustern.
     
@@ -133,6 +158,7 @@ def _build_keyword_hints(text: str) -> str:
     - Courtage-Keyword + Leben/Sach/Kranken-Keyword gleichzeitig
     - "Kontoauszug" + "Provision"/"Courtage" (ohne sonstigen Courtage-Keyword)
     - Sach-Keyword allein (KI hat hier nachweislich versagt -> Sicherheits-Hint)
+    - Mahnung/Rueckstandsliste + Sparten-Code -> Sparten-Hint
     
     Args:
         text: Bereits extrahierter PDF-Text (aus _extract_relevant_text)
@@ -149,6 +175,7 @@ def _build_keyword_hints(text: str) -> str:
     found_sach = [kw for kw in _SACH_KEYWORDS if kw in text_lower]
     found_leben = [kw for kw in _LEBEN_KEYWORDS if kw in text_lower]
     found_kranken = [kw for kw in _KRANKEN_KEYWORDS if kw in text_lower]
+    found_mahnung = [kw for kw in _MAHNUNG_KEYWORDS if kw in text_lower]
     has_kontoauszug_provision = (
         'kontoauszug' in text_lower
         and ('provision' in text_lower or 'courtage' in text_lower)
@@ -173,7 +200,29 @@ def _build_keyword_hints(text: str) -> str:
             '-> wahrscheinlich courtage (VU-Provisionskonto, nicht Bankauszug).'
         )
 
-    # PROBLEMFALL 3: Sach-Keyword allein (KI hat hier nachweislich versagt)
+    # PROBLEMFALL 3: Mahnung/Rueckstandsliste -> Sparte ueber VU-Kuerzel bestimmen
+    elif found_mahnung and not found_courtage:
+        sparte_from_code = None
+        matched_code = None
+        for code, sparte in _SPARTEN_CODE_MAP.items():
+            if code in text_lower:
+                sparte_from_code = sparte
+                matched_code = code.strip()
+                break
+        if sparte_from_code:
+            hints.append(
+                f'Mahnung/Rueckstandsliste ("{found_mahnung[0]}") mit '
+                f'Sparten-Code "{matched_code}" gefunden '
+                f'-> {sparte_from_code} (nach Sparte des Vertrags zuordnen, NICHT sonstige).'
+            )
+        elif found_sach:
+            hints.append(
+                f'Mahnung/Rueckstandsliste ("{found_mahnung[0]}") mit '
+                f'Sach-Keyword "{found_sach[0]}" gefunden '
+                f'-> sach (nach Sparte des Vertrags zuordnen, NICHT sonstige).'
+            )
+
+    # PROBLEMFALL 4: Sach-Keyword allein (KI hat hier nachweislich versagt)
     elif found_sach and not found_courtage:
         hints.append(
             f'"{found_sach[0]}" gefunden '

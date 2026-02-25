@@ -2,7 +2,9 @@
 ; Erstellt einen professionellen Windows Installer
 
 #define MyAppName "ACENCIA ATLAS"
-#define MyAppVersion "2.2.0"
+#define VerFile FileOpen(SourcePath + "\VERSION")
+#define MyAppVersion Trim(FileRead(VerFile))
+#expr FileClose(VerFile)
 #define MyAppPublisher "ACENCIA GmbH"
 #define MyAppURL "https://acencia.info"
 #define MyAppExeName "ACENCIA-ATLAS.exe"
@@ -62,14 +64,29 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: quicklaunchicon
 
+[Registry]
+; Hintergrund-Updater als Autostart-Fallback (Scheduled Task ist primaer)
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "ACENCIA ATLAS Updater"; ValueData: """{app}\{#MyAppExeName}"" --background-update"; Flags: uninsdeletevalue
+
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall
+; App nach Installation starten (nur wenn /norun NICHT uebergeben wurde)
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall; Check: ShouldRunApp
+; Hintergrund-Updater als Scheduled Task registrieren (bei User-Logon, 5 Min Delay)
+Filename: "schtasks"; Parameters: "/Create /TN ""ACENCIA ATLAS Updater"" /TR """"""{app}\{#MyAppExeName}"" --background-update"" /SC ONLOGON /DELAY 0005:00 /F /RL LIMITED"; Flags: runhidden nowait
+
+[UninstallRun]
+; Scheduled Task bei Deinstallation entfernen
+Filename: "schtasks"; Parameters: "/Delete /TN ""ACENCIA ATLAS Updater"" /F"; Flags: runhidden nowait
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
 [Code]
-// Prüfe ob .NET installiert ist (falls benötigt)
+function ShouldRunApp: Boolean;
+begin
+  Result := ExpandConstant('{param:norun|0}') <> '1';
+end;
+
 function InitializeSetup(): Boolean;
 begin
   Result := True;

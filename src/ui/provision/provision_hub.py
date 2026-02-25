@@ -281,11 +281,23 @@ class ProvisionHub(QWidget):
                 panel._toast_manager = self._toast_manager
             if hasattr(panel, 'navigate_to_panel'):
                 panel.navigate_to_panel.connect(self._navigate_to)
+            if hasattr(panel, 'data_changed'):
+                panel.data_changed.connect(self._on_panel_data_changed)
             old = self._content_stack.widget(index)
             self._content_stack.removeWidget(old)
             old.deleteLater()
             self._content_stack.insertWidget(index, panel)
             self._content_stack.setCurrentIndex(index)
+
+    def _on_panel_data_changed(self):
+        """Daten in einem Panel haben sich geaendert - alle anderen Panels aktualisieren."""
+        for index in list(self._panels_loaded):
+            panel = self._content_stack.widget(index)
+            if panel and hasattr(panel, 'refresh'):
+                try:
+                    panel.refresh()
+                except Exception as e:
+                    logger.debug(f"Refresh Panel {index} nach data_changed: {e}")
 
     def _refresh_all(self):
         """Alle geladenen Panels neu laden."""
@@ -319,7 +331,7 @@ class ProvisionHub(QWidget):
                 continue
             for attr in ('_load_worker', '_worker', '_detail_worker',
                          '_audit_worker', '_ignore_worker', '_mapping_worker',
-                         '_pos_worker', '_generate_worker'):
+                         '_pos_worker', '_generate_worker', '_save_worker'):
                 w = getattr(panel, attr, None)
                 if w and w.isRunning():
                     ops.append(texts.PROVISION_BLOCKING_WORKER)

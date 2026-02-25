@@ -67,19 +67,27 @@ class NotificationPollWorker(QThread):
     """Pollt Notification-Summary im Hintergrund (nicht-blockierend)."""
     finished = Signal(dict)
     
-    def __init__(self, messages_api, last_message_ts: str = None):
+    def __init__(self, messages_api, last_message_ts: str = None,
+                 bipro_events_api=None):
         super().__init__()
         self._api = messages_api
         self._last_message_ts = last_message_ts
+        self._bipro_events_api = bipro_events_api
     
     def run(self):
         try:
             summary = self._api.get_notifications_summary(
                 last_message_ts=self._last_message_ts
             )
+            if self._bipro_events_api:
+                try:
+                    ev_summary = self._bipro_events_api.get_summary()
+                    summary['unread_bipro_events'] = ev_summary.get('unread_count', 0)
+                except Exception:
+                    summary['unread_bipro_events'] = 0
             self.finished.emit(summary)
         except Exception:
-            self.finished.emit({})  # Polling-Fehler stillschweigend ignorieren
+            self.finished.emit({})
 
 
 class NavButton(QPushButton):
@@ -414,7 +422,9 @@ class MainHub(QMainWindow):
         self._last_message_ts = None
         self._prev_unread_chats = 0
         self._prev_unread_system = 0
+        self._prev_unread_bipro_events = 0
         self._messages_api = None  # Wird nach Login gesetzt
+        self._bipro_events_api = None  # Wird nach Login gesetzt
         self._notification_poll_worker = None  # Worker-Referenz
         self._notification_poller_timer.start(self._POLL_INTERVAL_CENTER)
         # Sofort einmal pollen
@@ -690,9 +700,11 @@ class MainHub(QMainWindow):
             from ui.message_center_view import MessageCenterView
             from api.messages import MessagesAPI
             from api.releases import ReleasesAPI
+            from api.bipro_events import BiproEventsAPI
             
             self._messages_api = MessagesAPI(self.api_client)
             releases_api = ReleasesAPI(self.api_client)
+            self._bipro_events_api = BiproEventsAPI(self.api_client)
             
             self._message_center_view = MessageCenterView(
                 self.api_client, releases_api=releases_api
@@ -700,6 +712,7 @@ class MainHub(QMainWindow):
             self._message_center_view._toast_manager = self._toast_manager
             self._message_center_view.set_messages_api(self._messages_api)
             self._message_center_view.set_releases_api(releases_api)
+            self._message_center_view.set_bipro_events_api(self._bipro_events_api)
             self._message_center_view.open_chats_requested.connect(self._show_chat)
             
             # Placeholder ersetzen
@@ -1041,7 +1054,8 @@ class MainHub(QMainWindow):
             return
         
         self._notification_poll_worker = NotificationPollWorker(
-            self._messages_api, self._last_message_ts
+            self._messages_api, self._last_message_ts,
+            bipro_events_api=self._bipro_events_api
         )
         self._notification_poll_worker.finished.connect(self._on_notification_poll_finished)
         self._notification_poll_worker.start()
@@ -1053,9 +1067,10 @@ class MainHub(QMainWindow):
         
         unread_chats = summary.get('unread_chats', 0)
         unread_system = summary.get('unread_system_messages', 0)
+        unread_bipro = summary.get('unread_bipro_events', 0)
         
         # Badge aktualisieren
-        total_unread = unread_chats + unread_system
+        total_unread = unread_chats + unread_system + unread_bipro
         self._update_notification_badge(total_unread)
         
         # MessageCenterView aktualisieren
@@ -1084,6 +1099,7 @@ class MainHub(QMainWindow):
         
         self._prev_unread_chats = unread_chats
         self._prev_unread_system = unread_system
+        self._prev_unread_bipro_events = unread_bipro
     
     def _update_notification_badge(self, count: int):
         """Aktualisiert den Badge auf dem Mitteilungszentrale-Button."""
@@ -1123,19 +1139,19 @@ class MainHub(QMainWindow):
     def _on_update_available(self, update_info):
         """Wird aufgerufen wenn ein Update verfuegbar ist."""
         from services.update_service import UpdateService
-        from ui.update_dialog import UpdateDialog
         
         update_service = UpdateService(self.api_client)
         
         if update_info.mandatory:
-            # Pflicht-Update: Modaler Dialog
-            dialog = UpdateDialog(update_info, update_service, mode='mandatory', parent=self)
-            dialog.exec()
-            # Nach Pflicht-Update: App beenden
-            import sys
-            sys.exit(0)
+            # Pflicht-Update: Vollautomatisch, keine Nutzerinteraktion
+            from ui.auto_update_window import AutoUpdateWindow
+            self._auto_update_window = AutoUpdateWindow(
+                update_info, update_service, parent=self
+            )
+            self._auto_update_window.show()
         else:
             # Optionales Update: Dezente Benachrichtigung via Dialog
+            from ui.update_dialog import UpdateDialog
             from PySide6.QtWidgets import QDialog as _QDialog
             dialog = UpdateDialog(update_info, update_service, mode='optional', parent=self)
             if dialog.exec() == _QDialog.DialogCode.Accepted:
@@ -1199,9 +1215,9 @@ class MainHub(QMainWindow):
                     paths.append(local)
 
         if has_outlook and not paths:
-            # Outlook-Drop: E-Mails als temporaere .msg Dateien extrahieren
-            outlook_files = self._extract_outlook_emails(mime)
-            paths.extend(outlook_files)
+            event.acceptProposedAction()
+            self._start_outlook_extraction_async()
+            return
 
         if not paths:
             event.ignore()
@@ -1321,6 +1337,37 @@ class MainHub(QMainWindow):
                 pythoncom.CoUninitialize()
             except Exception:
                 pass
+
+    def _start_outlook_extraction_async(self):
+        """Startet Outlook-COM-Extraktion in einem Worker-Thread."""
+        self._toast_manager.show_info(texts.DROP_UPLOAD_PREPARING if hasattr(texts, 'DROP_UPLOAD_PREPARING') else "Outlook E-Mails werden extrahiert...")
+        
+        class _OutlookWorker(QThread):
+            files_ready = Signal(list)
+            error = Signal(str)
+            
+            def __init__(self, hub_ref):
+                super().__init__()
+                self._hub_ref = hub_ref
+            
+            def run(self):
+                result = self._hub_ref._extract_outlook_emails(None)
+                self.files_ready.emit(result)
+        
+        self._outlook_worker = _OutlookWorker(self)
+        self._outlook_worker.files_ready.connect(self._on_outlook_extraction_done)
+        self._outlook_worker.start()
+    
+    def _on_outlook_extraction_done(self, outlook_files: list):
+        """Callback wenn Outlook-Extraktion im Worker fertig ist."""
+        if not outlook_files:
+            return
+        file_paths = self._collect_files_from_paths(outlook_files)
+        if not file_paths:
+            self._toast_manager.show_info(texts.DROP_UPLOAD_NO_FILES)
+            return
+        logger.info(f"Outlook Drop Upload: {len(file_paths)} Datei(en)")
+        self._start_drop_upload(file_paths)
 
     @staticmethod
     def _sanitize_outlook_filename(subject: str) -> str:

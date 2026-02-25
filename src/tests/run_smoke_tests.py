@@ -5,10 +5,14 @@ Fuehrt alle kritischen Validierungen durch und gibt einen Report aus.
 
 Ausfuehrung:
     python src/tests/run_smoke_tests.py
+    python src/tests/run_smoke_tests.py --json-report
 """
 
 import sys
 import os
+import re as _re
+import json
+import time
 import tempfile
 import traceback
 from pathlib import Path
@@ -18,26 +22,36 @@ from datetime import datetime
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / 'src'))
 
+JSON_REPORT_MODE = '--json-report' in sys.argv
+
 # Test-Ergebnisse
 passed = 0
 failed = 0
 errors = []
+_test_results = []
 
 
 def test(name):
     """Decorator fuer Tests."""
     def decorator(func):
         def wrapper():
-            global passed, failed, errors
+            global passed, failed, errors, _test_results
+            t0 = time.time()
             try:
                 func()
-                print(f"  [OK] {name}")
+                duration_ms = int((time.time() - t0) * 1000)
+                if not JSON_REPORT_MODE:
+                    print(f"  [OK] {name}")
                 passed += 1
+                _test_results.append({'name': name, 'status': 'passed', 'duration_ms': duration_ms})
             except AssertionError as e:
-                print(f"  [FAIL] {name}")
-                print(f"         Assertion: {e}")
+                duration_ms = int((time.time() - t0) * 1000)
+                if not JSON_REPORT_MODE:
+                    print(f"  [FAIL] {name}")
+                    print(f"         Assertion: {e}")
                 failed += 1
                 errors.append((name, str(e)))
+                _test_results.append({'name': name, 'status': 'failed', 'duration_ms': duration_ms, 'error': str(e)})
             except Exception as e:
                 print(f"  [ERROR] {name}")
                 print(f"          {type(e).__name__}: {e}")
@@ -340,23 +354,163 @@ if processor_available:
     test_import_processor()
 
 
+# --- 9. Provision Normalisierung ---
+print("\n[9] Provision Normalisierung")
+print("-" * 40)
+
+try:
+    from services.provision_import import normalize_vsnr, normalize_vermittler_name, normalize_for_db
+    provision_available = True
+except ImportError as e:
+    print(f"  [SKIP] services.provision_import nicht ladbar: {e}")
+    provision_available = False
+
+if provision_available:
+    @test("normalize_vsnr: Buchstaben + Nullen entfernen")
+    def test_vsnr_basic():
+        assert normalize_vsnr("ABC-001-234") == "1234"
+        assert normalize_vsnr("00123045") == "12345"
+
+    test_vsnr_basic()
+
+    @test("normalize_vsnr: Scientific Notation")
+    def test_vsnr_scientific():
+        result = normalize_vsnr("1.23E+10")
+        assert result == "123", f"Erwartet '123', erhalten '{result}'"
+
+    test_vsnr_scientific()
+
+    @test("normalize_vsnr: Edge Cases (leer, Nullen, intern)")
+    def test_vsnr_edges():
+        assert normalize_vsnr("") == ""
+        assert normalize_vsnr("0000") == "0"
+        assert normalize_vsnr("10203") == "123"
+
+    test_vsnr_edges()
+
+    @test("normalize_vermittler_name: Umlaute + Sonderzeichen")
+    def test_vermittler_normalize():
+        assert normalize_vermittler_name("Müller-Lüdenscheidt") == "muellerluedenscheidt"
+        assert normalize_vermittler_name("Straße") == "strasse"
+
+    test_vermittler_normalize()
+
+    @test("normalize_for_db: Klammern + Umlaute")
+    def test_db_normalize():
+        result = normalize_for_db("Müller (geb. Meier)")
+        assert "mueller" in result
+        assert "geb meier" in result
+        assert normalize_for_db("") == ""
+
+    test_db_normalize()
+
+
+# --- 10. Version Consistency ---
+print("\n[10] Version Consistency")
+print("-" * 40)
+
+@test("VERSION Datei ist gueltig (SemVer)")
+def test_version_semver():
+    version_path = project_root / 'VERSION'
+    assert version_path.exists(), "VERSION Datei fehlt"
+    version = version_path.read_text(encoding='utf-8-sig').strip()
+    assert _re.match(r'^\d+\.\d+\.\d+', version), f"VERSION ist kein SemVer: {version}"
+
+test_version_semver()
+
+@test("version_info.txt stimmt mit VERSION ueberein")
+def test_version_info_match():
+    version_path = project_root / 'VERSION'
+    info_path = project_root / 'version_info.txt'
+    if not info_path.exists():
+        return  # Skip wenn nicht vorhanden
+    version = version_path.read_text(encoding='utf-8-sig').strip().split('-')[0]
+    parts = version.split('.')
+    major, minor, patch = parts[0], parts[1], parts[2]
+    info_content = info_path.read_text(encoding='utf-8')
+    expected_filevers = f"filevers=({major}, {minor}, {patch}, 0)"
+    assert expected_filevers in info_content, f"version_info.txt enthaelt nicht '{expected_filevers}'"
+
+test_version_info_match()
+
+@test("installer.iss liest VERSION dynamisch")
+def test_installer_dynamic_version():
+    iss_path = project_root / 'installer.iss'
+    if not iss_path.exists():
+        return  # Skip wenn nicht vorhanden
+    content = iss_path.read_text(encoding='utf-8')
+    assert 'FileOpen' in content and 'VERSION' in content, \
+        "installer.iss liest VERSION nicht dynamisch (fehlt FileOpen/VERSION Preprocessor)"
+
+test_installer_dynamic_version()
+
+
+# --- 11. API Health Check (optional) ---
+print("\n[11] API Health Check (optional)")
+print("-" * 40)
+
+try:
+    import requests as _requests
+    requests_available = True
+except ImportError:
+    requests_available = False
+    print("  [SKIP] requests nicht installiert")
+
+if requests_available:
+    @test("API /status erreichbar und schema_version vorhanden")
+    def test_api_health():
+        try:
+            resp = _requests.get("https://acencia.info/api/status", timeout=5)
+            assert resp.status_code == 200, f"Status {resp.status_code}"
+            data = resp.json()
+            assert data.get('status') == 'ok', f"API-Status: {data.get('status')}"
+            assert data.get('schema_version'), "schema_version fehlt in API-Antwort"
+        except _requests.exceptions.ConnectionError:
+            print("  [SKIP] Server nicht erreichbar")
+            return
+        except _requests.exceptions.Timeout:
+            print("  [SKIP] Server-Timeout")
+            return
+
+    test_api_health()
+
+
 # ==============================================================================
 # ERGEBNIS
 # ==============================================================================
 
-print("\n" + "=" * 70)
-print("ERGEBNIS")
-print("=" * 70)
-print(f"\n  Bestanden: {passed}")
-print(f"  Fehlgeschlagen: {failed}")
-print(f"  Gesamt: {passed + failed}")
+if JSON_REPORT_MODE:
+    version_file = project_root / 'VERSION'
+    app_version = '0.0.0'
+    if version_file.exists():
+        app_version = version_file.read_text(encoding='utf-8-sig').strip()
 
-if errors:
-    print("\n  FEHLERDETAILS:")
-    for name, msg in errors:
-        print(f"    - {name}: {msg}")
+    report = {
+        'app_version': app_version,
+        'timestamp': datetime.utcnow().isoformat(),
+        'tests_run': passed + failed,
+        'tests_passed': passed,
+        'tests_failed': failed,
+        'results': _test_results,
+    }
+    report_path = project_root / 'smoke_test_report.json'
+    with open(report_path, 'w', encoding='utf-8') as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+else:
+    print("\n" + "=" * 70)
+    print("ERGEBNIS")
+    print("=" * 70)
+    print(f"\n  Bestanden: {passed}")
+    print(f"  Fehlgeschlagen: {failed}")
+    print(f"  Gesamt: {passed + failed}")
 
-print("\n" + "=" * 70)
+    if errors:
+        print("\n  FEHLERDETAILS:")
+        for name, msg in errors:
+            print(f"    - {name}: {msg}")
+
+    print("\n" + "=" * 70)
 
 # Exit-Code
 sys.exit(0 if failed == 0 else 1)

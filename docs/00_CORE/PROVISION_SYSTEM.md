@@ -1,7 +1,7 @@
 # ACENCIA ATLAS - Provisionsmanagement (GF-Bereich)
 
 **Letzte Aktualisierung:** 24. Februar 2026
-**Versionen:** v3.0.0 (Initial), v3.1.0 (GF-Rework), v3.2.0 (Matching V2), v3.2.1/v3.2.2 (Stabilisierung), v3.3.0 (Xempus Insight)
+**Versionen:** v3.0.0 (Initial), v3.1.0 (GF-Rework), v3.2.0 (Matching V2), v3.2.1/v3.2.2 (Stabilisierung), v3.3.0 (Xempus Insight), v3.4.0 (Refactoring: Workers/Models/Dialogs extrahiert)
 
 ---
 
@@ -30,17 +30,18 @@ Das Provisionsmanagement ist das Geschaeftsfuehrer-Modul von ACENCIA ATLAS. Es e
 │ ┌────────────┐  ┌──────────────────────────────────────────────┐  │
 │ │ Sidebar    │  │ QStackedWidget (8 Panels, Lazy-Loading)      │  │
 │ │ 8 Eintraege│  │                                              │  │
-│ │ + Zurueck  │  │  Panel 0: Dashboard (576 Z.)                 │  │
-│ └────────────┘  │  Panel 1: Abrechnungslaeufe (478 Z.)         │  │
-│                  │  Panel 2: Provisionspositionen (883 Z.)      │  │
-│                  │  Panel 3: Xempus Insight (1.209 Z.) [4 Tabs] │  │
-│                  │  Panel 4: Zuordnung & Klaerfaelle (915 Z.)   │  │
-│                  │  Panel 5: Verteilschluessel (608 Z.)         │  │
-│                  │  Panel 6: Auszahlungen (639 Z.)              │  │
+│ │ + Zurueck  │  │  Panel 0: Dashboard (~436 Z.)                │  │
+│ └────────────┘  │  Panel 1: Abrechnungslaeufe (~276 Z.)        │  │
+│                  │  Panel 2: Provisionspositionen (~657 Z.)     │  │
+│                  │  Panel 3: Xempus Insight (~784 Z.) [4 Tabs]  │  │
+│                  │  Panel 4: Zuordnung & Klaerfaelle (~398 Z.)  │  │
+│                  │  Panel 5: Verteilschluessel (~648 Z.)        │  │
+│                  │  Panel 6: Auszahlungen (~491 Z.)             │  │
 │                  │  Panel 7: Einstellungen (341 Z.)             │  │
 │                  └──────────────────────────────────────────────┘  │
 │                                                                    │
-│  Shared Widgets: widgets.py (821 Zeilen, 9 Klassen)               │
+│  Shared: widgets.py (821 Z.), workers.py (~640 Z., 24 Worker),    │
+│          models.py (~1.179 Z., 12 Models), dialogs.py (~348 Z.)   │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,18 +49,21 @@ Das Provisionsmanagement ist das Geschaeftsfuehrer-Modul von ACENCIA ATLAS. Es e
 
 | Datei | Zeilen | Zweck |
 |-------|--------|-------|
-| `src/ui/provision/provision_hub.py` | 328 | Hub mit Sidebar + 8 Panels |
-| `src/ui/provision/dashboard_panel.py` | 576 | 4 KPI-Karten, DonutChart, Berater-Ranking |
-| `src/ui/provision/abrechnungslaeufe_panel.py` | 478 | Import + Batch-Historie |
-| `src/ui/provision/provisionspositionen_panel.py` | 883 | Master-Detail, FilterChips, PillBadges |
-| `src/ui/provision/xempus_insight_panel.py` | 1.209 | 4-Tab Xempus-Analyse |
-| `src/ui/provision/xempus_panel.py` | 488 | Xempus-Beratungen-Liste |
-| `src/ui/provision/zuordnung_panel.py` | 915 | Klaerfaelle, MatchContractDialog |
-| `src/ui/provision/verteilschluessel_panel.py` | 608 | Modell-Karten + Mitarbeiter |
-| `src/ui/provision/auszahlungen_panel.py` | 639 | StatementCards, Status-Workflow |
+| `src/ui/provision/provision_hub.py` | ~340 | Hub mit Sidebar + 8 Panels |
+| `src/ui/provision/dashboard_panel.py` | ~436 | 4 KPI-Karten, DonutChart, Berater-Ranking |
+| `src/ui/provision/abrechnungslaeufe_panel.py` | ~276 | Import + Batch-Historie |
+| `src/ui/provision/provisionspositionen_panel.py` | ~657 | Master-Detail, FilterChips, PillBadges |
+| `src/ui/provision/xempus_insight_panel.py` | ~784 | 4-Tab Xempus-Analyse |
+| `src/ui/provision/xempus_panel.py` | ~333 | Xempus-Beratungen-Liste |
+| `src/ui/provision/zuordnung_panel.py` | ~398 | Klaerfaelle + Reverse-Matching |
+| `src/ui/provision/verteilschluessel_panel.py` | ~648 | Modell-Karten + Mitarbeiter |
+| `src/ui/provision/auszahlungen_panel.py` | ~491 | StatementCards, Status-Workflow |
 | `src/ui/provision/settings_panel.py` | 341 | Gefahrenzone (Reset) |
 | `src/ui/provision/widgets.py` | 821 | 9 Shared Widgets |
-| `src/api/provision.py` | 859 | API Client (40+ Methoden, 11 Dataclasses) |
+| `src/ui/provision/workers.py` | ~640 | **24 QThread-Worker (Refactoring v3.4.0)** |
+| `src/ui/provision/models.py` | ~1.179 | **12 QAbstractTableModel-Klassen (Refactoring v3.4.0)** |
+| `src/ui/provision/dialogs.py` | ~348 | **MatchContractDialog + DiffDialog (Refactoring v3.4.0)** |
+| `src/api/provision.py` | ~859 | API Client (40+ Methoden, 11 Dataclasses) |
 | `src/api/xempus.py` | 377 | Xempus API Client |
 | `src/domain/xempus_models.py` | 375 | 9 Xempus-Dataclasses |
 | `src/services/provision_import.py` | 738 | VU/Xempus Excel-Parser |
@@ -69,7 +73,7 @@ Das Provisionsmanagement ist das Geschaeftsfuehrer-Modul von ACENCIA ATLAS. Es e
 
 | Datei | Zeilen | Zweck |
 |-------|--------|-------|
-| `provision.php` | 2.289 | Hauptbackend (32 Routes, Split-Engine, Auto-Matching) |
+| `provision.php` | ~2.480 | Hauptbackend (32+ Routes, Split-Engine, Auto-Matching) |
 | `xempus.php` | 1.360 | Xempus Insight Engine (4-Phasen-Import, CRUD, Stats) |
 
 ---

@@ -237,19 +237,23 @@ BIPRO_VU_DOCUMENT_CODES = {
 # BiPRO-Codes fuer GDV-Dateien (Bestandsdaten)
 # Diese Dateien haben oft .pdf Endung, sind aber tatsaechlich GDV-Datensaetze
 BIPRO_GDV_CODES = [
-    "999010010",  # GDV Bestandsdaten - Bestand (ersichtlich aus BiPRO-Logs)
+    "999010010",  # GDV Bestandsdaten - Gesamtbestand
+    "999010020",  # GDV Bestandsdaten - Aenderungsbestand
     "999010000",  # GDV Bestandsdaten - Allgemein
     "999011000",  # GDV Bestandsdaten - Variante
-    # 999er-Bereich = GDV-Datenaustausch
 ]
 
-# Spezielle BiPRO-Codes die NICHT zur KI gehen
 BIPRO_SKIP_AI_CODES = [
-    # GDV-Codes brauchen keine KI
     "999010010",
+    "999010020",
     "999010000",
     "999011000",
 ]
+
+BIPRO_XML_ONLY_CATEGORIES = {
+    "999200010": "contract_xml",
+    "140012021": "status_message",
+}
 
 
 PROCESSING_RULES: Dict[str, Any] = {

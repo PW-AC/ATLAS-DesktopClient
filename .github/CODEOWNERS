@@ -1,0 +1,18 @@
+# ATLAS Desktop Client - Code Owners
+# Diese Datei definiert wer fuer welche Bereiche verantwortlich ist.
+# Reviewers werden automatisch bei PRs hinzugefuegt.
+
+# Standard: Repository-Owner
+* @paulweimert2006-commits
+
+# API / Server-Code (LIVE-synchronisiert!)
+BiPro-Webspace\ Spiegelung\ Live/ @paulweimert2006-commits
+
+# Provisionsmanagement (geschaeftskritisch)
+src/ui/provision/ @paulweimert2006-commits
+src/api/provision.py @paulweimert2006-commits
+src/services/provision_import.py @paulweimert2006-commits
+
+# Dokumentation
+docs/ @paulweimert2006-commits
+AGENTS.md @paulweimert2006-commits

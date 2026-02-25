@@ -9,9 +9,10 @@ from PySide6.QtWidgets import (
     QHeaderView, QFrame, QPushButton, QDialog, QComboBox,
     QLineEdit, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
     QTextEdit, QScrollArea, QSizePolicy, QMenu, QMessageBox,
+    QDateEdit,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QAbstractTableModel, QModelIndex, QThread, QTimer,
+    Qt, Signal, QTimer, QModelIndex, QDate,
 )
 from typing import List, Optional
 
@@ -28,136 +29,25 @@ from ui.provision.widgets import (
     SectionHeader, PillBadgeDelegate, ProvisionLoadingOverlay,
     format_eur, get_secondary_button_style,
 )
+from ui.provision.workers import VerteilschluesselLoadWorker, SaveEmployeeWorker, SaveModelWorker
+from ui.provision.models import DistEmployeeModel
 from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class _LoadWorker(QThread):
-    finished = Signal(object, object)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI):
-        super().__init__()
-        self._api = api
-
-    def run(self):
-        try:
-            models = self._api.get_models()
-            employees = self._api.get_employees()
-            self.finished.emit(models, employees)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _EmployeeModel(QAbstractTableModel):
-    COLUMNS = [
-        texts.PROVISION_DIST_EMP_COL_NAME,
-        texts.PROVISION_DIST_EMP_COL_ROLE,
-        texts.PROVISION_DIST_EMP_COL_MODEL,
-        texts.PROVISION_DIST_EMP_COL_RATE,
-        texts.PROVISION_DIST_EMP_COL_TL_RATE,
-        texts.PROVISION_DIST_EMP_COL_TL_BASIS,
-        texts.PROVISION_DIST_EMP_COL_TEAM,
-        texts.PROVISION_DIST_EMP_COL_ACTIVE,
-    ]
-
-    TOOLTIPS = [
-        "",
-        "",
-        texts.PROVISION_DIST_EMP_TIP_MODEL,
-        build_rich_tooltip(
-            texts.PROVISION_DIST_EMP_TIP_RATE_DEF,
-            berechnung=texts.PROVISION_DIST_EMP_TIP_RATE_CALC,
-        ),
-        build_rich_tooltip(
-            texts.PROVISION_DIST_EMP_TIP_TL_RATE_DEF,
-            berechnung=texts.PROVISION_DIST_EMP_TIP_TL_RATE_CALC,
-        ),
-        texts.PROVISION_DIST_EMP_COL_TL_BASIS_TIP,
-        "",
-        "",
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._data: List[Employee] = []
-
-    def set_data(self, data: List[Employee]):
-        self.beginResetModel()
-        self._data = data
-        self.endResetModel()
-
-    def get_item(self, row: int) -> Optional[Employee]:
-        if 0 <= row < len(self._data):
-            return self._data[row]
-        return None
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._data)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal:
-            if role == Qt.DisplayRole:
-                return self.COLUMNS[section]
-            if role == Qt.ToolTipRole and section < len(self.TOOLTIPS):
-                return self.TOOLTIPS[section] or None
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        e = self._data[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == 0:
-                return e.name
-            elif col == 1:
-                return {
-                    'consulter': texts.PROVISION_EMP_ROLE_CONSULTER,
-                    'teamleiter': texts.PROVISION_EMP_ROLE_TEAMLEITER,
-                    'backoffice': texts.PROVISION_EMP_ROLE_BACKOFFICE,
-                }.get(e.role, e.role)
-            elif col == 2:
-                return e.model_name or "\u2014"
-            elif col == 3:
-                return f"{e.effective_rate:.1f}%"
-            elif col == 4:
-                return f"{e.tl_override_rate:.1f}%" if e.tl_override_rate else "\u2014"
-            elif col == 5:
-                basis_labels = {
-                    'berater_anteil': texts.PROVISION_EMP_DLG_TL_BASIS_BERATER,
-                    'gesamt_courtage': texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT,
-                }
-                return basis_labels.get(e.tl_override_basis, e.tl_override_basis)
-            elif col == 6:
-                return e.teamleiter_name or "\u2014"
-            elif col == 7:
-                return "\u2713" if e.is_active else "\u2717"
-
-        if role == Qt.TextAlignmentRole:
-            if col in (3, 4):
-                return Qt.AlignRight | Qt.AlignVCenter
-            if col == 7:
-                return Qt.AlignCenter
-
-        return None
-
-
 class VerteilschluesselPanel(QWidget):
     """Provisionsmodelle und Mitarbeiter mit Rollen."""
 
     navigate_to_panel = Signal(int)
+    data_changed = Signal()
 
     def __init__(self, api: ProvisionAPI):
         super().__init__()
         self._api = api
         self._worker = None
+        self._save_worker = None
         self._models: List[CommissionModel] = []
         self._employees: List[Employee] = []
         self._toast_manager = None
@@ -204,7 +94,7 @@ class VerteilschluesselPanel(QWidget):
         emp_header.add_action(add_emp_btn)
         layout.addWidget(emp_header)
 
-        self._emp_model = _EmployeeModel()
+        self._emp_model = DistEmployeeModel()
         self._emp_table = QTableView()
         self._emp_table.setModel(self._emp_model)
         self._emp_table.setAlternatingRowColors(True)
@@ -254,7 +144,7 @@ class VerteilschluesselPanel(QWidget):
         self._loading_overlay.setVisible(True)
         if self._worker and self._worker.isRunning():
             return
-        self._worker = _LoadWorker(self._api)
+        self._worker = VerteilschluesselLoadWorker(self._api)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -304,7 +194,14 @@ class VerteilschluesselPanel(QWidget):
             ag = 100.0 - rate
             example_amount = 1000.0
             ag_amount = example_amount * ag / 100
-            berater_amount = example_amount * rate / 100
+            berater_brutto = example_amount * rate / 100
+            tl_rate_val = model.tl_rate or 0.0
+            if model.tl_basis == "gesamt_courtage":
+                tl_amount = example_amount * tl_rate_val / 100
+            else:
+                tl_amount = berater_brutto * tl_rate_val / 100
+            tl_amount = min(tl_amount, berater_brutto)
+            berater_amount = berater_brutto - tl_amount
 
             rate_row = QHBoxLayout()
             for label, pct in [(texts.PROVISION_DIST_MODEL_COL_AG, ag),
@@ -312,6 +209,11 @@ class VerteilschluesselPanel(QWidget):
                 item_lbl = QLabel(f"{label}: {pct:.0f}%")
                 item_lbl.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_BODY}; border: none; font-weight: 500;")
                 rate_row.addWidget(item_lbl)
+            if model.tl_rate is not None and model.tl_rate > 0:
+                basis_label = texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT if model.tl_basis == "gesamt_courtage" else texts.PROVISION_EMP_DLG_TL_BASIS_BERATER
+                tl_lbl = QLabel(f"TL: {model.tl_rate:.0f}% ({basis_label})")
+                tl_lbl.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_BODY}; border: none; font-weight: 500;")
+                rate_row.addWidget(tl_lbl)
             rate_row.addStretch()
             card_layout.addLayout(rate_row)
 
@@ -319,7 +221,7 @@ class VerteilschluesselPanel(QWidget):
                 amount=format_eur(example_amount),
                 ag=format_eur(ag_amount),
                 berater=format_eur(berater_amount),
-                tl="0,00 \u20ac",
+                tl=format_eur(tl_amount),
             ))
             example.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; border: none;")
             card_layout.addWidget(example)
@@ -342,6 +244,18 @@ class VerteilschluesselPanel(QWidget):
         rate_spin.setValue(70.0)
         form.addRow(texts.PROVISION_DIST_MODEL_COL_BERATER + ":", rate_spin)
 
+        tl_rate_spin = QDoubleSpinBox()
+        tl_rate_spin.setRange(0, 100)
+        tl_rate_spin.setDecimals(1)
+        tl_rate_spin.setSuffix("%")
+        tl_rate_spin.setSpecialValueText("\u2014")
+        form.addRow(texts.PROVISION_MODEL_COL_TL_RATE + ":", tl_rate_spin)
+
+        tl_basis_combo = QComboBox()
+        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_BERATER, "berater_anteil")
+        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT, "gesamt_courtage")
+        form.addRow(texts.PROVISION_MODEL_COL_TL_BASIS + ":", tl_basis_combo)
+
         desc_edit = QLineEdit()
         form.addRow(texts.PROVISION_MODEL_COL_DESC + ":", desc_edit)
 
@@ -356,9 +270,15 @@ class VerteilschluesselPanel(QWidget):
                 self._api.create_model({
                     'name': name,
                     'commission_rate': rate_spin.value(),
+                    'tl_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
+                    'tl_basis': tl_basis_combo.currentData(),
                     'description': desc_edit.text().strip() or None,
                 })
                 self._load_data()
+
+    def _get_model_map(self) -> dict:
+        """Model-ID -> CommissionModel Lookup fuer Auto-Fill aller Felder."""
+        return {m.id: m for m in self._models if m.is_active}
 
     def _add_employee(self):
         dlg = QDialog(self)
@@ -382,6 +302,43 @@ class VerteilschluesselPanel(QWidget):
                 model_combo.addItem(f"{m.name} ({m.commission_rate:.0f}%)", m.id)
         form.addRow(texts.PROVISION_EMP_DLG_MODEL, model_combo)
 
+        rate_spin = QDoubleSpinBox()
+        rate_spin.setRange(0, 100)
+        rate_spin.setDecimals(1)
+        rate_spin.setSuffix("%")
+        rate_spin.setValue(0.0)
+        rate_spin.setSpecialValueText("\u2014")
+        form.addRow(texts.PROVISION_DIST_EMP_COL_RATE + ":", rate_spin)
+
+        tl_rate_spin = QDoubleSpinBox()
+        tl_rate_spin.setRange(0, 100)
+        tl_rate_spin.setDecimals(1)
+        tl_rate_spin.setSuffix("%")
+        tl_rate_spin.setSpecialValueText("\u2014")
+        form.addRow(texts.PROVISION_DIST_EMP_COL_TL_RATE + ":", tl_rate_spin)
+
+        tl_basis_combo = QComboBox()
+        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_BERATER, "berater_anteil")
+        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT, "gesamt_courtage")
+        form.addRow(texts.PROVISION_DIST_EMP_COL_TL_BASIS + ":", tl_basis_combo)
+
+        model_map = self._get_model_map()
+
+        def _on_model_changed():
+            m = model_map.get(model_combo.currentData())
+            if m:
+                rate_spin.setValue(m.commission_rate)
+                if m.tl_rate is not None:
+                    tl_rate_spin.setValue(m.tl_rate)
+                if m.tl_basis:
+                    idx = 1 if m.tl_basis == "gesamt_courtage" else 0
+                    tl_basis_combo.setCurrentIndex(idx)
+            else:
+                rate_spin.setValue(0.0)
+                tl_rate_spin.setValue(0.0)
+
+        model_combo.currentIndexChanged.connect(_on_model_changed)
+
         tl_combo = QComboBox()
         tl_combo.addItem("\u2014", None)
         for e in self._employees:
@@ -397,10 +354,17 @@ class VerteilschluesselPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             name = name_edit.text().strip()
             if name:
+                model_id = model_combo.currentData()
+                m = model_map.get(model_id)
+                model_rate = m.commission_rate if m else 0.0
+                rate_val = rate_spin.value()
                 data = {
                     'name': name,
                     'role': role_combo.currentData(),
-                    'commission_model_id': model_combo.currentData(),
+                    'commission_model_id': model_id,
+                    'commission_rate_override': rate_val if rate_val > 0 and rate_val != model_rate else None,
+                    'tl_override_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
+                    'tl_override_basis': tl_basis_combo.currentData(),
                     'teamleiter_id': tl_combo.currentData(),
                 }
                 self._api.create_employee(data)
@@ -456,7 +420,7 @@ class VerteilschluesselPanel(QWidget):
 
         model_combo = QComboBox()
         model_combo.addItem(texts.PROVISION_MODEL_NONE_SELECT, None)
-        for i, m in enumerate(self._models):
+        for m in self._models:
             if m.is_active:
                 model_combo.addItem(f"{m.name} ({m.commission_rate:.0f}%)", m.id)
                 if m.id == emp.commission_model_id:
@@ -467,7 +431,8 @@ class VerteilschluesselPanel(QWidget):
         rate_spin.setRange(0, 100)
         rate_spin.setDecimals(1)
         rate_spin.setSuffix("%")
-        rate_spin.setValue(emp.commission_rate_override or 0.0)
+        current_rate = emp.commission_rate_override if emp.commission_rate_override else (emp.model_rate or 0.0)
+        rate_spin.setValue(current_rate)
         rate_spin.setSpecialValueText("\u2014")
         form.addRow(texts.PROVISION_DIST_EMP_COL_RATE + ":", rate_spin)
 
@@ -486,6 +451,23 @@ class VerteilschluesselPanel(QWidget):
             tl_basis_combo.setCurrentIndex(1)
         form.addRow(texts.PROVISION_DIST_EMP_COL_TL_BASIS + ":", tl_basis_combo)
 
+        model_map = self._get_model_map()
+
+        def _on_model_changed():
+            m = model_map.get(model_combo.currentData())
+            if m:
+                rate_spin.setValue(m.commission_rate)
+                if m.tl_rate is not None:
+                    tl_rate_spin.setValue(m.tl_rate)
+                if m.tl_basis:
+                    idx = 1 if m.tl_basis == "gesamt_courtage" else 0
+                    tl_basis_combo.setCurrentIndex(idx)
+            else:
+                rate_spin.setValue(0.0)
+                tl_rate_spin.setValue(0.0)
+
+        model_combo.currentIndexChanged.connect(_on_model_changed)
+
         tl_combo = QComboBox()
         tl_combo.addItem("\u2014", None)
         for e in self._employees:
@@ -495,25 +477,38 @@ class VerteilschluesselPanel(QWidget):
                     tl_combo.setCurrentIndex(tl_combo.count() - 1)
         form.addRow(texts.PROVISION_EMP_DLG_TEAMLEITER, tl_combo)
 
+        gueltig_ab = QDateEdit()
+        gueltig_ab.setCalendarPopup(True)
+        gueltig_ab.setDate(QDate.currentDate())
+        gueltig_ab.setDisplayFormat("dd.MM.yyyy")
+        gueltig_ab.setToolTip(texts.PROVISION_GUELTIG_AB_HINT)
+        form.addRow(texts.PROVISION_GUELTIG_AB + ":", gueltig_ab)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         form.addRow(buttons)
 
         if dlg.exec() == QDialog.Accepted:
+            model_id = model_combo.currentData()
+            m = model_map.get(model_id)
+            model_rate = m.commission_rate if m else 0.0
+            rate_val = rate_spin.value()
+            override = rate_val if rate_val > 0 and rate_val != model_rate else None
             data = {
                 'name': name_edit.text().strip() or emp.name,
                 'role': role_combo.currentData(),
-                'commission_model_id': model_combo.currentData(),
-                'commission_rate_override': rate_spin.value() if rate_spin.value() > 0 else None,
+                'commission_model_id': model_id,
+                'commission_rate_override': override,
                 'tl_override_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
                 'tl_override_basis': tl_basis_combo.currentData(),
                 'teamleiter_id': tl_combo.currentData(),
+                'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
-            if self._api.update_employee(emp.id, data):
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
-                self._load_data()
+            self._save_worker = SaveEmployeeWorker(self._api, emp.id, data)
+            self._save_worker.finished.connect(self._on_save_finished)
+            self._save_worker.error.connect(self._on_save_error)
+            self._save_worker.start()
 
     def _deactivate_employee(self, emp: Employee):
         try:
@@ -526,8 +521,8 @@ class VerteilschluesselPanel(QWidget):
 
     def _activate_employee(self, emp: Employee):
         try:
-            self._api.update_employee(emp.id, {'is_active': True})
-            if self._toast_manager:
+            success, _ = self._api.update_employee(emp.id, {'is_active': True})
+            if success and self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_ACTIVATED)
             self._load_data()
         except APIError:
@@ -581,8 +576,30 @@ class VerteilschluesselPanel(QWidget):
         rate_spin.setValue(model.commission_rate)
         form.addRow(texts.PROVISION_DIST_MODEL_COL_BERATER + ":", rate_spin)
 
+        tl_rate_spin = QDoubleSpinBox()
+        tl_rate_spin.setRange(0, 100)
+        tl_rate_spin.setDecimals(1)
+        tl_rate_spin.setSuffix("%")
+        tl_rate_spin.setValue(model.tl_rate or 0.0)
+        tl_rate_spin.setSpecialValueText("\u2014")
+        form.addRow(texts.PROVISION_MODEL_COL_TL_RATE + ":", tl_rate_spin)
+
+        tl_basis_combo = QComboBox()
+        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_BERATER, "berater_anteil")
+        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT, "gesamt_courtage")
+        if model.tl_basis == "gesamt_courtage":
+            tl_basis_combo.setCurrentIndex(1)
+        form.addRow(texts.PROVISION_MODEL_COL_TL_BASIS + ":", tl_basis_combo)
+
         desc_edit = QLineEdit(model.description or "")
         form.addRow(texts.PROVISION_MODEL_COL_DESC + ":", desc_edit)
+
+        gueltig_ab = QDateEdit()
+        gueltig_ab.setCalendarPopup(True)
+        gueltig_ab.setDate(QDate.currentDate())
+        gueltig_ab.setDisplayFormat("dd.MM.yyyy")
+        gueltig_ab.setToolTip(texts.PROVISION_GUELTIG_AB_HINT)
+        form.addRow(texts.PROVISION_GUELTIG_AB + ":", gueltig_ab)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dlg.accept)
@@ -593,12 +610,35 @@ class VerteilschluesselPanel(QWidget):
             data = {
                 'name': name_edit.text().strip() or model.name,
                 'commission_rate': rate_spin.value(),
+                'tl_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
+                'tl_basis': tl_basis_combo.currentData(),
                 'description': desc_edit.text().strip() or None,
+                'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
-            if self._api.update_model(model.id, data):
+            self._save_worker = SaveModelWorker(self._api, model.id, data)
+            self._save_worker.finished.connect(self._on_save_finished)
+            self._save_worker.error.connect(self._on_save_error)
+            self._save_worker.start()
+
+    def _on_save_finished(self, success: bool, summary):
+        if success:
+            if summary:
+                msg = texts.PROVISION_RECALC_TOAST.format(
+                    splits=summary.splits_recalculated,
+                    abrechnungen=summary.abrechnungen_regenerated,
+                )
                 if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
-                self._load_data()
+                    self._toast_manager.show_success(msg)
+                if summary.splits_recalculated > 0 or summary.abrechnungen_regenerated > 0:
+                    self.data_changed.emit()
+            else:
+                if self._toast_manager:
+                    self._toast_manager.show_success(texts.PROVISION_RECALC_TOAST_NO_CHANGES)
+            self._load_data()
+
+    def _on_save_error(self, error_msg: str):
+        if self._toast_manager:
+            self._toast_manager.show_error(error_msg)
 
     def _deactivate_model(self, model: CommissionModel):
         if self._api.delete_model(model.id):

@@ -9,8 +9,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QSizePolicy,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QAbstractTableModel, QModelIndex, QThread,
-    QSortFilterProxyModel, QTimer,
+    Qt, Signal, QSortFilterProxyModel, QTimer, QModelIndex,
 )
 from PySide6.QtGui import QColor
 from typing import List, Optional
@@ -29,166 +28,12 @@ from ui.provision.widgets import (
     PaginationBar, ProvisionLoadingOverlay,
     format_eur, get_search_field_style, get_secondary_button_style,
 )
+from ui.provision.workers import XempusContractsLoadWorker, XempusDetailLoadWorker
+from ui.provision.models import XempusContractsModel, xempus_status_label
 from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def _xempus_status_label(c: Contract) -> str:
-    if c.provision_count and c.provision_count > 0:
-        return texts.PROVISION_XEMPUS_STATUS_PAID
-    if c.status == 'beantragt':
-        return texts.PROVISION_XEMPUS_STATUS_APPLIED
-    return texts.PROVISION_XEMPUS_STATUS_OPEN
-
-
-def _xempus_status_key(c: Contract) -> str:
-    if c.provision_count and c.provision_count > 0:
-        return 'zugeordnet'
-    if c.status == 'beantragt':
-        return 'beantragt'
-    return 'offen'
-
-
-class _XempusLoadWorker(QThread):
-    finished = Signal(object, object)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, **kwargs):
-        super().__init__()
-        self._api = api
-        self._kwargs = kwargs
-
-    def run(self):
-        try:
-            contracts = self._api.get_contracts(**self._kwargs)
-            employees = self._api.get_employees()
-            self.finished.emit(contracts, employees)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _DetailLoadWorker(QThread):
-    """Laedt VU-Provisionen fuer einen einzelnen Vertrag."""
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, vsnr: str):
-        super().__init__()
-        self._api = api
-        self._vsnr = vsnr
-
-    def run(self):
-        try:
-            comms, _ = self._api.get_commissions(q=self._vsnr, limit=200)
-            self.finished.emit(comms)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _XempusModel(QAbstractTableModel):
-    COL_BEGINN = 0
-    COL_VSNR = 1
-    COL_PERSON = 2
-    COL_VU = 3
-    COL_SPARTE = 4
-    COL_BEITRAG = 5
-    COL_BERATER = 6
-    COL_PROV_SUMME = 7
-    COL_STATUS = 8
-
-    COLUMNS = [
-        texts.PROVISION_XEMPUS_COL_BEGINN,
-        texts.PROVISION_XEMPUS_COL_VSNR,
-        texts.PROVISION_XEMPUS_COL_PERSON,
-        texts.PROVISION_XEMPUS_COL_VU,
-        texts.PROVISION_XEMPUS_COL_SPARTE,
-        texts.PROVISION_XEMPUS_COL_BEITRAG,
-        texts.PROVISION_XEMPUS_COL_BERATER,
-        texts.PROVISION_XEMPUS_COL_PROV_SUMME,
-        texts.PROVISION_XEMPUS_COL_STATUS,
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._data: List[Contract] = []
-        self._emp_map: dict = {}
-
-    def set_data(self, data: List[Contract], employees: List[Employee] = None):
-        self.beginResetModel()
-        self._data = data
-        if employees:
-            self._emp_map = {e.id: e.name for e in employees}
-        self.endResetModel()
-
-    def get_contract(self, row: int) -> Optional[Contract]:
-        if 0 <= row < len(self._data):
-            return self._data[row]
-        return None
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._data)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            return self.COLUMNS[section]
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        c = self._data[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == self.COL_BEGINN:
-                if c.beginn:
-                    try:
-                        from datetime import datetime
-                        dt = datetime.strptime(c.beginn[:10], '%Y-%m-%d')
-                        return dt.strftime('%d.%m.%Y')
-                    except (ValueError, TypeError):
-                        return c.beginn or ''
-                return ''
-            if col == self.COL_VSNR:
-                return c.vsnr or ''
-            if col == self.COL_PERSON:
-                return c.versicherungsnehmer or ''
-            if col == self.COL_VU:
-                return c.versicherer or ''
-            if col == self.COL_SPARTE:
-                return c.sparte or ''
-            if col == self.COL_BEITRAG:
-                return format_eur(c.beitrag) if c.beitrag else ''
-            if col == self.COL_BERATER:
-                if c.berater_id and c.berater_id in self._emp_map:
-                    return self._emp_map[c.berater_id]
-                return c.berater_name or ''
-            if col == self.COL_PROV_SUMME:
-                return format_eur(c.provision_summe) if c.provision_summe else ''
-            if col == self.COL_STATUS:
-                return _xempus_status_label(c)
-
-        if role == Qt.UserRole:
-            if col == self.COL_STATUS:
-                return _xempus_status_key(c)
-
-        if role == Qt.TextAlignmentRole:
-            if col in (self.COL_BEITRAG, self.COL_PROV_SUMME):
-                return int(Qt.AlignRight | Qt.AlignVCenter)
-
-        if role == Qt.ForegroundRole:
-            if col == self.COL_STATUS:
-                key = _xempus_status_key(c)
-                colors = {'zugeordnet': SUCCESS, 'offen': WARNING, 'beantragt': '#5b8def'}
-                color = colors.get(key, PRIMARY_500)
-                return QColor(color)
-
-        return None
 
 
 class XempusPanel(QWidget):
@@ -249,7 +94,7 @@ class XempusPanel(QWidget):
 
         self._splitter = QSplitter(Qt.Horizontal)
 
-        self._model = _XempusModel()
+        self._model = XempusContractsModel()
         self._proxy = QSortFilterProxyModel()
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
@@ -266,7 +111,7 @@ class XempusPanel(QWidget):
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self._table.setItemDelegateForColumn(
-            _XempusModel.COL_STATUS,
+            XempusContractsModel.COL_STATUS,
             PillBadgeDelegate(PILL_COLORS, parent=self._table)
         )
         self._table.selectionModel().currentRowChanged.connect(self._on_row_selected)
@@ -304,7 +149,7 @@ class XempusPanel(QWidget):
         if self._worker and self._worker.isRunning():
             return
         self._loading.show()
-        self._worker = _XempusLoadWorker(self._api, limit=5000)
+        self._worker = XempusContractsLoadWorker(self._api, limit=5000)
         self._worker.finished.connect(self._on_data_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -395,7 +240,7 @@ class XempusPanel(QWidget):
             (texts.PROVISION_XEMPUS_COL_BERATER, contract.berater_name or ''),
             (texts.PROVISION_XEMPUS_COL_BEITRAG, format_eur(contract.beitrag) if contract.beitrag else ''),
             (texts.PROVISION_XEMPUS_COL_BEGINN, self._format_date(contract.beginn)),
-            (texts.PROVISION_XEMPUS_COL_STATUS, _xempus_status_label(contract)),
+            (texts.PROVISION_XEMPUS_COL_STATUS, xempus_status_label(contract)),
         ]
 
         for label, value in fields:
@@ -435,7 +280,7 @@ class XempusPanel(QWidget):
     def _load_commissions_for(self, vsnr: str):
         if self._detail_worker and self._detail_worker.isRunning():
             return
-        self._detail_worker = _DetailLoadWorker(self._api, vsnr)
+        self._detail_worker = XempusDetailLoadWorker(self._api, vsnr)
         self._detail_worker.finished.connect(self._on_detail_loaded)
         self._detail_worker.start()
 

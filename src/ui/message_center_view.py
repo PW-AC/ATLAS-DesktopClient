@@ -1,10 +1,11 @@
 """
 Mitteilungszentrale - Dashboard View
 
-Zeigt drei Kacheln:
-1. System- & Admin-Mitteilungen (grosse Kachel)
-2. Aktuelles Release (kleine Kachel)
-3. Nachrichten / Chats (kleine Kachel mit Button)
+Zeigt vier Kacheln:
+1a. System- & Admin-Mitteilungen (links oben)
+1b. Handlungsaufforderungen - Aus BiPRO (rechts oben)
+2. Aktuelles Release (links unten)
+3. Nachrichten / Chats (rechts unten)
 """
 
 import logging
@@ -90,6 +91,57 @@ class LoadReleasesWorker(QThread):
             self.finished.emit(releases)
         except Exception:
             self.finished.emit([])
+
+
+class LoadBiproEventsWorker(QThread):
+    """Laedt BiPRO-Events im Hintergrund."""
+    finished = Signal(list)
+
+    def __init__(self, bipro_events_api, parent=None):
+        super().__init__(parent)
+        self._api = bipro_events_api
+
+    def run(self):
+        try:
+            result = self._api.get_events(page=1, per_page=200)
+            self.finished.emit(result.get('data', []))
+        except Exception:
+            self.finished.emit([])
+
+
+class MarkBiproEventReadWorker(QThread):
+    """Markiert BiPRO-Events als gelesen im Hintergrund."""
+    finished = Signal(bool, int)  # success, updated_count
+    error = Signal(str)
+
+    def __init__(self, bipro_events_api, event_ids: list, mark_all: bool = False, parent=None):
+        super().__init__(parent)
+        self._api = bipro_events_api
+        self._event_ids = event_ids
+        self._mark_all = mark_all
+
+    def run(self):
+        try:
+            if self._mark_all:
+                updated = self._api.mark_all_read() or 0
+            else:
+                result = self._api.mark_as_read(self._event_ids)
+                updated = result.get('updated', len(self._event_ids)) if isinstance(result, dict) else len(self._event_ids)
+            self.finished.emit(True, updated)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+# ============================================================================
+# Event-Type Farben + Labels
+# ============================================================================
+
+EVENT_TYPE_COLORS = {
+    'gdv_announced': ('#d97706', '#fffbeb'),
+    'contract_xml': (INFO, INFO_LIGHT),
+    'status_message': ('#6b7280', '#f9fafb'),
+    'document_xml': ('#8b5cf6', '#f5f3ff'),
+}
 
 
 # ============================================================================
@@ -196,6 +248,152 @@ class MessageCard(QFrame):
 
 
 # ============================================================================
+# BiPRO Event Card Widget
+# ============================================================================
+
+class BiproEventCard(QFrame):
+    """Einzelner BiPRO-Event als Card mit Metadaten."""
+    mark_read = Signal(int)
+
+    def __init__(self, event, parent=None):
+        super().__init__(parent)
+        self._event = event
+        self._setup_ui(event)
+
+    def _setup_ui(self, ev):
+        et = getattr(ev, 'event_type', '') if hasattr(ev, 'event_type') else ev.get('event_type', '')
+        is_read = getattr(ev, 'is_read', False) if hasattr(ev, 'is_read') else ev.get('is_read', False)
+        fg_color, bg_color = EVENT_TYPE_COLORS.get(et, EVENT_TYPE_COLORS['document_xml'])
+
+        self.setStyleSheet(f"""
+            BiproEventCard {{
+                background-color: {bg_color if not is_read else BG_TERTIARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-left: 4px solid {fg_color};
+                border-radius: {RADIUS_MD};
+                padding: {SPACING_SM};
+                margin-bottom: 4px;
+            }}
+        """)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(2)
+
+        top_row = QHBoxLayout()
+
+        type_label_text = texts.BIPRO_EVENT_TYPE_LABELS.get(et, et)
+        badge = QLabel(type_label_text)
+        badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: {fg_color};
+                color: {TEXT_INVERSE};
+                border-radius: 3px;
+                padding: 1px 6px;
+                font-size: {FONT_SIZE_CAPTION};
+                font-weight: {FONT_WEIGHT_BOLD};
+            }}
+        """)
+        badge.setFixedHeight(18)
+        top_row.addWidget(badge)
+
+        vu_name = _ev_get(ev, 'vu_name', '')
+        kurz = _ev_get(ev, 'kurzbeschreibung', '') or _ev_get(ev, 'freitext', '')
+        title_text = f"{vu_name}" + (f" — {kurz}" if kurz else '')
+        title = QLabel(title_text)
+        fw = FONT_WEIGHT_BOLD if not is_read else FONT_WEIGHT_MEDIUM
+        title.setStyleSheet(f"""
+            QLabel {{
+                color: {TEXT_PRIMARY};
+                font-size: {FONT_SIZE_BODY};
+                font-weight: {fw};
+                background: transparent; border: none;
+            }}
+        """)
+        title.setWordWrap(True)
+        top_row.addWidget(title, 1)
+
+        if not is_read:
+            dot = QLabel("●")
+            dot.setStyleSheet(f"color: {ACCENT_500}; font-size: 10px; background: transparent; border: none;")
+            top_row.addWidget(dot)
+
+        layout.addLayout(top_row)
+
+        meta_parts = []
+        vsnr = _ev_get(ev, 'vsnr', '')
+        sparte = _ev_get(ev, 'sparte', '')
+        if vsnr:
+            meta_parts.append(f"{texts.BIPRO_EVENT_VSNR}: {vsnr}")
+        if sparte:
+            meta_parts.append(f"{texts.BIPRO_EVENT_SPARTE}: {sparte}")
+
+        created = _ev_get(ev, 'created_at', '')
+        try:
+            dt = datetime.fromisoformat(created.replace('Z', '+00:00'))
+            meta_parts.append(dt.strftime('%d.%m.%Y %H:%M'))
+        except (ValueError, AttributeError):
+            if created:
+                meta_parts.append(created)
+
+        if meta_parts:
+            meta_label = QLabel('  |  '.join(meta_parts))
+            meta_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {TEXT_SECONDARY};
+                    font-size: {FONT_SIZE_CAPTION};
+                    background: transparent; border: none;
+                }}
+            """)
+            layout.addWidget(meta_label)
+
+        vn_name = _ev_get(ev, 'vn_name', '')
+        if vn_name:
+            vn_label = QLabel(vn_name)
+            vn_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {TEXT_SECONDARY};
+                    font-size: {FONT_SIZE_CAPTION};
+                    font-style: italic;
+                    background: transparent; border: none;
+                }}
+            """)
+            layout.addWidget(vn_label)
+
+        ref_file = _ev_get(ev, 'referenced_filename', '')
+        if ref_file:
+            known_ext = any(ref_file.lower().endswith(ext)
+                           for ext in ('.pdf', '.gdv', '.csv', '.xlsx', '.zip', '.txt'))
+            if known_ext:
+                file_label = QLabel(f"\U0001F4CE {ref_file}")
+                file_label.setStyleSheet(f"""
+                    QLabel {{
+                        color: {TEXT_SECONDARY};
+                        font-size: {FONT_SIZE_CAPTION};
+                        font-style: italic;
+                        background: transparent; border: none;
+                    }}
+                """)
+                layout.addWidget(file_label)
+
+    def mousePressEvent(self, event):
+        ev_id = _ev_get(self._event, 'id', 0)
+        if ev_id:
+            self.mark_read.emit(int(ev_id))
+        super().mousePressEvent(event)
+
+
+def _ev_get(ev, key, default=''):
+    """Zugriff auf BiproEvent (Dataclass oder Dict)."""
+    if hasattr(ev, key):
+        return getattr(ev, key) or default
+    if isinstance(ev, dict):
+        return ev.get(key) or default
+    return default
+
+
+# ============================================================================
 # MessageCenterView - Haupt-Dashboard
 # ============================================================================
 
@@ -213,13 +411,16 @@ class MessageCenterView(QWidget):
         self._api_client = api_client
         self._releases_api = releases_api
         self._messages_api = None
+        self._bipro_events_api = None
         self._toast_manager = None
         self._messages: List[Dict] = []
         self._releases: List[Dict] = []
-        self._show_all_messages = False
+        self._bipro_events = []
         self._show_all_releases = False
         self._load_worker = None
         self._releases_worker = None
+        self._bipro_events_worker = None
+        self._mark_read_worker = None
         
         self._setup_ui()
     
@@ -230,11 +431,16 @@ class MessageCenterView(QWidget):
     def set_releases_api(self, releases_api):
         """Setzt die Releases API."""
         self._releases_api = releases_api
+
+    def set_bipro_events_api(self, bipro_events_api):
+        """Setzt die BiPRO-Events API (lazy, nach Login)."""
+        self._bipro_events_api = bipro_events_api
     
     def refresh(self):
-        """Laedt Mitteilungen und Releases neu."""
+        """Laedt Mitteilungen, Releases und BiPRO-Events neu."""
         self._load_messages()
         self._load_releases()
+        self._load_bipro_events()
     
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -264,10 +470,15 @@ class MessageCenterView(QWidget):
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(16)
         
-        # --- Kachel 1: System & Admin Mitteilungen (gross) ---
+        # --- Obere Reihe: System-Mitteilungen + BiPRO-Events ---
+        top_row = QHBoxLayout()
+        top_row.setSpacing(16)
         self._messages_card = self._create_messages_card()
-        self._content_layout.addWidget(self._messages_card)
-        
+        top_row.addWidget(self._messages_card, 1)
+        self._bipro_events_card = self._create_bipro_events_card()
+        top_row.addWidget(self._bipro_events_card, 1)
+        self._content_layout.addLayout(top_row)
+
         # --- Untere Reihe: Release + Nachrichten ---
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(16)
@@ -315,32 +526,37 @@ class MessageCenterView(QWidget):
         """)
         header_row.addWidget(title)
         header_row.addStretch()
-        
-        self._msg_toggle_btn = QPushButton(texts.MSG_CENTER_SHOW_ALL)
-        self._msg_toggle_btn.setStyleSheet(f"""
-            QPushButton {{
-                color: {ACCENT_500};
-                background: transparent;
-                border: none;
-                font-size: {FONT_SIZE_CAPTION};
-                font-weight: {FONT_WEIGHT_MEDIUM};
-                padding: 4px 8px;
-            }}
-            QPushButton:hover {{
-                text-decoration: underline;
-            }}
-        """)
-        self._msg_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._msg_toggle_btn.clicked.connect(self._toggle_show_all_messages)
-        header_row.addWidget(self._msg_toggle_btn)
         layout.addLayout(header_row)
         
-        # Messages Container
-        self._messages_container = QVBoxLayout()
+        msg_scroll = QScrollArea()
+        msg_scroll.setWidgetResizable(True)
+        msg_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        msg_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        msg_scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            QScrollBar:vertical {{
+                width: 6px;
+                background: transparent;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {BORDER_DEFAULT};
+                border-radius: 3px;
+                min-height: 20px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+
+        scroll_widget = QWidget()
+        scroll_widget.setStyleSheet("background: transparent;")
+        self._messages_container = QVBoxLayout(scroll_widget)
+        self._messages_container.setContentsMargins(0, 0, 0, 0)
         self._messages_container.setSpacing(4)
-        layout.addLayout(self._messages_container)
         
-        # Loading / Empty Label
         self._msg_status_label = QLabel(texts.MSG_CENTER_LOADING)
         self._msg_status_label.setStyleSheet(f"""
             QLabel {{
@@ -351,12 +567,14 @@ class MessageCenterView(QWidget):
         """)
         self._msg_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._messages_container.addWidget(self._msg_status_label)
+
+        msg_scroll.setWidget(scroll_widget)
+        layout.addWidget(msg_scroll, 1)
         
         return card
     
     def _populate_messages(self):
         """Fuellt die Mitteilungs-Kachel mit Daten."""
-        # Alte Widgets entfernen
         while self._messages_container.count():
             item = self._messages_container.takeAt(0)
             if item.widget():
@@ -367,23 +585,11 @@ class MessageCenterView(QWidget):
             label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_BODY}; padding: 16px;")
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._messages_container.addWidget(label)
-            self._msg_toggle_btn.setVisible(False)
             return
         
-        # Anzeige: 3 oder alle
-        count = len(self._messages) if self._show_all_messages else min(3, len(self._messages))
-        for msg in self._messages[:count]:
+        for msg in self._messages:
             card = MessageCard(msg)
             self._messages_container.addWidget(card)
-        
-        self._msg_toggle_btn.setVisible(len(self._messages) > 3)
-        self._msg_toggle_btn.setText(
-            texts.MSG_CENTER_SHOW_LESS if self._show_all_messages else texts.MSG_CENTER_SHOW_ALL
-        )
-    
-    def _toggle_show_all_messages(self):
-        self._show_all_messages = not self._show_all_messages
-        self._populate_messages()
     
     # ====================================================================
     # Kachel: Aktuelles Release
@@ -590,6 +796,224 @@ class MessageCenterView(QWidget):
             """)
     
     # ====================================================================
+    # Kachel: Handlungsaufforderungen - Aus BiPRO
+    # ====================================================================
+
+    def _create_bipro_events_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("biproEventsCard")
+        card.setStyleSheet(f"""
+            QFrame#biproEventsCard {{
+                background-color: {BG_PRIMARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: {RADIUS_LG};
+            }}
+        """)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(8)
+
+        header_row = QHBoxLayout()
+        title = QLabel(texts.BIPRO_EVENT_TITLE)
+        title.setStyleSheet(f"""
+            QLabel {{
+                color: {TEXT_PRIMARY};
+                font-size: {FONT_SIZE_H2};
+                font-weight: {FONT_WEIGHT_BOLD};
+            }}
+        """)
+        header_row.addWidget(title)
+
+        self._bipro_event_badge = QLabel("")
+        self._bipro_event_badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: {ACCENT_500};
+                color: {TEXT_INVERSE};
+                border-radius: 9px;
+                padding: 1px 6px;
+                font-size: {FONT_SIZE_CAPTION};
+                font-weight: {FONT_WEIGHT_BOLD};
+                min-width: 18px;
+            }}
+        """)
+        self._bipro_event_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._bipro_event_badge.setFixedHeight(18)
+        self._bipro_event_badge.setVisible(False)
+        header_row.addWidget(self._bipro_event_badge)
+
+        header_row.addStretch()
+
+        self._mark_all_read_btn = QPushButton(texts.BIPRO_EVENT_MARK_ALL_READ)
+        self._mark_all_read_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {TEXT_SECONDARY};
+                background: transparent;
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 4px;
+                padding: 3px 10px;
+                font-size: {FONT_SIZE_CAPTION};
+            }}
+            QPushButton:hover {{
+                background-color: {BG_SECONDARY};
+                color: {TEXT_PRIMARY};
+            }}
+        """)
+        self._mark_all_read_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mark_all_read_btn.setVisible(False)
+        self._mark_all_read_btn.clicked.connect(self._mark_all_bipro_events_read)
+        header_row.addWidget(self._mark_all_read_btn)
+
+        layout.addLayout(header_row)
+
+        subtitle = QLabel(texts.BIPRO_EVENT_SUBTITLE)
+        subtitle.setStyleSheet(f"""
+            QLabel {{
+                color: {TEXT_SECONDARY};
+                font-size: {FONT_SIZE_CAPTION};
+            }}
+        """)
+        layout.addWidget(subtitle)
+
+        bipro_scroll = QScrollArea()
+        bipro_scroll.setWidgetResizable(True)
+        bipro_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        bipro_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        bipro_scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            QScrollBar:vertical {{
+                width: 6px;
+                background: transparent;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {BORDER_DEFAULT};
+                border-radius: 3px;
+                min-height: 20px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+
+        scroll_widget = QWidget()
+        scroll_widget.setStyleSheet("background: transparent;")
+        self._bipro_events_container = QVBoxLayout(scroll_widget)
+        self._bipro_events_container.setContentsMargins(0, 0, 0, 0)
+        self._bipro_events_container.setSpacing(4)
+
+        self._bipro_status_label = QLabel(texts.BIPRO_EVENT_NO_EVENTS)
+        self._bipro_status_label.setStyleSheet(f"""
+            QLabel {{
+                color: {TEXT_SECONDARY};
+                font-size: {FONT_SIZE_BODY};
+                padding: 16px;
+            }}
+        """)
+        self._bipro_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._bipro_events_container.addWidget(self._bipro_status_label)
+
+        bipro_scroll.setWidget(scroll_widget)
+        layout.addWidget(bipro_scroll, 1)
+
+        return card
+
+    def _populate_bipro_events(self):
+        """Fuellt die BiPRO-Events-Kachel mit Daten."""
+        while self._bipro_events_container.count():
+            item = self._bipro_events_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self._bipro_events:
+            label = QLabel(texts.BIPRO_EVENT_NO_EVENTS)
+            label.setStyleSheet(
+                f"color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_BODY}; padding: 16px;"
+            )
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._bipro_events_container.addWidget(label)
+            self._bipro_event_badge.setVisible(False)
+            self._mark_all_read_btn.setVisible(False)
+            return
+
+        for ev in self._bipro_events:
+            card = BiproEventCard(ev)
+            card.mark_read.connect(self._on_bipro_event_clicked)
+            self._bipro_events_container.addWidget(card)
+
+        unread = sum(1 for e in self._bipro_events if not _ev_get(e, 'is_read', False))
+        if unread > 0:
+            self._bipro_event_badge.setText(str(unread))
+            self._bipro_event_badge.setVisible(True)
+            self._mark_all_read_btn.setVisible(True)
+        else:
+            self._bipro_event_badge.setVisible(False)
+            self._mark_all_read_btn.setVisible(False)
+
+    @Slot(int)
+    def _on_bipro_event_clicked(self, event_id: int):
+        """Markiert einen BiPRO-Event als gelesen (async via Worker)."""
+        if not self._bipro_events_api:
+            return
+        if self._mark_read_worker and self._mark_read_worker.isRunning():
+            return
+
+        for ev in self._bipro_events:
+            if _ev_get(ev, 'id', 0) == event_id:
+                if hasattr(ev, 'is_read'):
+                    ev.is_read = True
+                elif isinstance(ev, dict):
+                    ev['is_read'] = True
+        self._populate_bipro_events()
+
+        self._mark_read_worker = MarkBiproEventReadWorker(
+            self._bipro_events_api, [event_id], mark_all=False, parent=self
+        )
+        self._mark_read_worker.error.connect(
+            lambda msg: logger.warning(f"mark_as_read fehlgeschlagen: {msg}")
+        )
+        self._mark_read_worker.start()
+
+    def _mark_all_bipro_events_read(self):
+        """Markiert alle BiPRO-Events als gelesen (async via Worker)."""
+        if not self._bipro_events_api:
+            return
+        if self._mark_read_worker and self._mark_read_worker.isRunning():
+            return
+
+        unread = sum(1 for e in self._bipro_events if not _ev_get(e, 'is_read', False))
+        if unread == 0:
+            if self._toast_manager:
+                self._toast_manager.show_info(texts.BIPRO_EVENT_MARK_ALL_READ_NONE)
+            return
+
+        for ev in self._bipro_events:
+            if hasattr(ev, 'is_read'):
+                ev.is_read = True
+            elif isinstance(ev, dict):
+                ev['is_read'] = True
+        self._populate_bipro_events()
+
+        self._mark_read_worker = MarkBiproEventReadWorker(
+            self._bipro_events_api, [], mark_all=True, parent=self
+        )
+        self._mark_read_worker.finished.connect(self._on_mark_all_read_finished)
+        self._mark_read_worker.error.connect(
+            lambda msg: logger.warning(f"Alle als gelesen markieren fehlgeschlagen: {msg}")
+        )
+        self._mark_read_worker.start()
+
+    @Slot(bool, int)
+    def _on_mark_all_read_finished(self, success: bool, updated: int):
+        """Callback nach erfolgreichem Markieren aller Events als gelesen."""
+        if success and self._toast_manager:
+            self._toast_manager.show_success(
+                texts.BIPRO_EVENT_MARK_ALL_READ_SUCCESS.format(count=updated)
+            )
+
+    # ====================================================================
     # Daten laden
     # ====================================================================
     
@@ -636,3 +1060,17 @@ class MessageCenterView(QWidget):
     def _on_releases_loaded(self, releases: list):
         self._releases = releases
         self._populate_releases()
+
+    def _load_bipro_events(self):
+        if not self._bipro_events_api:
+            return
+        if self._bipro_events_worker and self._bipro_events_worker.isRunning():
+            return
+        self._bipro_events_worker = LoadBiproEventsWorker(self._bipro_events_api, self)
+        self._bipro_events_worker.finished.connect(self._on_bipro_events_loaded)
+        self._bipro_events_worker.start()
+
+    @Slot(list)
+    def _on_bipro_events_loaded(self, events: list):
+        self._bipro_events = events
+        self._populate_bipro_events()

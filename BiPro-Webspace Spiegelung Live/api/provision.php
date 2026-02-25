@@ -197,6 +197,7 @@ function recalculateCommissionSplit(int $commissionId, int $beraterId): void {
 
     $berater = Database::queryOne(
         'SELECT e.commission_rate_override, e.commission_model_id, e.teamleiter_id,
+                e.tl_override_rate, e.tl_override_basis,
                 m.commission_rate AS model_rate
          FROM pm_employees e
          LEFT JOIN pm_commission_models m ON e.commission_model_id = m.id
@@ -209,7 +210,6 @@ function recalculateCommissionSplit(int $commissionId, int $beraterId): void {
     $beraterAnteilBrutto = round($betrag * $rate / 100, 2);
     $agAnteil = round($betrag - $beraterAnteilBrutto, 2);
 
-    // Rueckbelastungen: KEIN TL-Override, Berater traegt seinen Anteil allein
     if ($art === 'rueckbelastung' || $betrag < 0) {
         Database::execute(
             'UPDATE pm_commissions SET berater_anteil = ?, tl_anteil = 0, ag_anteil = ? WHERE id = ?',
@@ -218,23 +218,17 @@ function recalculateCommissionSplit(int $commissionId, int $beraterId): void {
         return;
     }
 
-    // Normale Provisionen: TL-Override berechnen
+    // TL-Override: Rate/Basis stehen auf dem BERATER selbst
     $tlAnteil = 0.0;
-    if ($berater['teamleiter_id']) {
-        $tl = Database::queryOne(
-            'SELECT tl_override_rate, tl_override_basis FROM pm_employees WHERE id = ?',
-            [$berater['teamleiter_id']]
-        );
-        if ($tl && (float)$tl['tl_override_rate'] > 0) {
-            $tlRate = (float)$tl['tl_override_rate'];
-            if (($tl['tl_override_basis'] ?? 'berater_anteil') === 'gesamt_courtage') {
-                $tlAnteil = round($betrag * $tlRate / 100, 2);
-            } else {
-                $tlAnteil = round($beraterAnteilBrutto * $tlRate / 100, 2);
-            }
-            if ($tlAnteil > $beraterAnteilBrutto) {
-                $tlAnteil = $beraterAnteilBrutto;
-            }
+    if ($berater['teamleiter_id'] && (float)($berater['tl_override_rate'] ?? 0) > 0) {
+        $tlRate = (float)$berater['tl_override_rate'];
+        if (($berater['tl_override_basis'] ?? 'berater_anteil') === 'gesamt_courtage') {
+            $tlAnteil = round($betrag * $tlRate / 100, 2);
+        } else {
+            $tlAnteil = round($beraterAnteilBrutto * $tlRate / 100, 2);
+        }
+        if ($tlAnteil > $beraterAnteilBrutto) {
+            $tlAnteil = $beraterAnteilBrutto;
         }
     }
 
@@ -246,12 +240,25 @@ function recalculateCommissionSplit(int $commissionId, int $beraterId): void {
     );
 }
 
-function batchRecalculateSplits(?int $batchId = null): int {
-    $batchFilter = $batchId ? 'AND c.import_batch_id = ?' : '';
-    $params = $batchId ? [$batchId] : [];
+function batchRecalculateSplits(?int $batchId = null, ?array $employeeIds = null, ?string $fromDate = null): int {
+    $extraFilter = '';
+    $extraParams = [];
+
+    if ($batchId) {
+        $extraFilter .= ' AND c.import_batch_id = ?';
+        $extraParams[] = $batchId;
+    }
+    if ($employeeIds && count($employeeIds) > 0) {
+        $placeholders = implode(',', array_fill(0, count($employeeIds), '?'));
+        $extraFilter .= " AND c.berater_id IN ($placeholders)";
+        $extraParams = array_merge($extraParams, $employeeIds);
+    }
+    if ($fromDate) {
+        $extraFilter .= ' AND c.auszahlungsdatum >= ?';
+        $extraParams[] = $fromDate;
+    }
 
     // Step A: Rueckbelastungen / negative Betraege (kein TL-Anteil)
-    $negParams = $params;
     $updNeg = Database::execute("
         UPDATE pm_commissions c
         INNER JOIN pm_employees e ON c.berater_id = e.id
@@ -262,11 +269,10 @@ function batchRecalculateSplits(?int $batchId = null): int {
         WHERE c.match_status IN ('auto_matched','manual_matched')
           AND c.berater_id IS NOT NULL
           AND (c.art = 'rueckbelastung' OR c.betrag < 0)
-          $batchFilter
-    ", $negParams);
+          $extraFilter
+    ", $extraParams);
 
     // Step B: Positive Provisionen OHNE Teamleiter
-    $posNoTlParams = $params;
     $updPosNoTl = Database::execute("
         UPDATE pm_commissions c
         INNER JOIN pm_employees e ON c.berater_id = e.id
@@ -279,11 +285,11 @@ function batchRecalculateSplits(?int $batchId = null): int {
           AND c.betrag >= 0
           AND c.art != 'rueckbelastung'
           AND (e.teamleiter_id IS NULL OR e.teamleiter_id = 0)
-          $batchFilter
-    ", $posNoTlParams);
+          $extraFilter
+    ", $extraParams);
 
-    // Step C: Positive Provisionen MIT Teamleiter (TL-Basis: berater_anteil)
-    $posTlParams = $params;
+    // Step C: Positive Provisionen MIT Teamleiter
+    // tl_override_rate/basis stehen auf dem BERATER (e), nicht auf dem TL-Datensatz (tl)
     $updPosTl = Database::execute("
         UPDATE pm_commissions c
         INNER JOIN pm_employees e ON c.berater_id = e.id
@@ -291,19 +297,19 @@ function batchRecalculateSplits(?int $batchId = null): int {
         INNER JOIN pm_employees tl ON e.teamleiter_id = tl.id
         SET c.ag_anteil   = ROUND(c.betrag - ROUND(c.betrag * COALESCE(e.commission_rate_override, m.commission_rate, 0) / 100, 2), 2),
             c.tl_anteil   = LEAST(
-                CASE WHEN COALESCE(tl.tl_override_basis, 'berater_anteil') = 'gesamt_courtage'
-                     THEN ROUND(c.betrag * COALESCE(tl.tl_override_rate, 0) / 100, 2)
+                CASE WHEN COALESCE(e.tl_override_basis, 'berater_anteil') = 'gesamt_courtage'
+                     THEN ROUND(c.betrag * COALESCE(e.tl_override_rate, 0) / 100, 2)
                      ELSE ROUND(ROUND(c.betrag * COALESCE(e.commission_rate_override, m.commission_rate, 0) / 100, 2)
-                               * COALESCE(tl.tl_override_rate, 0) / 100, 2)
+                               * COALESCE(e.tl_override_rate, 0) / 100, 2)
                 END,
                 ROUND(c.betrag * COALESCE(e.commission_rate_override, m.commission_rate, 0) / 100, 2)
             ),
             c.berater_anteil = ROUND(c.betrag * COALESCE(e.commission_rate_override, m.commission_rate, 0) / 100, 2)
                 - LEAST(
-                    CASE WHEN COALESCE(tl.tl_override_basis, 'berater_anteil') = 'gesamt_courtage'
-                         THEN ROUND(c.betrag * COALESCE(tl.tl_override_rate, 0) / 100, 2)
+                    CASE WHEN COALESCE(e.tl_override_basis, 'berater_anteil') = 'gesamt_courtage'
+                         THEN ROUND(c.betrag * COALESCE(e.tl_override_rate, 0) / 100, 2)
                          ELSE ROUND(ROUND(c.betrag * COALESCE(e.commission_rate_override, m.commission_rate, 0) / 100, 2)
-                                   * COALESCE(tl.tl_override_rate, 0) / 100, 2)
+                                   * COALESCE(e.tl_override_rate, 0) / 100, 2)
                     END,
                     ROUND(c.betrag * COALESCE(e.commission_rate_override, m.commission_rate, 0) / 100, 2)
                 )
@@ -312,10 +318,82 @@ function batchRecalculateSplits(?int $batchId = null): int {
           AND c.betrag >= 0
           AND c.art != 'rueckbelastung'
           AND e.teamleiter_id IS NOT NULL AND e.teamleiter_id > 0
-          $batchFilter
-    ", $posTlParams);
+          $extraFilter
+    ", $extraParams);
 
     return $updNeg + $updPosNoTl + $updPosTl;
+}
+
+/**
+ * Offene Abrechnungen (berechnet/geprueft) fuer betroffene Berater neu generieren.
+ * Freigegeben/ausgezahlt bleiben unberuehrt.
+ */
+function regenerateOpenAbrechnungen(array $employeeIds, ?string $fromDate = null): array {
+    if (empty($employeeIds)) return ['months_updated' => 0, 'abrechnungen_regenerated' => 0];
+
+    $placeholders = implode(',', array_fill(0, count($employeeIds), '?'));
+    $params = $employeeIds;
+
+    $dateFilter = '';
+    if ($fromDate) {
+        $dateFilter = ' AND a2.abrechnungsmonat >= ?';
+        $params[] = date('Y-m-01', strtotime($fromDate));
+    }
+
+    $openAbrechnungen = Database::query("
+        SELECT DISTINCT a.abrechnungsmonat, a.berater_id
+        FROM (
+            SELECT a2.*, ROW_NUMBER() OVER (
+                PARTITION BY a2.abrechnungsmonat, a2.berater_id ORDER BY a2.revision DESC
+            ) AS rn
+            FROM pm_berater_abrechnungen a2
+            WHERE a2.berater_id IN ($placeholders) $dateFilter
+        ) a
+        WHERE a.rn = 1 AND a.status IN ('berechnet', 'geprueft')
+    ", $params);
+
+    $regenerated = 0;
+    $months = [];
+    foreach ($openAbrechnungen as $row) {
+        $monat = $row['abrechnungsmonat'];
+        $beraterId = (int)$row['berater_id'];
+        $monatEnd = date('Y-m-t', strtotime($monat));
+
+        $stats = Database::queryOne("
+            SELECT
+                COALESCE(SUM(CASE WHEN betrag > 0 THEN berater_anteil ELSE 0 END), 0) AS brutto,
+                COALESCE(SUM(CASE WHEN betrag > 0 THEN tl_anteil ELSE 0 END), 0) AS tl_abzug,
+                COALESCE(SUM(CASE WHEN betrag < 0 THEN berater_anteil ELSE 0 END), 0) AS rueckbelastungen,
+                COUNT(*) AS anzahl
+            FROM pm_commissions
+            WHERE berater_id = ?
+              AND match_status IN ('auto_matched','manual_matched')
+              AND auszahlungsdatum BETWEEN ? AND ?
+        ", [$beraterId, $monat, $monatEnd]);
+
+        $brutto = (float)$stats['brutto'];
+        $tlAbzug = (float)$stats['tl_abzug'];
+        $rueckbelastungen = (float)$stats['rueckbelastungen'];
+        $netto = round($brutto - $tlAbzug, 2);
+        $auszahlung = round($netto + $rueckbelastungen, 2);
+
+        Database::insert(
+            'INSERT INTO pm_berater_abrechnungen (abrechnungsmonat, berater_id, revision,
+                brutto_provision, tl_abzug, netto_provision, rueckbelastungen,
+                auszahlung, anzahl_provisionen, status)
+             SELECT ?, ?, COALESCE(MAX(a2.revision), 0) + 1,
+                ?, ?, ?, ?, ?, ?, "berechnet"
+             FROM pm_berater_abrechnungen a2
+             WHERE a2.abrechnungsmonat = ? AND a2.berater_id = ?',
+            [$monat, $beraterId, $brutto, $tlAbzug, $netto,
+             $rueckbelastungen, $auszahlung, (int)$stats['anzahl'],
+             $monat, $beraterId]
+        );
+        $regenerated++;
+        $months[$monat] = true;
+    }
+
+    return ['months_updated' => count($months), 'abrechnungen_regenerated' => $regenerated];
 }
 
 // ═══════════════════════════════════════════════════════
@@ -712,7 +790,53 @@ function handleEmployeesRoute(string $method, ?string $id, array $payload): void
             $updated = Database::queryOne('SELECT * FROM pm_employees WHERE id = ?', [(int)$id]);
             logPmAction($payload, 'employee_updated', 'pm_employee', (int)$id,
                 "Mitarbeiter aktualisiert: {$existing['name']}", array_keys($data));
-            json_success(['employee' => $updated], 'Aktualisiert');
+
+            $rateFields = ['commission_model_id', 'commission_rate_override', 'tl_override_rate', 'tl_override_basis', 'teamleiter_id'];
+            $rateChanged = false;
+            $changedFields = [];
+            foreach ($rateFields as $rf) {
+                if (!array_key_exists($rf, $data)) continue;
+                $newVal = $data[$rf];
+                $oldVal = $existing[$rf] ?? null;
+                if ($newVal === null && $oldVal === null) continue;
+                if ($newVal === null || $oldVal === null) { $rateChanged = true; $changedFields[] = $rf; continue; }
+                if (is_numeric($newVal) && is_numeric($oldVal)) {
+                    if ((float)$newVal !== (float)$oldVal) { $rateChanged = true; $changedFields[] = $rf; }
+                } else {
+                    if ((string)$newVal !== (string)$oldVal) { $rateChanged = true; $changedFields[] = $rf; }
+                }
+            }
+
+            $recalcSummary = null;
+            if ($rateChanged) {
+                $fromDate = $data['gueltig_ab'] ?? null;
+                $affectedIds = [(int)$id];
+
+                if (array_key_exists('tl_override_rate', $data) || array_key_exists('tl_override_basis', $data)) {
+                    $subordinates = Database::query('SELECT id FROM pm_employees WHERE teamleiter_id = ?', [(int)$id]);
+                    foreach ($subordinates as $sub) {
+                        $affectedIds[] = (int)$sub['id'];
+                    }
+                }
+
+                $splitsRecalced = batchRecalculateSplits(null, $affectedIds, $fromDate);
+                $abrResult = regenerateOpenAbrechnungen($affectedIds, $fromDate);
+
+                $recalcSummary = [
+                    'splits_recalculated' => $splitsRecalced,
+                    'abrechnungen_regenerated' => $abrResult['abrechnungen_regenerated'],
+                    'affected_employees' => count($affectedIds),
+                    'from_date' => $fromDate,
+                    'changed_fields' => $changedFields,
+                ];
+                logPmAction($payload, 'rate_recalculated', 'pm_employee', (int)$id,
+                    "Neuberechnung nach Ratenänderung: {$splitsRecalced} Splits, {$abrResult['abrechnungen_regenerated']} Abrechnungen (Felder: " . implode(', ', $changedFields) . ")",
+                    $recalcSummary);
+            }
+
+            $response = ['employee' => $updated];
+            if ($recalcSummary) $response['recalc_summary'] = $recalcSummary;
+            json_success($response, 'Aktualisiert');
             break;
 
         case 'DELETE':
@@ -1833,17 +1957,33 @@ function handleModelsRoute(string $method, ?string $id, array $payload): void {
     if ($method === 'POST') {
         $data = get_json_body();
         require_fields($data, ['name', 'commission_rate']);
+        if (isset($data['tl_rate']) && $data['tl_rate'] !== null && ($data['tl_rate'] < 0 || $data['tl_rate'] > 100)) {
+            json_error('TL-Rate muss zwischen 0 und 100 liegen', 400); return;
+        }
+        if (isset($data['tl_basis']) && $data['tl_basis'] !== null && !in_array($data['tl_basis'], ['berater_anteil', 'gesamt_courtage'])) {
+            json_error('Ungueltige TL-Basis', 400); return;
+        }
         $newId = Database::insert(
-            'INSERT INTO pm_commission_models (name, description, commission_rate) VALUES (?, ?, ?)',
-            [$data['name'], $data['description'] ?? null, (float)$data['commission_rate']]
+            'INSERT INTO pm_commission_models (name, description, commission_rate, tl_rate, tl_basis) VALUES (?, ?, ?, ?, ?)',
+            [$data['name'], $data['description'] ?? null, (float)$data['commission_rate'],
+             isset($data['tl_rate']) ? (float)$data['tl_rate'] : null,
+             $data['tl_basis'] ?? null]
         );
         $created = Database::queryOne('SELECT * FROM pm_commission_models WHERE id = ?', [$newId]);
         json_success(['model' => $created], 'Modell erstellt');
         return;
     }
     if ($method === 'PUT' && $id && is_numeric($id)) {
+        $existing = Database::queryOne('SELECT * FROM pm_commission_models WHERE id = ?', [(int)$id]);
+        if (!$existing) { json_error('Modell nicht gefunden', 404); return; }
         $data = get_json_body();
-        $fields = ['name', 'description', 'commission_rate', 'is_active'];
+        if (isset($data['tl_rate']) && $data['tl_rate'] !== null && ($data['tl_rate'] < 0 || $data['tl_rate'] > 100)) {
+            json_error('TL-Rate muss zwischen 0 und 100 liegen', 400); return;
+        }
+        if (isset($data['tl_basis']) && $data['tl_basis'] !== null && !in_array($data['tl_basis'], ['berater_anteil', 'gesamt_courtage'])) {
+            json_error('Ungueltige TL-Basis', 400); return;
+        }
+        $fields = ['name', 'description', 'commission_rate', 'tl_rate', 'tl_basis', 'is_active'];
         $sets = [];
         $params = [];
         foreach ($fields as $f) {
@@ -1852,10 +1992,54 @@ function handleModelsRoute(string $method, ?string $id, array $payload): void {
                 $params[] = $data[$f];
             }
         }
-        if (empty($sets)) json_error('Keine Aenderungen', 400);
+        if (empty($sets)) { json_error('Keine Aenderungen', 400); return; }
         $params[] = (int)$id;
         Database::execute('UPDATE pm_commission_models SET ' . implode(', ', $sets) . ' WHERE id = ?', $params);
-        json_success([], 'Modell aktualisiert');
+
+        $rateFieldsCheck = ['commission_rate', 'tl_rate', 'tl_basis'];
+        $rateChanged = false;
+        foreach ($rateFieldsCheck as $rf) {
+            if (!array_key_exists($rf, $data)) continue;
+            $newVal = $data[$rf];
+            $oldVal = $existing[$rf] ?? null;
+            if ($newVal === null && $oldVal === null) continue;
+            if ($newVal === null || $oldVal === null) { $rateChanged = true; break; }
+            if (is_numeric($newVal) && is_numeric($oldVal)) {
+                if ((float)$newVal !== (float)$oldVal) { $rateChanged = true; break; }
+            } else {
+                if ((string)$newVal !== (string)$oldVal) { $rateChanged = true; break; }
+            }
+        }
+
+        $recalcSummary = null;
+        if ($rateChanged) {
+            $fromDate = $data['gueltig_ab'] ?? null;
+            $empRows = Database::query(
+                'SELECT id FROM pm_employees WHERE commission_model_id = ? AND is_active = 1',
+                [(int)$id]
+            );
+            $affectedIds = array_map(fn($r) => (int)$r['id'], $empRows);
+
+            if (!empty($affectedIds)) {
+                $splitsRecalced = batchRecalculateSplits(null, $affectedIds, $fromDate);
+                $abrResult = regenerateOpenAbrechnungen($affectedIds, $fromDate);
+
+                $recalcSummary = [
+                    'splits_recalculated' => $splitsRecalced,
+                    'abrechnungen_regenerated' => $abrResult['abrechnungen_regenerated'],
+                    'affected_employees' => count($affectedIds),
+                    'from_date' => $fromDate,
+                ];
+                logPmAction($payload, 'model_rate_recalculated', 'pm_commission_model', (int)$id,
+                    "Neuberechnung nach Modellratenänderung: {$splitsRecalced} Splits, {$abrResult['abrechnungen_regenerated']} Abrechnungen",
+                    $recalcSummary);
+            }
+        }
+
+        $updated = Database::queryOne('SELECT * FROM pm_commission_models WHERE id = ?', [(int)$id]);
+        $response = ['model' => $updated];
+        if ($recalcSummary) $response['recalc_summary'] = $recalcSummary;
+        json_success($response, 'Modell aktualisiert');
         return;
     }
     if ($method === 'DELETE' && $id && is_numeric($id)) {

@@ -14,7 +14,7 @@ import ctypes
 from logging.handlers import RotatingFileHandler
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
-from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler, QThread, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -156,6 +156,27 @@ class ForcedLogoutHandler(QObject):
         self._window.close()
 
 
+class _UpdateCheckWorker(QThread):
+    """Asynchroner Update-Check im Hintergrund, blockiert nicht den Main-Thread."""
+    update_found = Signal(object, object)  # (update_info, update_service)
+    
+    def __init__(self, api_client, current_version: str, channel: str = 'stable'):
+        super().__init__()
+        self._api_client = api_client
+        self._current_version = current_version
+        self._channel = channel
+    
+    def run(self):
+        try:
+            from services.update_service import UpdateService
+            update_service = UpdateService(self._api_client, channel=self._channel)
+            update_info = update_service.check_for_update(self._current_version)
+            if update_info:
+                self.update_found.emit(update_info, update_service)
+        except Exception as e:
+            logger.warning(f"Update-Check fehlgeschlagen: {e}")
+
+
 def load_embedded_fonts():
     """Lädt eingebettete Schriftarten aus dem assets/fonts/ Ordner."""
     fonts_dir = os.path.join(_src_dir, "ui", "assets", "fonts")
@@ -218,6 +239,25 @@ def _acquire_single_instance() -> bool:
         return True  # Im Zweifel starten
 
 
+def release_single_instance_mutex():
+    """
+    Gibt den Single-Instance-Mutex explizit frei.
+    
+    Wird vor dem Installer-Start aufgerufen, damit der Inno-Setup-Installer
+    keinen Mutex-Konflikt sieht und sofort installieren kann (kein CloseApplications-Warten).
+    """
+    global _instance_mutex
+    if _instance_mutex and sys.platform == 'win32':
+        try:
+            kernel32 = ctypes.windll.kernel32
+            kernel32.ReleaseMutex(_instance_mutex)
+            kernel32.CloseHandle(_instance_mutex)
+            _instance_mutex = None
+            logger.info("Single-Instance Mutex freigegeben (fuer Update)")
+        except Exception as e:
+            logger.warning(f"Mutex-Freigabe fehlgeschlagen: {e}")
+
+
 def main():
     """Hauptfunktion zum Starten der Anwendung."""
     # Qt Message Handler installieren (vor QApplication, um alle Warnungen abzufangen)
@@ -276,47 +316,40 @@ def main():
         
         logger.info(f"Angemeldet als: {auth_api.current_user.username}")
         
-        # === Update-Check nach Login (nur im Release-Modus) ===
-        _pending_deprecation_warning = None
-        if is_dev_mode():
-            logger.info("Dev-Modus erkannt (python run.py) - Update-Check uebersprungen")
-        else:
-            try:
-                from services.update_service import UpdateService
-                from ui.update_dialog import UpdateDialog
-                
-                update_service = UpdateService(api_client)
-                update_info = update_service.check_for_update(APP_VERSION)
-                
-                if update_info:
-                    if update_info.mandatory:
-                        # Pflicht-Update: Blockiert komplett
-                        logger.info(f"Pflicht-Update erforderlich: {update_info.latest_version}")
-                        dialog = UpdateDialog(update_info, update_service, mode='mandatory')
-                        dialog.exec()
-                        # Falls Dialog geschlossen wird (sollte nicht passieren): App beenden
-                        sys.exit(0)
-                    elif update_info.deprecated and not update_info.update_available:
-                        # Veraltete Version ohne verfuegbares Update
-                        # Toast wird nach MainHub-Erstellung angezeigt (s.u.)
-                        _pending_deprecation_warning = texts.UPDATE_DEPRECATED_MSG.format(version=APP_VERSION)
-                    elif update_info.update_available:
-                        # Optionales Update
-                        dialog = UpdateDialog(update_info, update_service, mode='optional')
-                        if dialog.exec() == QDialog.Accepted:
-                            # Update wird installiert, App beenden
-                            sys.exit(0)
-            except Exception as e:
-                # Update-Check darf App-Start nicht blockieren
-                logger.warning(f"Update-Check fehlgeschlagen: {e}")
-        
         # Neues Hub-Hauptfenster erstellen und anzeigen
         window = MainHub(api_client=api_client, auth_api=auth_api)
         window.show()
         
-        # Verzoegerte Deprecation-Warnung als Toast (nach MainHub-Erstellung)
-        if _pending_deprecation_warning:
-            window._toast_manager.show_warning(_pending_deprecation_warning, duration_ms=12000)
+        # === Update-Check nach Login (asynchron, blockiert UI nicht) ===
+        if not is_dev_mode():
+            def _on_update_found(update_info, update_service):
+                try:
+                    if update_info.mandatory:
+                        logger.info(f"Pflicht-Update erforderlich: {update_info.latest_version}")
+                        from ui.auto_update_window import AutoUpdateWindow
+                        auto_update = AutoUpdateWindow(update_info, update_service)
+                        auto_update.show()
+                        window.close()
+                    elif update_info.deprecated and not update_info.update_available:
+                        window._toast_manager.show_warning(
+                            texts.UPDATE_DEPRECATED_MSG.format(version=APP_VERSION),
+                            duration_ms=12000
+                        )
+                    elif update_info.update_available:
+                        from ui.update_dialog import UpdateDialog
+                        dialog = UpdateDialog(update_info, update_service, mode='optional')
+                        if dialog.exec() == QDialog.Accepted:
+                            release_single_instance_mutex()
+                            sys.exit(0)
+                except Exception as e:
+                    logger.warning(f"Update-Verarbeitung fehlgeschlagen: {e}")
+            
+            _user_channel = auth_api.current_user.update_channel if auth_api.current_user else 'stable'
+            window._update_check_bg_worker = _UpdateCheckWorker(api_client, APP_VERSION, channel=_user_channel)
+            window._update_check_bg_worker.update_found.connect(_on_update_found)
+            window._update_check_bg_worker.start()
+        else:
+            logger.info("Dev-Modus erkannt (python run.py) - Update-Check uebersprungen")
         
         # Forced-Logout-Handler registrieren (Session-Invalidierung)
         forced_logout_handler = ForcedLogoutHandler(window, auth_api)

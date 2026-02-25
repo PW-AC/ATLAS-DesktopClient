@@ -116,7 +116,7 @@ function handleUsersRoute(string $method, ?string $idOrAction, array $adminPaylo
  */
 function handleListUsers(): void {
     $users = Database::query(
-        'SELECT u.id, u.username, u.email, u.account_type, u.is_active, u.is_locked, 
+        'SELECT u.id, u.username, u.email, u.account_type, u.update_channel, u.is_active, u.is_locked,
                 u.last_login_at, u.created_at,
                 (SELECT MAX(s.last_activity_at) FROM sessions s WHERE s.user_id = u.id AND s.is_active = 1) as last_activity
          FROM users u
@@ -137,11 +137,11 @@ function handleListUsers(): void {
  */
 function handleGetUser(int $userId): void {
     $user = Database::queryOne(
-        'SELECT id, username, email, account_type, is_active, is_locked, last_login_at, created_at 
+        'SELECT id, username, email, account_type, update_channel, is_active, is_locked, last_login_at, created_at
          FROM users WHERE id = ?',
         [$userId]
     );
-    
+
     if (!$user) {
         json_error('Benutzer nicht gefunden', 404);
     }
@@ -227,7 +227,7 @@ function handleCreateUser(array $adminPayload): void {
 
 /**
  * PUT /admin/users/{id} - Nutzer bearbeiten
- * Body: { email?, account_type?, permissions?: [] }
+ * Body: { email?, account_type?, update_channel?, permissions?: [] }
  */
 function handleUpdateUser(int $userId, array $adminPayload): void {
     $user = Database::queryOne('SELECT id, username, account_type FROM users WHERE id = ?', [$userId]);
@@ -248,6 +248,12 @@ function handleUpdateUser(int $userId, array $adminPayload): void {
     if (isset($data['account_type']) && in_array($data['account_type'], ['admin', 'user'])) {
         Database::execute('UPDATE users SET account_type = ? WHERE id = ?', [$data['account_type'], $userId]);
         $changes['account_type'] = $data['account_type'];
+    }
+    
+    // Update-Channel aendern
+    if (isset($data['update_channel']) && in_array($data['update_channel'], ['stable', 'beta', 'dev'])) {
+        Database::execute('UPDATE users SET update_channel = ? WHERE id = ?', [$data['update_channel'], $userId]);
+        $changes['update_channel'] = $data['update_channel'];
     }
     
     // Permissions aendern
@@ -273,7 +279,7 @@ function handleUpdateUser(int $userId, array $adminPayload): void {
     
     // Aktualisierte Daten zurueckgeben
     $updatedUser = Database::queryOne(
-        'SELECT id, username, email, account_type, is_active, is_locked FROM users WHERE id = ?',
+        'SELECT id, username, email, account_type, update_channel, is_active, is_locked FROM users WHERE id = ?',
         [$userId]
     );
     $updatedUser['permissions'] = getUserPermissions($userId);

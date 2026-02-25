@@ -98,6 +98,7 @@ test_logs/
 *_debug.py
 test_*.py
 !testdata/test_*.py
+!src/tests/test_*.py
 
 # BiPRO temporaere Dateien
 lieferung_*.xml
@@ -116,12 +117,23 @@ outlook_temp_*/
 # PyInstaller Output / Build-Artefakte
 Output/
 dist/
+*.exe
+ACENCIA-ATLAS-Setup-*.exe
 
 # Sensible Server-Konfiguration (enthaelt DB-Credentials, API-Keys)
 BiPro-Webspace Spiegelung Live/api/config.php
 
 # API-Keys die im Klartext rumliegen
 neuer API KEY/
+
+# Secrets / Zertifikate
+*.pem
+*.key
+.env
+.env.*
+
+# Smoke-Test Reports (enthalten Systeminfos)
+smoke_test_report*.json
 
 # PyInstaller Build-Artefakte
 build/

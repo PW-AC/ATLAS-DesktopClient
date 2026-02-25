@@ -35,7 +35,7 @@ class ReleasesAPI:
         
         Args:
             current_version: Aktuelle App-Version (z.B. '0.9.8')
-            channel: Update-Channel ('stable', 'beta', 'internal')
+            channel: Update-Channel ('stable', 'beta', 'dev')
             
         Returns:
             Dict mit update_available, mandatory, deprecated, etc.
@@ -91,16 +91,19 @@ class ReleasesAPI:
         return None
     
     def create_release(self, file_path: str, version: str, channel: str = 'stable',
-                       release_notes: str = '', min_version: str = '') -> Dict:
+                       release_notes: str = '', min_version: str = '',
+                       smoke_test_report: str = '', required_schema: str = '') -> Dict:
         """
-        Neues Release hochladen (nur Admin).
+        Neues Release hochladen (nur Admin). Status startet als 'pending'.
         
         Args:
             file_path: Pfad zur EXE-Datei
             version: Versionsnummer (z.B. '1.0.0')
-            channel: 'stable', 'beta' oder 'internal'
+            channel: 'stable', 'beta' oder 'dev'
             release_notes: Release Notes (Markdown)
             min_version: Optionale Mindestversion
+            smoke_test_report: JSON-String des Smoke-Test-Reports
+            required_schema: Erwartete Schema-Migration (z.B. '035_release_gate_status')
         """
         additional_data = {
             'version': version,
@@ -109,6 +112,10 @@ class ReleasesAPI:
         }
         if min_version:
             additional_data['min_version'] = min_version
+        if smoke_test_report:
+            additional_data['smoke_test_report'] = smoke_test_report
+        if required_schema:
+            additional_data['required_schema'] = required_schema
         
         try:
             response = self.client.upload_file(
@@ -123,6 +130,25 @@ class ReleasesAPI:
             raise
         return {}
     
+    def validate_release(self, release_id: int) -> Dict:
+        """
+        Release-Validierung ausfuehren (Gate Engine).
+        
+        Args:
+            release_id: ID des Releases
+            
+        Returns:
+            Dict mit gate_report und aktualisiertem Release
+        """
+        try:
+            response = self.client.post(f'/admin/releases/{release_id}/validate')
+            if response.get('success'):
+                return response.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler bei Release-Validierung: {e}")
+            raise
+        return {}
+    
     def update_release(self, release_id: int, status: str = None,
                        channel: str = None, release_notes: str = None,
                        min_version: str = None) -> Dict:
@@ -132,7 +158,7 @@ class ReleasesAPI:
         Args:
             release_id: ID des Releases
             status: 'active', 'mandatory', 'deprecated', 'withdrawn'
-            channel: 'stable', 'beta', 'internal'
+            channel: 'stable', 'beta', 'dev'
             release_notes: Release Notes Text
             min_version: Mindestversion (None um zu loeschen)
         """
@@ -155,6 +181,25 @@ class ReleasesAPI:
             raise
         return {}
     
+    def withdraw_release(self, release_id: int) -> Dict:
+        """
+        Release zurueckziehen mit Auto-Fallback auf vorheriges Release.
+
+        Args:
+            release_id: ID des aktiven/mandatory Releases
+
+        Returns:
+            Dict mit withdrawn_release, fallback_release und message
+        """
+        try:
+            response = self.client.post(f'/admin/releases/{release_id}/withdraw')
+            if response.get('success'):
+                return response.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Withdraw von Release {release_id}: {e}")
+            raise
+        return {}
+
     def delete_release(self, release_id: int) -> bool:
         """
         Release loeschen (nur Admin, nur wenn 0 Downloads).

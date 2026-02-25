@@ -12,8 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QFormLayout, QDialogButtonBox, QDateEdit,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QAbstractTableModel, QModelIndex, QThread,
-    QSortFilterProxyModel, QTimer, QDate,
+    Qt, Signal, QSortFilterProxyModel, QTimer, QDate, QModelIndex,
 )
 from PySide6.QtGui import QColor
 from typing import List, Optional
@@ -28,247 +27,22 @@ from ui.styles.tokens import (
     SUCCESS, ERROR, WARNING,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     PILL_COLORS, ROLE_BADGE_COLORS, ART_BADGE_COLORS,
-    build_rich_tooltip, get_provision_table_style,
+    get_provision_table_style,
 )
 from ui.provision.widgets import (
     PillBadgeDelegate, FilterChipBar, SectionHeader, ThreeDotMenuDelegate,
     PaginationBar, ActivityFeedWidget, ProvisionLoadingOverlay,
     format_eur, get_search_field_style,
 )
+from ui.provision.workers import (
+    PositionsLoadWorker, AuditLoadWorker, IgnoreWorker, MappingCreateWorker,
+)
+from ui.provision.models import PositionsModel, status_label, status_pill_key, ART_LABELS
+from ui.provision.dialogs import MatchContractDialog
 from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
-
-def _status_label(c) -> str:
-    """Differenzierter Status-Text basierend auf match_status + berater_id."""
-    if c.match_status in ('auto_matched', 'manual_matched', 'matched'):
-        if c.berater_id:
-            return texts.PROVISION_STATUS_ZUGEORDNET
-        return texts.PROVISION_STATUS_VERTRAG_GEFUNDEN
-    if c.match_status == 'unmatched':
-        return texts.PROVISION_STATUS_OFFEN
-    if c.match_status == 'ignored':
-        return texts.PROVISION_STATUS_IGNORIERT
-    if c.match_status == 'gesperrt':
-        return texts.PROVISION_STATUS_GESPERRT
-    return c.match_status
-
-
-def _status_pill_key(c) -> str:
-    """Pill-Color-Key basierend auf match_status + berater_id."""
-    if c.match_status in ('auto_matched', 'manual_matched', 'matched'):
-        if c.berater_id:
-            return 'zugeordnet'
-        return 'vertrag_gefunden'
-    if c.match_status == 'unmatched':
-        return 'offen'
-    if c.match_status == 'ignored':
-        return 'ignoriert'
-    if c.match_status == 'gesperrt':
-        return 'gesperrt'
-    return c.match_status
-
-ART_LABELS = {
-    'ap': texts.PROVISION_COMM_ART_AP,
-    'bp': texts.PROVISION_COMM_ART_BP,
-    'rueckbelastung': texts.PROVISION_COMM_ART_RUECK,
-    'nullmeldung': texts.PROVISION_COMM_ART_NULL,
-    'sonstige': texts.PROVISION_COMM_ART_SONSTIGE,
-}
-
-
-class _LoadWorker(QThread):
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, **kwargs):
-        super().__init__()
-        self._api = api
-        self._kwargs = kwargs
-
-    def run(self):
-        try:
-            data, _ = self._api.get_commissions(**self._kwargs)
-            self.finished.emit(data)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _AuditLoadWorker(QThread):
-    finished = Signal(int, list)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, comm_id: int):
-        super().__init__()
-        self._api = api
-        self._comm_id = comm_id
-
-    def run(self):
-        try:
-            entries = self._api.get_audit_log(entity_type='commission', entity_id=self._comm_id, limit=10)
-            self.finished.emit(self._comm_id, entries)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _IgnoreWorker(QThread):
-    finished = Signal(bool)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, comm_id: int):
-        super().__init__()
-        self._api = api
-        self._comm_id = comm_id
-
-    def run(self):
-        try:
-            ok = self._api.ignore_commission(self._comm_id)
-            self.finished.emit(ok)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _MappingWorker(QThread):
-    finished = Signal()
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, name: str, berater_id: int):
-        super().__init__()
-        self._api = api
-        self._name = name
-        self._berater_id = berater_id
-
-    def run(self):
-        try:
-            self._api.create_mapping(self._name, self._berater_id)
-            self._api.trigger_auto_match()
-            self.finished.emit()
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _PositionsModel(QAbstractTableModel):
-    COL_DATUM = 0
-    COL_VU = 1
-    COL_VSNR = 2
-    COL_KUNDE = 3
-    COL_BETRAG = 4
-    COL_XEMPUS_BERATER = 5
-    COL_BERATER = 6
-    COL_STATUS = 7
-    COL_BERATER_ANTEIL = 8
-    COL_SOURCE = 9
-    COL_MENU = 10
-
-    COLUMNS = [
-        texts.PROVISION_POS_COL_DATUM,
-        texts.PROVISION_POS_COL_VU,
-        texts.PROVISION_POS_COL_VSNR,
-        texts.PROVISION_POS_COL_KUNDE,
-        texts.PROVISION_POS_COL_BETRAG,
-        texts.PROVISION_POS_COL_XEMPUS_BERATER,
-        texts.PROVISION_POS_COL_BERATER,
-        texts.PROVISION_POS_COL_STATUS,
-        texts.PROVISION_POS_COL_BERATER_ANTEIL,
-        texts.PROVISION_POS_COL_SOURCE,
-        "",
-    ]
-
-    TOOLTIPS = [
-        texts.PROVISION_TIP_COL_DATUM,
-        texts.PROVISION_TIP_COL_VERSICHERER,
-        texts.PROVISION_TIP_COL_VSNR,
-        texts.PROVISION_TIP_COL_KUNDE,
-        build_rich_tooltip(texts.PROVISION_TIP_COL_BETRAG),
-        texts.PROVISION_TIP_COL_XEMPUS_BERATER,
-        texts.PROVISION_TIP_COL_BERATER,
-        build_rich_tooltip(
-            texts.PROVISION_TIP_COL_STATUS,
-            hinweis=texts.PROVISION_TIP_STATUS_HINT,
-        ),
-        build_rich_tooltip(texts.PROVISION_TIP_COL_BERATER_ANTEIL),
-        texts.PROVISION_TIP_COL_SOURCE,
-        "",
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._data: List[Commission] = []
-
-    def set_data(self, data: List[Commission]):
-        self.beginResetModel()
-        self._data = data
-        self.endResetModel()
-
-    def get_commission(self, row: int) -> Optional[Commission]:
-        if 0 <= row < len(self._data):
-            return self._data[row]
-        return None
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._data)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal:
-            if role == Qt.DisplayRole:
-                return self.COLUMNS[section]
-            if role == Qt.ToolTipRole and section < len(self.TOOLTIPS):
-                return self.TOOLTIPS[section] or None
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        c = self._data[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == self.COL_VU:
-                return c.versicherer or c.vu_name or ""
-            elif col == self.COL_DATUM:
-                d = c.auszahlungsdatum or ""
-                if len(d) >= 10:
-                    try:
-                        dt = datetime.strptime(d[:10], "%Y-%m-%d")
-                        return dt.strftime("%d.%m.%Y")
-                    except ValueError:
-                        pass
-                return d
-            elif col == self.COL_KUNDE:
-                return c.versicherungsnehmer or ""
-            elif col == self.COL_VSNR:
-                return c.vsnr or ""
-            elif col == self.COL_BETRAG:
-                return format_eur(c.betrag)
-            elif col == self.COL_BERATER_ANTEIL:
-                return format_eur(c.berater_anteil) if c.berater_anteil is not None else ""
-            elif col == self.COL_STATUS:
-                return _status_label(c)
-            elif col == self.COL_BERATER:
-                return c.berater_name or "\u2014"
-            elif col == self.COL_XEMPUS_BERATER:
-                return c.xempus_berater_name or "\u2014"
-            elif col == self.COL_SOURCE:
-                return c.source_label
-            elif col == self.COL_MENU:
-                return ""
-
-        if role == Qt.TextAlignmentRole:
-            if col in (self.COL_BETRAG, self.COL_BERATER_ANTEIL):
-                return Qt.AlignRight | Qt.AlignVCenter
-
-        if role == Qt.ForegroundRole and col == self.COL_BETRAG:
-            if c.betrag < 0:
-                return QColor(ERROR)
-
-        if role == Qt.UserRole:
-            return c
-
-        return None
 
 
 class ProvisionspositionenPanel(QWidget):
@@ -382,7 +156,7 @@ class ProvisionspositionenPanel(QWidget):
         table_layout = QVBoxLayout(table_widget)
         table_layout.setContentsMargins(0, 0, 0, 0)
 
-        self._model = _PositionsModel()
+        self._model = PositionsModel()
         self._proxy = QSortFilterProxyModel()
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
@@ -403,11 +177,11 @@ class ProvisionspositionenPanel(QWidget):
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
         status_delegate = PillBadgeDelegate(PILL_COLORS)
-        self._table.setItemDelegateForColumn(_PositionsModel.COL_STATUS, status_delegate)
+        self._table.setItemDelegateForColumn(PositionsModel.COL_STATUS, status_delegate)
         self._status_delegate = status_delegate
 
         menu_delegate = ThreeDotMenuDelegate(self._build_row_menu)
-        self._table.setItemDelegateForColumn(_PositionsModel.COL_MENU, menu_delegate)
+        self._table.setItemDelegateForColumn(PositionsModel.COL_MENU, menu_delegate)
         self._menu_delegate = menu_delegate
 
         table_layout.addWidget(self._table)
@@ -625,7 +399,7 @@ class ProvisionspositionenPanel(QWidget):
             kwargs['von'] = von
         if bis:
             kwargs['bis'] = bis
-        self._worker = _LoadWorker(self._api, **kwargs)
+        self._worker = PositionsLoadWorker(self._api, **kwargs)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -700,10 +474,10 @@ class ProvisionspositionenPanel(QWidget):
     def _resize_columns(self):
         header = self._table.horizontalHeader()
         for i in range(self._model.columnCount()):
-            if i == _PositionsModel.COL_MENU:
+            if i == PositionsModel.COL_MENU:
                 header.setSectionResizeMode(i, QHeaderView.Fixed)
                 self._table.setColumnWidth(i, 48)
-            elif i == _PositionsModel.COL_STATUS:
+            elif i == PositionsModel.COL_STATUS:
                 header.setSectionResizeMode(i, QHeaderView.Fixed)
                 self._table.setColumnWidth(i, 170)
             else:
@@ -741,7 +515,7 @@ class ProvisionspositionenPanel(QWidget):
         self._det_datum.setText(d)
         self._det_kunde.setText(comm.versicherungsnehmer or "")
 
-        self._det_status.setText(_status_label(comm))
+        self._det_status.setText(status_label(comm))
 
         if comm.match_status == 'auto_matched':
             method = texts.PROVISION_TIP_MATCHING_NORMALIZED
@@ -765,7 +539,7 @@ class ProvisionspositionenPanel(QWidget):
     def _load_audit(self, comm: Commission):
         if hasattr(self, '_audit_worker') and self._audit_worker and self._audit_worker.isRunning():
             return
-        self._audit_worker = _AuditLoadWorker(self._api, comm.id)
+        self._audit_worker = AuditLoadWorker(self._api, comm.id)
         self._audit_worker.finished.connect(self._on_audit_loaded)
         self._audit_worker.error.connect(lambda msg: self._activity_feed.set_items([]))
         self._audit_worker.start()
@@ -797,7 +571,7 @@ class ProvisionspositionenPanel(QWidget):
     def _ignore_commission(self, comm: Commission):
         if hasattr(self, '_ignore_worker') and self._ignore_worker and self._ignore_worker.isRunning():
             return
-        self._ignore_worker = _IgnoreWorker(self._api, comm.id)
+        self._ignore_worker = IgnoreWorker(self._api, comm.id)
         self._ignore_worker.finished.connect(self._on_ignore_finished)
         self._ignore_worker.error.connect(lambda msg: logger.warning(f"Ignore fehlgeschlagen: {msg}"))
         self._ignore_worker.start()
@@ -817,7 +591,7 @@ class ProvisionspositionenPanel(QWidget):
             self._ignore_commission(self._current_detail_comm)
 
     def _manual_match(self, comm: Commission):
-        from ui.provision.zuordnung_panel import MatchContractDialog
+        # MatchContractDialog importiert ueber dialogs.py (top-level)
         dlg = MatchContractDialog(self._api, comm, parent=self)
         if dlg.exec() == QDialog.Accepted:
             if self._toast_manager:
@@ -871,7 +645,7 @@ class ProvisionspositionenPanel(QWidget):
     def _start_mapping_worker(self, name: str, berater_id: int):
         if hasattr(self, '_mapping_worker') and self._mapping_worker and self._mapping_worker.isRunning():
             return
-        self._mapping_worker = _MappingWorker(self._api, name, berater_id)
+        self._mapping_worker = MappingCreateWorker(self._api, name, berater_id)
         self._mapping_worker.finished.connect(self._on_mapping_finished)
         self._mapping_worker.error.connect(lambda msg: logger.warning(f"Mapping fehlgeschlagen: {msg}"))
         self._mapping_worker.start()

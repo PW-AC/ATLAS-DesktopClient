@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Startskript für das GDV Tool.
+Startskript fuer ACENCIA ATLAS.
 
 Verwendung:
-    python run.py
+    python run.py                    -- Normale App starten
+    python run.py --background-update -- Headless Hintergrund-Update
 """
 
 import sys
 import os
 
-# Füge src-Verzeichnis zum Python-Pfad hinzu
+# Fuege src-Verzeichnis zum Python-Pfad hinzu
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+if '--background-update' in sys.argv:
+    from background_updater import run_background_update
+    sys.exit(run_background_update())
 
 from main import main
 

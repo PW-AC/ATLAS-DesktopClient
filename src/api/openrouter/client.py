@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # KI-Pipeline Backpressure-Kontrolle
 # Begrenzt parallele KI-Aufrufe um Server-Ueberlastung zu vermeiden
-DEFAULT_MAX_CONCURRENT_AI_CALLS = 5
+DEFAULT_MAX_CONCURRENT_AI_CALLS = 8
 _ai_semaphore: Optional[threading.Semaphore] = None
 _ai_semaphore_lock = threading.Lock()
 _ai_queue_depth = 0  # Monitoring: Anzahl wartender Aufrufe
@@ -206,7 +206,8 @@ class OpenRouterClient(OpenRouterOCRMixin, OpenRouterClassificationMixin):
                     # SV-004: Ueber unseren Server-Proxy statt direkt an OpenRouter
                     response = self.api_client.post(
                         "/ai/classify",
-                        json_data=proxy_payload
+                        json_data=proxy_payload,
+                        timeout=150
                     )
                     
                     # Server-Proxy gibt KI-Antwort in 'data' zurueck

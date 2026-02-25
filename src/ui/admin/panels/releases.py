@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 RELEASE_STATUS_COLORS = {
+    'pending': '#95a5a6',
+    'validated': '#3498db',
+    'blocked': '#e74c3c',
     'active': SUCCESS,
     'mandatory': '#e74c3c',
     'deprecated': '#f39c12',
@@ -40,6 +43,9 @@ RELEASE_STATUS_COLORS = {
 }
 
 RELEASE_STATUS_NAMES = {
+    'pending': texts.RELEASES_STATUS_PENDING,
+    'validated': texts.RELEASES_STATUS_VALIDATED,
+    'blocked': texts.RELEASES_STATUS_BLOCKED,
     'active': texts.RELEASES_STATUS_ACTIVE,
     'mandatory': texts.RELEASES_STATUS_MANDATORY,
     'deprecated': texts.RELEASES_STATUS_DEPRECATED,
@@ -49,7 +55,7 @@ RELEASE_STATUS_NAMES = {
 RELEASE_CHANNEL_NAMES = {
     'stable': texts.RELEASES_CHANNEL_STABLE,
     'beta': texts.RELEASES_CHANNEL_BETA,
-    'internal': texts.RELEASES_CHANNEL_INTERNAL,
+    'dev': texts.RELEASES_CHANNEL_DEV,
 }
 
 
@@ -192,7 +198,7 @@ class ReleasesPanel(QWidget):
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
-        self._releases_table.setColumnWidth(7, 180)
+        self._releases_table.setColumnWidth(7, 280)
 
         layout.addWidget(self._releases_table)
 
@@ -313,6 +319,70 @@ class ReleasesPanel(QWidget):
             actions_layout.setContentsMargins(4, 2, 4, 2)
             actions_layout.setSpacing(6)
 
+            release_status = release.get('status', 'active')
+
+            # Validieren-Button (nur bei pending/blocked)
+            if release_status in ('pending', 'blocked'):
+                validate_btn = QPushButton(texts.RELEASES_VALIDATE_BTN)
+                validate_btn.setFixedHeight(26)
+                validate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                validate_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: #3498db;
+                        color: white;
+                        border: none;
+                        border-radius: {RADIUS_SM};
+                        padding: 2px 10px;
+                        font-family: {FONT_BODY};
+                        font-size: 12px;
+                        font-weight: bold;
+                    }}
+                    QPushButton:hover {{ background-color: #2980b9; }}
+                """)
+                validate_btn.clicked.connect(lambda checked, r=release: self._validate_release(r))
+                actions_layout.addWidget(validate_btn)
+
+            # Aktivieren-Button (nur bei validated)
+            if release_status == 'validated':
+                activate_btn = QPushButton(texts.RELEASES_ACTIVATE_BTN)
+                activate_btn.setFixedHeight(26)
+                activate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                activate_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {SUCCESS};
+                        color: white;
+                        border: none;
+                        border-radius: {RADIUS_SM};
+                        padding: 2px 10px;
+                        font-family: {FONT_BODY};
+                        font-size: 12px;
+                        font-weight: bold;
+                    }}
+                    QPushButton:hover {{ background-color: #27ae60; }}
+                """)
+                activate_btn.clicked.connect(lambda checked, r=release: self._activate_release(r))
+                actions_layout.addWidget(activate_btn)
+
+            # Zurueckziehen-Button (nur bei active/mandatory)
+            if release_status in ('active', 'mandatory'):
+                withdraw_btn = QPushButton(texts.RELEASES_WITHDRAW_BTN)
+                withdraw_btn.setFixedHeight(26)
+                withdraw_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                withdraw_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        color: #e67e22;
+                        border: 1px solid #e67e22;
+                        border-radius: {RADIUS_SM};
+                        padding: 2px 10px;
+                        font-family: {FONT_BODY};
+                        font-size: 12px;
+                    }}
+                    QPushButton:hover {{ background-color: #e67e22; color: white; }}
+                """)
+                withdraw_btn.clicked.connect(lambda checked, r=release: self._withdraw_release(r))
+                actions_layout.addWidget(withdraw_btn)
+
             edit_btn = QPushButton(texts.RELEASES_EDIT_BTN)
             edit_btn.setFixedHeight(26)
             edit_btn.setToolTip(texts.RELEASES_EDIT_TITLE)
@@ -354,6 +424,26 @@ class ReleasesPanel(QWidget):
             """)
             del_btn.clicked.connect(lambda checked, r=release: self._delete_release(r))
             actions_layout.addWidget(del_btn)
+
+            # Gate-Report-Button (wenn vorhanden)
+            if release.get('gate_report'):
+                report_btn = QPushButton(texts.RELEASES_GATE_REPORT_BTN)
+                report_btn.setFixedHeight(26)
+                report_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                report_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        color: #3498db;
+                        border: 1px solid #3498db;
+                        border-radius: {RADIUS_SM};
+                        padding: 2px 8px;
+                        font-family: {FONT_BODY};
+                        font-size: 11px;
+                    }}
+                    QPushButton:hover {{ background-color: #3498db; color: white; }}
+                """)
+                report_btn.clicked.connect(lambda checked, r=release: self._show_gate_report(r))
+                actions_layout.addWidget(report_btn)
 
             actions_layout.addStretch()
             self._releases_table.setCellWidget(row, 7, actions_widget)
@@ -452,3 +542,102 @@ class ReleasesPanel(QWidget):
             self._load_releases()
         except APIError as e:
             self._toast_manager.show_error(str(e))
+
+    def _validate_release(self, release: dict):
+        """Fuehrt die Gate-Validierung fuer ein Release aus."""
+        release_id = release.get('id')
+        version = release.get('version', '?')
+
+        try:
+            result = self._releases_api.validate_release(release_id)
+            gate_report = result.get('gate_report', {})
+            overall = gate_report.get('overall', 'unknown')
+
+            if overall == 'passed':
+                self._toast_manager.show_success(
+                    texts.RELEASES_GATE_ALL_PASSED.format(version=version))
+            else:
+                failed_gates = [g['name'] for g in gate_report.get('gates', []) if g.get('status') == 'failed']
+                self._toast_manager.show_error(
+                    texts.RELEASES_GATE_SOME_FAILED.format(version=version, gates=', '.join(failed_gates)))
+
+            self._load_releases()
+        except APIError as e:
+            self._toast_manager.show_error(str(e))
+
+    def _activate_release(self, release: dict):
+        """Aktiviert ein validiertes Release."""
+        release_id = release.get('id')
+        version = release.get('version', '?')
+
+        try:
+            self._releases_api.update_release(release_id, status='active')
+            self._toast_manager.show_success(
+                texts.RELEASES_ACTIVATED.format(version=version))
+            self._load_releases()
+        except APIError as e:
+            self._toast_manager.show_error(str(e))
+
+    def _withdraw_release(self, release: dict):
+        """Zieht ein aktives Release zurueck mit Bestaetigungs-Dialog."""
+        version = release.get('version', '?')
+        channel = release.get('channel', '?')
+
+        reply = QMessageBox.question(
+            self, texts.RELEASES_WITHDRAW_BTN,
+            texts.RELEASES_WITHDRAW_CONFIRM.format(version=version),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            result = self._releases_api.withdraw_release(release.get('id'))
+            fallback = result.get('fallback_release')
+            if fallback:
+                self._toast_manager.show_success(
+                    texts.RELEASES_WITHDRAW_SUCCESS.format(version=version)
+                    + " — " + texts.RELEASES_WITHDRAW_FALLBACK.format(
+                        fallback_version=fallback.get('version', '?')))
+            else:
+                self._toast_manager.show_warning(
+                    texts.RELEASES_WITHDRAW_SUCCESS.format(version=version)
+                    + " — " + texts.RELEASES_WITHDRAW_NO_FALLBACK.format(channel=channel))
+            self._load_releases()
+        except APIError as e:
+            self._toast_manager.show_error(str(e))
+
+    def _show_gate_report(self, release: dict):
+        """Zeigt den Gate-Report eines Releases an."""
+        import json
+        gate_report = release.get('gate_report')
+        if isinstance(gate_report, str):
+            gate_report = json.loads(gate_report)
+
+        if not gate_report:
+            self._toast_manager.show_warning(texts.RELEASES_NO_GATE_REPORT)
+            return
+
+        version = release.get('version', '?')
+        overall = gate_report.get('overall', 'unknown')
+        gates = gate_report.get('gates', [])
+
+        lines = [f"{texts.RELEASES_GATE_REPORT_TITLE}: {version}", f"Ergebnis: {overall}", ""]
+        for gate in gates:
+            status_icon = {'passed': '✓', 'failed': '✗', 'skipped': '–'}.get(gate['status'], '?')
+            lines.append(f"  {status_icon} {gate['name']}: {gate['details']}")
+
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle(texts.RELEASES_GATE_REPORT_TITLE)
+        dlg.setMinimumSize(500, 400)
+        layout = QVBoxLayout(dlg)
+        text_widget = QTextEdit()
+        text_widget.setReadOnly(True)
+        text_widget.setPlainText('\n'.join(lines))
+        text_widget.setStyleSheet(f"font-family: 'Consolas', monospace; font-size: 13px;")
+        layout.addWidget(text_widget)
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_box.accepted.connect(dlg.accept)
+        layout.addWidget(btn_box)
+        dlg.exec()

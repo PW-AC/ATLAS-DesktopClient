@@ -32,6 +32,7 @@ $parts = $route ? explode('/', $route) : [];
 $resource = $parts[0] ?? '';
 $action = $parts[1] ?? '';
 $id = $parts[2] ?? '';
+$subAction = $parts[3] ?? '';
 
 // Debug-Logging (nur wenn DEBUG_MODE aktiv)
 if (DEBUG_MODE) {
@@ -45,10 +46,23 @@ try {
         case 'status':
             // API Status / Health Check
             // SV-023 Fix: API-Version nicht mehr im Health-Check exponieren
-            json_response([
+            $statusData = [
                 'status' => 'ok',
                 'timestamp' => date('c')
-            ]);
+            ];
+            try {
+                $latest = Database::queryOne("SELECT migration_name FROM schema_migrations ORDER BY id DESC LIMIT 1");
+                $statusData['schema_version'] = $latest ? $latest['migration_name'] : 'unknown';
+                $allSetupFiles = glob(__DIR__ . '/../setup/0*.php');
+                $setupNames = array_map(function($f) { return pathinfo($f, PATHINFO_FILENAME); }, $allSetupFiles);
+                $applied = Database::query("SELECT migration_name FROM schema_migrations");
+                $appliedNames = array_column($applied, 'migration_name');
+                $pending = array_diff($setupNames, $appliedNames);
+                $statusData['pending_migrations'] = count($pending);
+            } catch (Exception $e) {
+                $statusData['schema_version'] = 'unavailable';
+            }
+            json_response($statusData);
             break;
             
         case 'auth':
@@ -92,6 +106,11 @@ try {
         case 'xml-index':
             require_once __DIR__ . '/xml_index.php';
             handleXmlIndexRequest($action ?: $id, $method);
+            break;
+
+        case 'bipro-events':
+            require_once __DIR__ . '/bipro_events.php';
+            handleBiproEventsRequest($action ?: '', $method);
             break;
             
         case 'processing_history':
@@ -146,7 +165,7 @@ try {
             // /admin/releases → separater Handler
             if ($action === 'releases') {
                 require_once __DIR__ . '/releases.php';
-                handleAdminReleasesRequest($id ?: null, $method);
+                handleAdminReleasesRequest($id ?: null, $method, $subAction ?: null);
                 break;
             }
             
@@ -244,8 +263,11 @@ try {
         
         case 'releases':
             require_once __DIR__ . '/releases.php';
-            if ($action === 'download' && !empty($id) && is_numeric($id)) {
-                // Oeffentlicher Download-Endpoint
+            if ($action === 'latest' && $method === 'GET') {
+                // Oeffentlicher Download der neuesten Version (fuer neue Nutzer)
+                handleLatestDownload();
+            } elseif ($action === 'download' && !empty($id) && is_numeric($id)) {
+                // Oeffentlicher Download-Endpoint (nach ID)
                 handleReleaseDownload((int)$id);
             } elseif (empty($action) && $method === 'GET') {
                 // Oeffentliche Release-Liste (fuer Mitteilungszentrale)

@@ -212,6 +212,13 @@ function listDocuments(array $user): void {
     
     $where = implode(' AND ', $conditions);
     
+    // Client kann Limit angeben (1-10000), Default: 10000
+    // Alt: LIMIT 1000 war zu niedrig fuer Archiv mit >1000 Dokumenten
+    $limit = 10000;
+    if (isset($_GET['limit']) && is_numeric($_GET['limit'])) {
+        $limit = max(1, min(10000, (int)$_GET['limit']));
+    }
+    
     $documents = Database::query("
         SELECT 
             d.id,
@@ -259,7 +266,7 @@ function listDocuments(array $user): void {
         LEFT JOIN documents content_orig ON d.content_duplicate_of_id = content_orig.id
         WHERE $where
         ORDER BY d.created_at DESC
-        LIMIT 1000
+        LIMIT $limit
     ", $params);
     
     json_success([

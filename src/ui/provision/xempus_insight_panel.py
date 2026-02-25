@@ -14,8 +14,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QAbstractTableModel, QModelIndex, QThread,
-    QSortFilterProxyModel, QTimer,
+    Qt, Signal, QSortFilterProxyModel, QTimer, QModelIndex,
 )
 from PySide6.QtGui import QColor
 
@@ -42,382 +41,19 @@ from ui.provision.widgets import (
     KpiCard, PaginationBar, ProvisionLoadingOverlay,
     format_eur, get_search_field_style, get_secondary_button_style,
 )
+from ui.provision.workers import (
+    EmployerLoadWorker, EmployerDetailWorker, XempusStatsLoadWorker,
+    XempusBatchesLoadWorker, XempusImportWorker, XempusDiffLoadWorker,
+    StatusMappingLoadWorker,
+)
+from ui.provision.models import (
+    EmployerTableModel, XempusBatchTableModel, StatusMappingModel, fmt_date,
+)
+from ui.provision.dialogs import DiffDialog
 from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def _fmt_date(val: Optional[str]) -> str:
-    if not val:
-        return ''
-    try:
-        from datetime import datetime
-        dt = datetime.strptime(val[:10], '%Y-%m-%d')
-        return dt.strftime('%d.%m.%Y')
-    except (ValueError, TypeError):
-        return val
-
-
-# =============================================================================
-# Workers
-# =============================================================================
-
-
-class _EmployerLoadWorker(QThread):
-    finished = Signal(list)
-    error = Signal(str)
-
-    def __init__(self, api: XempusAPI):
-        super().__init__()
-        self._api = api
-
-    def run(self):
-        try:
-            employers = self._api.get_employers()
-            self.finished.emit(employers)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _EmployerDetailWorker(QThread):
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, api: XempusAPI, employer_id: str):
-        super().__init__()
-        self._api = api
-        self._employer_id = employer_id
-
-    def run(self):
-        try:
-            detail = self._api.get_employer_detail(self._employer_id)
-            self.finished.emit(detail)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _StatsLoadWorker(QThread):
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, api: XempusAPI):
-        super().__init__()
-        self._api = api
-
-    def run(self):
-        try:
-            stats = self._api.get_stats()
-            self.finished.emit(stats)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _BatchesLoadWorker(QThread):
-    finished = Signal(list)
-    error = Signal(str)
-
-    def __init__(self, api: XempusAPI):
-        super().__init__()
-        self._api = api
-
-    def run(self):
-        try:
-            batches = self._api.get_batches()
-            self.finished.emit(batches)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _ImportWorker(QThread):
-    """4-Phasen-Import-Worker: raw_ingest (chunked) -> parse -> finalize."""
-    phase_changed = Signal(int, str)
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, api: XempusAPI, filename: str, sheets: list):
-        super().__init__()
-        self._api = api
-        self._filename = filename
-        self._sheets = sheets
-
-    def run(self):
-        try:
-            total_rows = sum(len(s.get('rows', [])) for s in self._sheets)
-            self.phase_changed.emit(1, texts.XEMPUS_IMPORT_PHASE_RAW)
-
-            def on_progress(sent, total):
-                pct = int(sent / total * 100) if total else 100
-                self.phase_changed.emit(
-                    1, f"{texts.XEMPUS_IMPORT_PHASE_RAW} ({pct}%)"
-                )
-
-            raw_result = self._api.import_raw(
-                self._filename, self._sheets, on_progress=on_progress)
-            batch_id = raw_result.get('batch_id')
-            if not batch_id:
-                self.error.emit(texts.XEMPUS_IMPORT_ERROR.format(error="No batch_id returned"))
-                return
-
-            self.phase_changed.emit(2, texts.XEMPUS_IMPORT_PHASE_PARSE)
-
-            def on_parse_progress(parsed, total):
-                pct = int(parsed / total * 100) if total else 100
-                self.phase_changed.emit(
-                    2, f"{texts.XEMPUS_IMPORT_PHASE_PARSE} ({pct}%)"
-                )
-
-            self._api.parse_batch(batch_id, timeout=300,
-                                  on_progress=on_parse_progress)
-
-            self.phase_changed.emit(3, texts.XEMPUS_IMPORT_PHASE_SNAPSHOT)
-            finalize_result = self._api.finalize_batch(batch_id, timeout=300)
-
-            self.phase_changed.emit(4, texts.XEMPUS_IMPORT_PHASE_FINALIZE)
-            self.finished.emit(finalize_result)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _DiffLoadWorker(QThread):
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, api: XempusAPI, batch_id: int):
-        super().__init__()
-        self._api = api
-        self._batch_id = batch_id
-
-    def run(self):
-        try:
-            diff = self._api.get_diff(self._batch_id)
-            self.finished.emit(diff)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _StatusMappingLoadWorker(QThread):
-    finished = Signal(list)
-    error = Signal(str)
-
-    def __init__(self, api: XempusAPI):
-        super().__init__()
-        self._api = api
-
-    def run(self):
-        try:
-            mappings = self._api.get_status_mappings()
-            self.finished.emit(mappings)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-# =============================================================================
-# Models
-# =============================================================================
-
-
-class _EmployerTableModel(QAbstractTableModel):
-    COL_NAME = 0
-    COL_CITY = 1
-    COL_EMPLOYEES = 2
-    COL_STATUS = 3
-
-    COLUMNS = [
-        texts.XEMPUS_EMPLOYER_COL_NAME,
-        texts.XEMPUS_EMPLOYER_COL_CITY,
-        texts.XEMPUS_EMPLOYER_COL_EMPLOYEES,
-        texts.XEMPUS_EMPLOYER_COL_STATUS,
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._data: List[XempusEmployer] = []
-
-    def set_data(self, data: List[XempusEmployer]):
-        self.beginResetModel()
-        self._data = data
-        self.endResetModel()
-
-    def get_employer(self, row: int) -> Optional[XempusEmployer]:
-        if 0 <= row < len(self._data):
-            return self._data[row]
-        return None
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._data)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            return self.COLUMNS[section]
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        e = self._data[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == self.COL_NAME:
-                return e.name
-            if col == self.COL_CITY:
-                parts = [e.plz, e.city]
-                return ' '.join(p for p in parts if p) or ''
-            if col == self.COL_EMPLOYEES:
-                return str(e.employee_count)
-            if col == self.COL_STATUS:
-                return texts.XEMPUS_EMPLOYER_ACTIVE if e.is_active else texts.XEMPUS_EMPLOYER_INACTIVE
-
-        if role == Qt.UserRole:
-            if col == self.COL_STATUS:
-                return 'aktiv' if e.is_active else 'inaktiv'
-
-        if role == Qt.TextAlignmentRole:
-            if col == self.COL_EMPLOYEES:
-                return int(Qt.AlignRight | Qt.AlignVCenter)
-
-        return None
-
-
-class _BatchTableModel(QAbstractTableModel):
-    COL_DATE = 0
-    COL_FILE = 1
-    COL_RECORDS = 2
-    COL_PHASE = 3
-    COL_ACTIVE = 4
-
-    COLUMNS = [
-        texts.XEMPUS_IMPORT_BATCH_COL_DATE,
-        texts.XEMPUS_IMPORT_BATCH_COL_FILE,
-        texts.XEMPUS_IMPORT_BATCH_COL_RECORDS,
-        texts.XEMPUS_IMPORT_BATCH_COL_PHASE,
-        texts.XEMPUS_IMPORT_BATCH_COL_ACTIVE,
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._data: List[XempusImportBatch] = []
-
-    def set_data(self, data: List[XempusImportBatch]):
-        self.beginResetModel()
-        self._data = data
-        self.endResetModel()
-
-    def get_batch(self, row: int) -> Optional[XempusImportBatch]:
-        if 0 <= row < len(self._data):
-            return self._data[row]
-        return None
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._data)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            return self.COLUMNS[section]
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        b = self._data[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == self.COL_DATE:
-                return _fmt_date(b.imported_at)
-            if col == self.COL_FILE:
-                return b.filename
-            if col == self.COL_RECORDS:
-                if b.record_counts:
-                    total = sum(b.record_counts.values()) if isinstance(b.record_counts, dict) else 0
-                    return str(total)
-                return '–'
-            if col == self.COL_PHASE:
-                return b.import_phase
-            if col == self.COL_ACTIVE:
-                return '✓' if b.is_active_snapshot else ''
-
-        if role == Qt.UserRole:
-            if col == self.COL_PHASE:
-                return b.import_phase
-
-        if role == Qt.ForegroundRole:
-            if col == self.COL_ACTIVE and b.is_active_snapshot:
-                return QColor(SUCCESS)
-
-        if role == Qt.TextAlignmentRole:
-            if col in (self.COL_RECORDS, self.COL_ACTIVE):
-                return int(Qt.AlignCenter)
-
-        return None
-
-
-class _StatusMappingModel(QAbstractTableModel):
-    COL_TEXT = 0
-    COL_CATEGORY = 1
-    COL_DISPLAY = 2
-    COL_COLOR = 3
-
-    COLUMNS = [
-        texts.XEMPUS_STATUS_MAP_COL_TEXT,
-        texts.XEMPUS_STATUS_MAP_COL_CATEGORY,
-        texts.XEMPUS_STATUS_MAP_COL_DISPLAY,
-        texts.XEMPUS_STATUS_MAP_COL_COLOR,
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._data: List[XempusStatusMapping] = []
-
-    def set_data(self, data: List[XempusStatusMapping]):
-        self.beginResetModel()
-        self._data = data
-        self.endResetModel()
-
-    def get_mapping(self, row: int) -> Optional[XempusStatusMapping]:
-        if 0 <= row < len(self._data):
-            return self._data[row]
-        return None
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._data)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            return self.COLUMNS[section]
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        m = self._data[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == self.COL_TEXT:
-                return m.raw_status
-            if col == self.COL_CATEGORY:
-                return m.category
-            if col == self.COL_DISPLAY:
-                return m.display_label or m.raw_status
-            if col == self.COL_COLOR:
-                return ''
-
-        if role == Qt.BackgroundRole:
-            if col == self.COL_COLOR:
-                return QColor(m.color)
-
-        return None
 
 
 # =============================================================================
@@ -455,7 +91,7 @@ class _EmployersTab(QWidget):
 
         self._splitter = QSplitter(Qt.Horizontal)
 
-        self._model = _EmployerTableModel()
+        self._model = EmployerTableModel()
         self._proxy = QSortFilterProxyModel()
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
@@ -503,7 +139,7 @@ class _EmployersTab(QWidget):
         if self._worker and self._worker.isRunning():
             return
         self._loading.show()
-        self._worker = _EmployerLoadWorker(self._api)
+        self._worker = EmployerLoadWorker(self._api)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -538,7 +174,7 @@ class _EmployersTab(QWidget):
     def _load_detail(self, employer_id: str):
         if self._detail_worker and self._detail_worker.isRunning():
             return
-        self._detail_worker = _EmployerDetailWorker(self._api, employer_id)
+        self._detail_worker = EmployerDetailWorker(self._api, employer_id)
         self._detail_worker.finished.connect(self._show_detail)
         self._detail_worker.error.connect(lambda msg: logger.error(f"Detail: {msg}"))
         self._detail_worker.start()
@@ -700,7 +336,7 @@ class _StatsTab(QWidget):
         if self._worker and self._worker.isRunning():
             return
         self._loading.show()
-        self._worker = _StatsLoadWorker(self._api)
+        self._worker = XempusStatsLoadWorker(self._api)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -849,7 +485,7 @@ class _ImportTab(QWidget):
         history_title.setStyleSheet(f"font-weight: 600; font-size: 11pt; color: {PRIMARY_900};")
         root.addWidget(history_title)
 
-        self._batch_model = _BatchTableModel()
+        self._batch_model = XempusBatchTableModel()
         self._batch_table = QTableView()
         self._batch_table.setModel(self._batch_model)
         self._batch_table.setSelectionBehavior(QTableView.SelectRows)
@@ -866,7 +502,7 @@ class _ImportTab(QWidget):
             'complete': {'bg': '#e8f5e9', 'text': '#1b5e20'},
         }
         self._batch_table.setItemDelegateForColumn(
-            _BatchTableModel.COL_PHASE,
+            XempusBatchTableModel.COL_PHASE,
             PillBadgeDelegate(phase_colors, parent=self._batch_table)
         )
         self._batch_table.doubleClicked.connect(self._on_batch_double_click)
@@ -878,7 +514,7 @@ class _ImportTab(QWidget):
     def refresh(self):
         if self._batches_worker and self._batches_worker.isRunning():
             return
-        self._batches_worker = _BatchesLoadWorker(self._api)
+        self._batches_worker = XempusBatchesLoadWorker(self._api)
         self._batches_worker.finished.connect(self._on_batches_loaded)
         self._batches_worker.error.connect(lambda m: logger.error(f"Batches: {m}"))
         self._batches_worker.start()
@@ -919,7 +555,7 @@ class _ImportTab(QWidget):
             self._import_btn.setEnabled(True)
             return
 
-        self._import_worker = _ImportWorker(self._api, filename, sheets)
+        self._import_worker = XempusImportWorker(self._api, filename, sheets)
         self._import_worker.phase_changed.connect(self._on_phase_changed)
         self._import_worker.finished.connect(self._on_import_finished)
         self._import_worker.error.connect(self._on_import_error)
@@ -962,7 +598,7 @@ class _ImportTab(QWidget):
     def _show_diff(self, batch_id: int):
         if self._diff_worker and self._diff_worker.isRunning():
             return
-        self._diff_worker = _DiffLoadWorker(self._api, batch_id)
+        self._diff_worker = XempusDiffLoadWorker(self._api, batch_id)
         self._diff_worker.finished.connect(self._show_diff_dialog)
         self._diff_worker.error.connect(lambda m: logger.error(f"Diff: {m}"))
         self._diff_worker.start()
@@ -970,7 +606,7 @@ class _ImportTab(QWidget):
     def _show_diff_dialog(self, diff: Optional[XempusDiff]):
         if not diff:
             return
-        dlg = _DiffDialog(diff, self)
+        dlg = DiffDialog(diff, self)
         dlg.exec()
 
     def resizeEvent(self, event):
@@ -1004,7 +640,7 @@ class _StatusMappingTab(QWidget):
         toolbar.addWidget(desc)
         root.addLayout(toolbar)
 
-        self._sm_model = _StatusMappingModel()
+        self._sm_model = StatusMappingModel()
         self._sm_table = QTableView()
         self._sm_table.setModel(self._sm_model)
         self._sm_table.setSelectionBehavior(QTableView.SelectRows)
@@ -1022,7 +658,7 @@ class _StatusMappingTab(QWidget):
         if self._worker and self._worker.isRunning():
             return
         self._loading.show()
-        self._worker = _StatusMappingLoadWorker(self._api)
+        self._worker = StatusMappingLoadWorker(self._api)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -1046,67 +682,6 @@ class _StatusMappingTab(QWidget):
 # =============================================================================
 # Diff Dialog
 # =============================================================================
-
-
-class _DiffDialog(QDialog):
-    """Snapshot-Vergleichs-Dialog."""
-
-    def __init__(self, diff: XempusDiff, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(texts.XEMPUS_DIFF_TITLE)
-        self.setMinimumSize(500, 400)
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-
-        if diff.previous_batch_id is None:
-            lbl = QLabel(texts.XEMPUS_DIFF_NO_PREVIOUS)
-            lbl.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_BODY};")
-            lbl.setAlignment(Qt.AlignCenter)
-            layout.addWidget(lbl)
-        else:
-            for entity_name, entity_data in [
-                (texts.XEMPUS_DIFF_EMPLOYERS, diff.employers),
-                (texts.XEMPUS_DIFF_EMPLOYEES, diff.employees),
-                (texts.XEMPUS_DIFF_CONSULTATIONS, diff.consultations),
-            ]:
-                if not entity_data:
-                    continue
-                new = int(entity_data.get('new', 0))
-                removed = int(entity_data.get('removed', 0))
-                changed = int(entity_data.get('changed', 0))
-
-                section = QLabel(entity_name)
-                section.setStyleSheet(f"font-weight: 600; font-size: 11pt; color: {PRIMARY_900};")
-                layout.addWidget(section)
-
-                summary = QLabel(texts.XEMPUS_DIFF_SUMMARY.format(
-                    new=new, removed=removed, changed=changed))
-                summary.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_BODY};")
-                layout.addWidget(summary)
-
-                chips_row = QHBoxLayout()
-                for label_text, count, color in [
-                    (texts.XEMPUS_DIFF_NEW, new, SUCCESS),
-                    (texts.XEMPUS_DIFF_REMOVED, removed, ERROR),
-                    (texts.XEMPUS_DIFF_CHANGED, changed, WARNING),
-                ]:
-                    if count > 0:
-                        chip = QLabel(f"  {label_text}: {count}  ")
-                        chip.setStyleSheet(f"""
-                            background-color: {color}20; color: {color};
-                            border: 1px solid {color}40; border-radius: 10px;
-                            padding: 3px 8px; font-size: {FONT_SIZE_CAPTION};
-                        """)
-                        chips_row.addWidget(chip)
-                chips_row.addStretch()
-                layout.addLayout(chips_row)
-
-        layout.addStretch()
-
-        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
 
 
 # =============================================================================

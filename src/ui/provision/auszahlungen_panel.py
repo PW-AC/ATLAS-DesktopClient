@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QPushButton, QFileDialog, QMenu, QMessageBox,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QAbstractTableModel, QModelIndex, QThread, QTimer, QPoint,
+    Qt, Signal, QTimer, QPoint, QModelIndex,
 )
 from PySide6.QtGui import QColor
 from typing import List, Optional
@@ -26,167 +26,19 @@ from ui.styles.tokens import (
     SUCCESS, ERROR, WARNING,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     PILL_COLORS, ROLE_BADGE_COLORS,
-    build_rich_tooltip, get_provision_table_style,
+    get_provision_table_style,
 )
 from ui.provision.widgets import (
     SectionHeader, PillBadgeDelegate, StatementCard,
     PaginationBar, ThreeDotMenuDelegate, ProvisionLoadingOverlay,
     format_eur, get_secondary_button_style, get_combo_style,
 )
+from ui.provision.workers import AuszahlungenLoadWorker, AuszahlungenPositionenWorker
+from ui.provision.models import AuszahlungenModel, STATUS_LABELS, STATUS_PILL_MAP
 from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
-
-STATUS_LABELS = {
-    'berechnet': texts.PROVISION_STATUS_ENTWURF,
-    'geprueft': texts.PROVISION_STATUS_GEPRUEFT,
-    'freigegeben': texts.PROVISION_STATUS_FREIGEGEBEN,
-    'ausgezahlt': texts.PROVISION_STATUS_AUSGEZAHLT,
-}
-
-STATUS_PILL_MAP = {
-    'berechnet': 'entwurf',
-    'geprueft': 'geprueft',
-    'freigegeben': 'freigegeben',
-    'ausgezahlt': 'ausgezahlt',
-}
-
-
-class _LoadWorker(QThread):
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, monat: str):
-        super().__init__()
-        self._api = api
-        self._monat = monat
-
-    def run(self):
-        try:
-            data = self._api.get_abrechnungen(self._monat)
-            self.finished.emit(data)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _PositionenWorker(QThread):
-    finished = Signal(int, list)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, berater_id: int, von: str, bis: str):
-        super().__init__()
-        self._api = api
-        self._berater_id = berater_id
-        self._von = von
-        self._bis = bis
-
-    def run(self):
-        try:
-            comms, _ = self._api.get_commissions(
-                berater_id=self._berater_id, von=self._von, bis=self._bis, limit=200
-            )
-            self.finished.emit(self._berater_id, comms)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _AuszahlungenModel(QAbstractTableModel):
-    COL_NAME = 0
-    COL_ROLE = 1
-    COL_BRUTTO = 2
-    COL_TL = 3
-    COL_NETTO = 4
-    COL_RUECK = 5
-    COL_AUSZAHLUNG = 6
-    COL_POS = 7
-    COL_STATUS = 8
-    COL_VERSION = 9
-    COL_MENU = 10
-
-    COLUMNS = [
-        texts.PROVISION_PAY_COL_BERATER,
-        texts.PROVISION_PAY_COL_ROLE,
-        texts.PROVISION_PAY_COL_BRUTTO,
-        texts.PROVISION_PAY_COL_TL,
-        texts.PROVISION_PAY_COL_NETTO,
-        texts.PROVISION_PAY_COL_RUECK,
-        texts.PROVISION_PAY_COL_AUSZAHLUNG,
-        texts.PROVISION_PAY_COL_POSITIONS,
-        texts.PROVISION_PAY_COL_STATUS,
-        texts.PROVISION_PAY_COL_VERSION,
-        "",
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._data: List[BeraterAbrechnung] = []
-
-    def set_data(self, data: List[BeraterAbrechnung]):
-        self.beginResetModel()
-        self._data = data
-        self.endResetModel()
-
-    def get_item(self, row: int) -> Optional[BeraterAbrechnung]:
-        if 0 <= row < len(self._data):
-            return self._data[row]
-        return None
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._data)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return self.COLUMNS[section]
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        a = self._data[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == self.COL_NAME:
-                return a.berater_name
-            elif col == self.COL_ROLE:
-                return {
-                    'consulter': texts.PROVISION_EMP_ROLE_CONSULTER,
-                    'teamleiter': texts.PROVISION_EMP_ROLE_TEAMLEITER,
-                    'backoffice': texts.PROVISION_EMP_ROLE_BACKOFFICE,
-                }.get(a.berater_role, a.berater_role)
-            elif col == self.COL_BRUTTO:
-                return format_eur(a.brutto_provision)
-            elif col == self.COL_TL:
-                return format_eur(a.tl_abzug)
-            elif col == self.COL_NETTO:
-                return format_eur(a.netto_provision)
-            elif col == self.COL_RUECK:
-                return format_eur(a.rueckbelastungen)
-            elif col == self.COL_AUSZAHLUNG:
-                return format_eur(a.auszahlung)
-            elif col == self.COL_POS:
-                return str(a.anzahl_provisionen)
-            elif col == self.COL_STATUS:
-                return STATUS_LABELS.get(a.status, a.status)
-            elif col == self.COL_VERSION:
-                return str(a.revision)
-            elif col == self.COL_MENU:
-                return ""
-
-        if role == Qt.TextAlignmentRole and col in (2, 3, 4, 5, 6, 7, 9):
-            return Qt.AlignRight | Qt.AlignVCenter
-
-        if role == Qt.ForegroundRole:
-            if col == self.COL_RUECK and a.rueckbelastungen < 0:
-                return QColor(ERROR)
-            if col == self.COL_TL and a.tl_abzug < 0:
-                return QColor(ERROR)
-
-        return None
 
 
 class AuszahlungenPanel(QWidget):
@@ -264,7 +116,7 @@ class AuszahlungenPanel(QWidget):
         table_l = QVBoxLayout(table_w)
         table_l.setContentsMargins(0, 0, 0, 0)
 
-        self._model = _AuszahlungenModel()
+        self._model = AuszahlungenModel()
         self._table = QTableView()
         self._table.setModel(self._model)
         self._table.setAlternatingRowColors(True)
@@ -396,7 +248,7 @@ class AuszahlungenPanel(QWidget):
         self._loading_overlay.setVisible(True)
         if self._worker and self._worker.isRunning():
             return
-        self._worker = _LoadWorker(self._api, monat)
+        self._worker = AuszahlungenLoadWorker(self._api, monat)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -481,7 +333,7 @@ class AuszahlungenPanel(QWidget):
 
         if hasattr(self, '_pos_worker') and self._pos_worker and self._pos_worker.isRunning():
             return
-        self._pos_worker = _PositionenWorker(self._api, item.berater_id, von, bis)
+        self._pos_worker = AuszahlungenPositionenWorker(self._api, item.berater_id, von, bis)
         self._pos_worker.finished.connect(self._on_positions_loaded)
         self._pos_worker.error.connect(lambda msg: logger.warning(f"Positionen-Laden fehlgeschlagen: {msg}"))
         self._pos_worker.start()

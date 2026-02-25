@@ -1,7 +1,7 @@
 # ACENCIA ATLAS - Projektuebersicht
 
 **Letzte Aktualisierung:** 24. Februar 2026
-**Aktuelle Version:** 2.2.0 (VERSION-Datei)
+**Aktuelle Version:** 2.2.2 (VERSION-Datei)
 **Projektname:** ACENCIA ATLAS ("Der Datenkern.")
 
 ---
@@ -83,7 +83,7 @@ Zusaetzlich:
 X:\projekte\5510_GDV Tool V1\
 ├── src/                          # Python Desktop-App (~119 Dateien, ~48.000+ Zeilen)
 │   ├── main.py                   # App-Einstiegspunkt
-│   ├── api/                      # API-Clients (21 Dateien, ~6.800 Zeilen)
+│   ├── api/                      # API-Clients (22 Dateien, ~6.900 Zeilen)
 │   ├── bipro/                    # BiPRO SOAP-Client (7 Dateien, ~3.860 Zeilen)
 │   ├── config/                   # Konfiguration (6 Dateien, ~2.120 Zeilen)
 │   ├── domain/                   # Datenmodelle (4 Dateien, ~1.510 Zeilen)
@@ -95,11 +95,11 @@ X:\projekte\5510_GDV Tool V1\
 │   └── ui/                       # Benutzeroberflaeche (~45 Dateien, ~28.000+ Zeilen)
 │       ├── admin/                # Admin-Bereich (21 Dateien, ~5.700 Zeilen)
 │       ├── archive/              # Dokumentenarchiv (4 Dateien, ~9.200 Zeilen)
-│       ├── provision/            # Provisionsmanagement (12 Dateien, ~7.300 Zeilen)
+│       ├── provision/            # Provisionsmanagement (14 Dateien, ~8.800 Zeilen)
 │       └── styles/               # Design-Tokens (2 Dateien, ~1.100 Zeilen)
 │
 ├── BiPro-Webspace Spiegelung Live/  # ⚠️ LIVE-SYNCHRONISIERT mit Strato!
-│   └── api/                      # PHP REST API (26 Dateien, ~15.000 Zeilen)
+│   └── api/                      # PHP REST API (27 Dateien, ~15.300 Zeilen)
 │       ├── lib/                  # Hilfsbibliotheken (permissions, activity_logger, PHPMailer)
 │       └── config.php            # DB-Credentials (SENSIBEL!)
 │
@@ -120,14 +120,14 @@ X:\projekte\5510_GDV Tool V1\
 |--------|------|
 | Python-Dateien | ~119 |
 | Python-Codezeilen | ~48.000+ |
-| PHP-Dateien (API) | 26 |
-| PHP-Codezeilen | ~15.000 |
+| PHP-Dateien (API) | 27 |
+| PHP-Codezeilen | ~15.300 |
 | i18n-Schluessel | ~1.400 |
-| DB-Migrationen | 19 Skripte |
-| DB-Tabellen (geschaetzt) | ~40+ |
-| API-Endpunkte | ~100+ |
+| DB-Migrationen | 21 Skripte |
+| DB-Tabellen (geschaetzt) | ~42+ |
+| API-Endpunkte | ~150+ |
 | Groesste Python-Datei | archive_boxes_view.py (~5.645 Zeilen) |
-| Groesste PHP-Datei | provision.php (2.289 Zeilen) |
+| Groesste PHP-Datei | provision.php (~2.480 Zeilen) |
 
 ---
 

@@ -67,9 +67,9 @@ class UpdateService:
             service.install_update(path)
     """
     
-    def __init__(self, api_client: APIClient):
+    def __init__(self, api_client: APIClient, channel: str = 'stable'):
         self._client = api_client
-        self._channel = 'stable'
+        self._channel = channel if channel in ('stable', 'beta', 'dev') else 'stable'
     
     def check_for_update(self, current_version: str) -> Optional[UpdateInfo]:
         """
@@ -192,33 +192,33 @@ class UpdateService:
             target_path.unlink(missing_ok=True)
             raise UpdateDownloadError(f"Download fehlgeschlagen: {e}")
     
-    def install_update(self, installer_path: Path) -> None:
+    def install_update(self, installer_path: Path,
+                       launch_after_install: bool = True) -> None:
         """
-        Startet die Silent-Installation und beendet die App.
+        Startet die Silent-Installation.
         
         Verwendet Inno Setup Silent-Parameter:
         /VERYSILENT - Komplett unsichtbare Installation
         /SUPPRESSMSGBOXES - Keine Dialoge
         /NORESTART - Kein Windows-Neustart
-        
-        Nach Installation startet die App automatisch (via [Run] in installer.iss).
+        /norun=1 - App NICHT starten nach Installation (nur bei launch_after_install=False)
         
         Args:
             installer_path: Pfad zur Installer-EXE
+            launch_after_install: True = App startet nach Install (Standard),
+                                  False = nur installieren (Hintergrund-Updater)
         """
         if not installer_path.exists():
             raise UpdateDownloadError(f"Installer nicht gefunden: {installer_path}")
         
-        logger.info(f"Starte Installation: {installer_path}")
+        logger.info(f"Starte Installation: {installer_path} (launch={launch_after_install})")
         
         try:
-            # Installer im Hintergrund starten
-            # /VERYSILENT: Komplett unsichtbar (kein Fortschrittsdialog)
-            # /SUPPRESSMSGBOXES: Keine Dialoge
-            # /NORESTART: Kein Windows-Neustart
-            # App wird nach Installation automatisch gestartet (installer.iss [Run])
+            args = [str(installer_path), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART']
+            if not launch_after_install:
+                args.append('/norun=1')
             subprocess.Popen(
-                [str(installer_path), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
+                args,
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
             logger.info("Installer gestartet, beende App...")

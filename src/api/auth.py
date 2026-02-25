@@ -25,6 +25,7 @@ class User:
     username: str
     email: Optional[str] = None
     account_type: str = 'user'
+    update_channel: str = 'stable'
     permissions: List[str] = field(default_factory=list)
     is_locked: bool = False
     last_login_at: Optional[str] = None
@@ -111,9 +112,10 @@ class AuthAPI:
                     username=user_data['username'],
                     email=user_data.get('email'),
                     account_type=user_data.get('account_type', 'user'),
+                    update_channel=user_data.get('update_channel', 'stable'),
                     permissions=user_data.get('permissions', [])
                 )
-                
+
                 # Token speichern falls gewünscht
                 if remember:
                     self._save_token(token, user_data)
@@ -220,6 +222,7 @@ class AuthAPI:
                 username=verify_result.get('username', user_data['username']),
                 email=user_data.get('email'),
                 account_type=verify_result.get('account_type', user_data.get('account_type', 'user')),
+                update_channel=verify_result.get('update_channel', user_data.get('update_channel', 'stable')),
                 permissions=verify_result.get('permissions', user_data.get('permissions', []))
             )
             logger.info(f"Auto-Login erfolgreich: {self._current_user.username}")
@@ -281,6 +284,7 @@ class AuthAPI:
                 username=verify_result.get('username', user_data['username']),
                 email=user_data.get('email'),
                 account_type=verify_result.get('account_type', user_data.get('account_type', 'user')),
+                update_channel=verify_result.get('update_channel', user_data.get('update_channel', 'stable')),
                 permissions=verify_result.get('permissions', user_data.get('permissions', []))
             )
             logger.info(f"Re-Authentifizierung erfolgreich: {self._current_user.username}")
@@ -296,10 +300,10 @@ class AuthAPI:
     
     def _verify_token_with_permissions(self) -> Optional[Dict]:
         """
-        Prueft Token und gibt erweiterte Daten (inkl. account_type, permissions) zurueck.
+        Prueft Token und gibt erweiterte Daten (inkl. account_type, update_channel, permissions) zurueck.
         
         Returns:
-            Dict mit user_id, username, account_type, permissions oder None
+            Dict mit user_id, username, account_type, update_channel, permissions oder None
         """
         if not self.client.is_authenticated():
             return None
@@ -311,6 +315,7 @@ class AuthAPI:
                     'user_id': response.get('user_id'),
                     'username': response.get('username'),
                     'account_type': response.get('account_type', 'user'),
+                    'update_channel': response.get('update_channel', 'stable'),
                     'permissions': response.get('permissions', [])
                 }
         except APIError:

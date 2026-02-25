@@ -306,18 +306,43 @@ class AcknowledgeShipmentWorker(QThread):
             failed = []
             
             with TransferServiceClient(bipro_creds) as client:
-                for shipment_id in self.shipment_ids:
-                    self.progress.emit(f"Quittiere Lieferung {shipment_id}...")
-                    try:
-                        if client.acknowledge_shipment(shipment_id):
-                            successful.append(shipment_id)
-                            self.progress.emit(f"  OK: {shipment_id}")
-                        else:
+                if len(self.shipment_ids) <= 3:
+                    for shipment_id in self.shipment_ids:
+                        self.progress.emit(f"Quittiere Lieferung {shipment_id}...")
+                        try:
+                            if client.acknowledge_shipment(shipment_id):
+                                successful.append(shipment_id)
+                                self.progress.emit(f"  OK: {shipment_id}")
+                            else:
+                                failed.append(shipment_id)
+                                self.progress.emit(f"  FEHLER: {shipment_id}")
+                        except Exception as e:
                             failed.append(shipment_id)
-                            self.progress.emit(f"  FEHLER: {shipment_id}")
-                    except Exception as e:
-                        failed.append(shipment_id)
-                        self.progress.emit(f"  FEHLER bei {shipment_id}: {e}")
+                            self.progress.emit(f"  FEHLER bei {shipment_id}: {e}")
+                else:
+                    import concurrent.futures
+                    import threading
+                    lock = threading.Lock()
+                    
+                    def _ack_single(sid):
+                        try:
+                            if client.acknowledge_shipment(sid):
+                                with lock:
+                                    successful.append(sid)
+                                self.progress.emit(f"  OK: {sid}")
+                            else:
+                                with lock:
+                                    failed.append(sid)
+                                self.progress.emit(f"  FEHLER: {sid}")
+                        except Exception as e:
+                            with lock:
+                                failed.append(sid)
+                            self.progress.emit(f"  FEHLER bei {sid}: {e}")
+                    
+                    max_workers = min(4, len(self.shipment_ids))
+                    self.progress.emit(f"Quittiere {len(self.shipment_ids)} Lieferungen parallel ({max_workers} gleichzeitig)...")
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                        pool.map(_ack_single, self.shipment_ids)
             
             self.finished.emit(successful, failed)
             
@@ -721,6 +746,7 @@ class ParallelDownloadManager(QThread):
             'success': 0,
             'failed': 0,
             'docs': 0,
+            'events': 0,
             'retries': 0,
             'failed_ids': []
         }
@@ -883,13 +909,15 @@ class ParallelDownloadManager(QThread):
                 self._rate_limiter.on_success(shipment_id)
                 
                 # Upload direkt im Worker-Thread (per-Thread API-Client)
-                upload_errors = self._upload_shipment_docs(
+                upload_errors, event_created = self._upload_shipment_docs(
                     shipment_id, documents, raw_xml_path, category
                 )
                 
                 with self._stats_lock:
                     self._stats['success'] += 1
                     self._stats['docs'] += len(documents)
+                    if event_created:
+                        self._stats['events'] += 1
                     self._processed_count += 1
                     current = self._processed_count
                     total = self._stats['total']
@@ -899,7 +927,11 @@ class ParallelDownloadManager(QThread):
                 active = self._rate_limiter.get_active_workers()
                 self.progress_updated.emit(current, total, docs, failed, active)
                 self.shipment_uploaded.emit(shipment_id, len(documents), upload_errors)
-                self.log_message.emit(f"  [OK] Lieferung {shipment_id}: {len(documents)} Dokument(e)")
+                
+                if len(documents) == 0 and event_created:
+                    self.log_message.emit(f"  [OK] Lieferung {shipment_id}: 0 Dateien \u2013 1 Meldung")
+                else:
+                    self.log_message.emit(f"  [OK] Lieferung {shipment_id}: {len(documents)} Dokument(e)")
                 
             except Exception as e:
                 error_str = str(e)
@@ -955,31 +987,98 @@ class ParallelDownloadManager(QThread):
                 self._thread_apis[tid] = DocumentsAPI(client)
             return self._thread_apis[tid]
     
-    def _upload_shipment_docs(self, shipment_id: str, documents: list,
-                              raw_xml_path: str, category: str) -> int:
-        """Laedt Dokumente und Raw-XML im Worker-Thread hoch.
-        
+    def _preprocess_file(self, filepath: str, filename: str,
+                         category: str, docs_api) -> list:
+        """Bereitet eine Datei vor dem Upload vor (ZIP/GDV/PDF-Handling).
+
         Returns:
-            Anzahl fehlgeschlagener Uploads
+            Liste von (filepath, box_type_override) Tuples.
+            box_type_override=None bedeutet Standard-Eingangsbox.
+        """
+        ext = os.path.splitext(filename)[1].lower()
+        combined_name = filename.lower()
+
+        if ext == '.zip' or combined_name.endswith('.zip.gdv'):
+            return self._preprocess_zip(filepath, filename, docs_api)
+
+        if ext in ('.gdv',):
+            return [(filepath, None)]
+
+        if ext == '.pdf':
+            try:
+                from services.pdf_unlock import unlock_pdf_if_needed
+                unlock_pdf_if_needed(filepath, api_client=docs_api.client if docs_api else None)
+            except Exception as e:
+                logger.debug(f"PDF-Unlock fehlgeschlagen fuer {filename}: {e}")
+            return [(filepath, None)]
+
+        return [(filepath, None)]
+
+    def _preprocess_zip(self, filepath: str, filename: str, docs_api) -> list:
+        """Entpackt ZIP-Dateien mit Passwort-Check.
+
+        Returns:
+            Liste von (filepath, box_type_override) Tuples.
+        """
+        jobs = []
+        try:
+            from services.zip_handler import extract_zip_contents
+            api_client = docs_api.client if docs_api else None
+            result = extract_zip_contents(filepath, api_client=api_client)
+
+            if result.error:
+                self.log_message.emit(f"    [ZIP-FEHLER] {filename}: {result.error}")
+                jobs.append((filepath, None))
+                return jobs
+
+            for extracted_path in result.extracted_paths:
+                ext = os.path.splitext(extracted_path)[1].lower()
+                if ext == '.pdf':
+                    try:
+                        from services.pdf_unlock import unlock_pdf_if_needed
+                        unlock_pdf_if_needed(extracted_path, api_client=api_client)
+                    except Exception:
+                        pass
+                jobs.append((extracted_path, None))
+
+            jobs.append((filepath, 'roh'))
+            self.log_message.emit(
+                f"    [ZIP] {filename}: {len(result.extracted_paths)} Datei(en) entpackt"
+            )
+        except Exception as e:
+            logger.warning(f"ZIP-Verarbeitung fehlgeschlagen: {e}")
+            jobs.append((filepath, None))
+
+        return jobs
+
+    def _upload_shipment_docs(self, shipment_id: str, documents: list,
+                              raw_xml_path: str, category: str) -> tuple:
+        """Laedt Dokumente und Raw-XML im Worker-Thread hoch.
+
+        Returns:
+            Tuple (upload_errors: int, event_created: bool)
         """
         docs_api = self._get_thread_api()
         if not docs_api:
-            return 0
-        
+            return (0, False)
+
         upload_errors = 0
+        event_created = False
         vu_name = self.vu_name
-        
+
         for doc in documents:
             try:
                 validation_status = doc.get('validation_status')
                 is_valid = doc.get('is_valid', True)
-                
+                filepath = doc['filepath']
+                filename = doc.get('filename', doc.get('original_filename', ''))
+
                 if not is_valid and validation_status:
                     self.log_message.emit(
-                        f"    [PDF-PROBLEM] {doc.get('filename', 'unbekannt')}: {validation_status}"
+                        f"    [PDF-PROBLEM] {filename or 'unbekannt'}: {validation_status}"
                     )
-                    uploaded = docs_api.upload(
-                        file_path=doc['filepath'],
+                    docs_api.upload(
+                        file_path=filepath,
                         source_type='bipro_auto',
                         shipment_id=shipment_id,
                         vu_name=vu_name,
@@ -987,42 +1086,80 @@ class ParallelDownloadManager(QThread):
                         validation_status=validation_status,
                         box_type='sonstige'
                     )
-                else:
-                    uploaded = docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=category,
-                        validation_status=validation_status if validation_status else 'OK'
-                    )
-                
-                if uploaded and doc.get('is_valid', True):
+                    continue
+
+                upload_jobs = self._preprocess_file(filepath, filename, category, docs_api)
+
+                for job_path, box_override in upload_jobs:
                     try:
-                        from services.early_text_extract import extract_and_save_text
-                        extract_and_save_text(
-                            docs_api, uploaded.id, doc['filepath'],
-                            doc.get('filename', '')
+                        upload_kwargs = dict(
+                            file_path=job_path,
+                            source_type='bipro_auto',
+                            shipment_id=shipment_id,
+                            vu_name=vu_name,
+                            bipro_category=category,
+                            validation_status=validation_status if validation_status else 'OK',
                         )
-                    except Exception:
-                        pass
+                        if box_override:
+                            upload_kwargs['box_type'] = box_override
+
+                        uploaded = docs_api.upload(**upload_kwargs)
+
+                        if uploaded and box_override != 'roh':
+                            try:
+                                from services.early_text_extract import extract_and_save_text
+                                extract_and_save_text(
+                                    docs_api, uploaded.id, job_path,
+                                    os.path.basename(job_path)
+                                )
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        upload_errors += 1
+                        self.log_message.emit(
+                            f"    [!] Upload fehlgeschlagen: {os.path.basename(job_path)}: {e}"
+                        )
             except Exception as e:
                 upload_errors += 1
                 self.log_message.emit(
                     f"    [!] Upload fehlgeschlagen: {doc.get('filename', 'unbekannt')}: {e}"
                 )
-        
+
+        raw_doc_id = None
+        no_binary_docs = (len(documents) == 0)
+
+        if no_binary_docs:
+            metadata = self._extract_soap_metadata(raw_xml_path, category)
+            if metadata:
+                new_name = self._build_descriptive_xml_name(
+                    metadata, shipment_id, vu_name
+                )
+                renamed_path = os.path.join(os.path.dirname(raw_xml_path), new_name)
+                try:
+                    os.rename(raw_xml_path, renamed_path)
+                    raw_xml_path = renamed_path
+                except OSError:
+                    pass
+
         try:
-            docs_api.upload(
+            uploaded_raw = docs_api.upload(
                 file_path=raw_xml_path,
                 source_type='bipro_auto',
                 shipment_id=shipment_id,
                 vu_name=vu_name,
                 box_type='roh'
             )
+            if uploaded_raw:
+                raw_doc_id = uploaded_raw.id
         except Exception as e:
             self.log_message.emit(f"    [!] Raw XML Upload fehlgeschlagen: {e}")
-        
+
+        if no_binary_docs and metadata:
+            self._create_bipro_event(
+                docs_api, shipment_id, category, vu_name, metadata, raw_doc_id
+            )
+            event_created = True
+
         # Temp-Dateien aufraumen
         try:
             temp_dir = os.path.dirname(raw_xml_path)
@@ -1031,8 +1168,156 @@ class ParallelDownloadManager(QThread):
                 shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception:
             pass
-        
-        return upload_errors
+
+        return (upload_errors, event_created)
+
+    def _extract_soap_metadata(self, xml_path: str, category: str) -> dict:
+        """Extrahiert strukturierte Metadaten aus einer SOAP-XML-Huellkurve."""
+        import re
+        try:
+            with open(xml_path, 'r', encoding='utf-8', errors='replace') as f:
+                xml_text = f.read()
+        except Exception:
+            return {}
+
+        def _find(pattern_options):
+            for p in pattern_options:
+                m = re.search(p, xml_text, re.DOTALL)
+                if m:
+                    return m.group(1).strip()
+            return None
+
+        meta = {}
+
+        meta['vsnr'] = _find([
+            r'<[^>]*?Versicherungsscheinnummer[^>]*>([^<]+)<',
+        ])
+        meta['vu_bafin_nr'] = _find([
+            r'<[^>]*?Unternehmensnummer[^>]*>([^<]+)<',
+        ])
+        meta['sparte'] = _find([
+            r'<[^>]*?Sparte[^>]*>([^<]+)<',
+        ])
+        meta['vermittler_nr'] = _find([
+            r'<[^>]*?Vermittlernummer[^>]*>([^<]+)<',
+        ])
+        meta['freitext'] = _find([
+            r'<[^>]*?Freitext[^>]*>([^<]+)<',
+        ])
+        meta['kurzbeschreibung'] = _find([
+            r'<[^>]*?Kurzbeschreibung[^>]*>([^<]+)<',
+        ])
+        meta['referenced_filename'] = _find([
+            r'<[^>]*?Dateiname[^>]*>([^<]+)<',
+        ])
+
+        name_parts = []
+        nachname = _find([r'<[^>]*?Nachname[^>]*>([^<]+)<'])
+        vorname = _find([r'<[^>]*?Vorname[^>]*>([^<]+)<'])
+        firma = _find([r'<[^>]*?Firmenname[^>]*>([^<]+)<'])
+        if firma:
+            name_parts.append(firma)
+        if nachname:
+            name_parts.append(nachname)
+        if vorname:
+            name_parts.append(vorname)
+        if name_parts:
+            meta['vn_name'] = ' '.join(name_parts)
+
+        addr_parts = []
+        strasse = _find([r'<[^>]*?Strasse[^>]*>([^<]+)<'])
+        plz = _find([r'<[^>]*?Postleitzahl[^>]*>([^<]+)<'])
+        ort = _find([r'<[^>]*?Ort[^>]*>([^<]+)<'])
+        if strasse:
+            addr_parts.append(strasse)
+        if plz and ort:
+            addr_parts.append(f"{plz} {ort}")
+        elif ort:
+            addr_parts.append(ort)
+        if addr_parts:
+            meta['vn_address'] = ', '.join(addr_parts)
+
+        erstelldatum = _find([r'<[^>]*?Erstelldatum[^>]*>([^<]+)<'])
+        if erstelldatum:
+            try:
+                d = erstelldatum[:10]
+                meta['shipment_date'] = d
+            except Exception:
+                pass
+
+        meta = {k: v for k, v in meta.items() if v}
+        return meta
+
+    def _determine_event_type(self, category: str) -> str:
+        """Bestimmt den event_type anhand der BiPRO-Kategorie."""
+        if category and category.startswith('999'):
+            from config.processing_rules import BIPRO_XML_ONLY_CATEGORIES
+            if category in BIPRO_XML_ONLY_CATEGORIES:
+                return BIPRO_XML_ONLY_CATEGORIES[category]
+            return 'gdv_announced'
+        if category and category.startswith('14'):
+            return 'status_message'
+        return 'document_xml'
+
+    def _build_descriptive_xml_name(self, metadata: dict,
+                                    shipment_id: str, vu_name: str) -> str:
+        """Baut einen beschreibenden Dateinamen fuer die Roh-XML."""
+        parts = []
+        parts.append(vu_name or 'BiPRO')
+
+        category_name = get_category_short_name(
+            metadata.get('bipro_category', '')
+        ) if metadata.get('bipro_category') else None
+        if not category_name:
+            category_name = 'Daten'
+        parts.append(category_name)
+
+        if metadata.get('vsnr'):
+            parts.append(f"VSNR-{metadata['vsnr']}")
+
+        if metadata.get('shipment_date'):
+            parts.append(metadata['shipment_date'][:10])
+        else:
+            parts.append(datetime.now().strftime('%Y-%m-%d'))
+
+        parts.append(str(shipment_id))
+
+        safe = '_'.join(parts)
+        safe = ''.join(c if (c.isalnum() or c in '-_.') else '_' for c in safe)
+        return f"{safe}.xml"
+
+    def _create_bipro_event(self, docs_api, shipment_id: str, category: str,
+                            vu_name: str, metadata: dict,
+                            raw_document_id: int = None) -> None:
+        """Erstellt einen BiPRO-Event-Eintrag auf dem Server."""
+        try:
+            from api.bipro_events import BiproEventsAPI
+            events_api = BiproEventsAPI(docs_api.client)
+
+            event_type = self._determine_event_type(category)
+            category_name_str = get_category_short_name(category) if category else None
+
+            data = {
+                'shipment_id': str(shipment_id),
+                'vu_name': vu_name,
+                'vu_bafin_nr': metadata.get('vu_bafin_nr'),
+                'bipro_category': category,
+                'category_name': category_name_str,
+                'event_type': event_type,
+                'vsnr': metadata.get('vsnr'),
+                'vn_name': metadata.get('vn_name'),
+                'vn_address': metadata.get('vn_address'),
+                'sparte': metadata.get('sparte'),
+                'vermittler_nr': metadata.get('vermittler_nr'),
+                'freitext': metadata.get('freitext'),
+                'kurzbeschreibung': metadata.get('kurzbeschreibung'),
+                'referenced_filename': metadata.get('referenced_filename'),
+                'shipment_date': metadata.get('shipment_date'),
+                'raw_document_id': raw_document_id,
+            }
+            events_api.create_event(data)
+        except Exception as e:
+            logger.debug(f"BiPRO-Event erstellen fehlgeschlagen: {e}")
     
     def _download_shipment(self, shipment_id, category, created_at):
         """

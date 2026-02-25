@@ -28,7 +28,7 @@
 
 | Methode | Endpunkt | Auth | Beschreibung |
 |---------|----------|------|--------------|
-| GET | `/documents` | JWT | Alle Dokumente (mit Box-Filter, Duplikat-Metadaten) |
+| GET | `/documents` | JWT | Alle Dokumente (mit Box-Filter, Duplikat-Metadaten, ?limit=10000) |
 | GET | `/documents/{id}` | JWT | Einzelnes Dokument |
 | GET | `/documents/{id}/history` | JWT + documents_history | Aenderungshistorie |
 | GET | `/documents/{id}/ai-data` | JWT | Volltext + KI-Rohantwort |
@@ -175,7 +175,7 @@
 |---------|----------|------|--------------|
 | GET | `/admin/users` | JWT + Admin | Alle Nutzer |
 | POST | `/admin/users` | JWT + Admin | Nutzer erstellen |
-| PUT | `/admin/users/{id}` | JWT + Admin | Nutzer aktualisieren (Name, Rechte, Status) |
+| PUT | `/admin/users/{id}` | JWT + Admin | Nutzer aktualisieren (Name, Rechte, Status, update_channel) |
 | PUT | `/admin/users/{id}/password` | JWT + Admin | Passwort aendern |
 
 ### Sessions (`sessions.php`, 174 Zeilen)
@@ -192,15 +192,19 @@
 |---------|----------|------|--------------|
 | GET | `/admin/activity` | JWT + Admin | Aktivitaetslog (Filter: User, Action, Zeitraum) |
 
-### Releases (`releases.php`, 514 Zeilen)
+### Releases (`releases.php`, ~850 Zeilen, inkl. Gate Engine)
 
 | Methode | Endpunkt | Auth | Beschreibung |
 |---------|----------|------|--------------|
-| GET | `/updates/check` | JWT | Update-Check (Version vergleichen) |
-| GET | `/releases/download/{id}` | JWT | Installer herunterladen |
+| GET | `/updates/check` | Nein | Update-Check (Version vergleichen, Channel-Parameter) |
+| GET | `/releases/latest` | Nein | Neueste Version herunterladen (fuer neue Nutzer) |
+| GET | `/releases/download/{id}` | Nein | Installer nach ID herunterladen |
 | GET | `/admin/releases` | JWT + Admin | Alle Releases |
-| POST | `/admin/releases` | JWT + Admin | Release hochladen |
-| PUT | `/admin/releases/{id}` | JWT + Admin | Release aktualisieren |
+| POST | `/admin/releases` | JWT + Admin | Release hochladen (Status = `pending`) |
+| POST | `/admin/releases/{id}/validate` | JWT + Admin | Gate-Validierung (7 Gates) |
+| POST | `/admin/releases/{id}/withdraw` | JWT + Admin | Release zurueckziehen + Auto-Fallback |
+| GET | `/admin/releases/schema-snapshot` | JWT + Admin | DB-Schema-Hash + Tabellen-Inventar |
+| PUT | `/admin/releases/{id}` | JWT + Admin | Release aktualisieren (Status-Uebergaenge erzwungen) |
 | DELETE | `/admin/releases/{id}` | JWT + Admin | Release loeschen |
 
 ### Processing History (`processing_history.php`, 589 Zeilen)
@@ -212,7 +216,19 @@
 | GET | `/processing_history/costs` | JWT + Admin | Kosten-Historie |
 | GET | `/processing_history/cost_stats` | JWT + Admin | Aggregierte Kosten |
 
-### Provisionsmanagement (`provision.php`, 2.289 Zeilen)
+### BiPRO-Events (`bipro_events.php`, 278 Zeilen)
+
+| Methode | Endpunkt | Auth | Beschreibung |
+|---------|----------|------|--------------|
+| GET | `/bipro-events` | JWT | Paginierte Liste (Filter: event_type, vu_name, is_read) |
+| GET | `/bipro-events/summary` | JWT | Leichtgewichtig fuer Polling (unread_count, latest_event) |
+| POST | `/bipro-events` | JWT | Neuen Event erstellen |
+| PUT | `/bipro-events/read` | JWT | Bulk-Read-Markierung (IDs-Array) |
+| PUT | `/bipro-events/read-all` | JWT | Alle als gelesen markieren |
+| DELETE | `/bipro-events/{id}` | JWT + Admin | Einzelnen Event loeschen |
+| DELETE | `/bipro-events/all` | JWT + Admin | Alle Events loeschen |
+
+### Provisionsmanagement (`provision.php`, ~2.480 Zeilen)
 
 | Methode | Endpunkt | Auth | Beschreibung |
 |---------|----------|------|--------------|
@@ -278,7 +294,7 @@
 
 | Tabelle | Zweck |
 |---------|-------|
-| `users` | Benutzer (Name, Passwort-Hash, account_type, permissions JSON) |
+| `users` | Benutzer (Name, Passwort-Hash, account_type, update_channel, permissions JSON) |
 | `sessions` | Aktive Sessions (Token-Hash, IP, Ablauf) |
 | `activity_log` | Alle API-Aktionen (User, Aktion, Details, Zeitstempel) |
 
@@ -307,6 +323,7 @@
 |---------|-------|
 | `vu_connections` | VU-Verbindungen (Credentials verschluesselt) |
 | `shipments` | BiPRO-Lieferungen |
+| `bipro_events` | Strukturierte Metadaten aus 0-Dokument-Lieferungen (FK → documents) |
 
 ### E-Mail-System
 
@@ -339,7 +356,8 @@
 
 | Tabelle | Zweck |
 |---------|-------|
-| `releases` | Versionen (SHA256, Channel, Status, Downloads) |
+| `releases` | Versionen (SHA256, Channel, Status, Downloads, gate_report, smoke_test_report) |
+| `schema_migrations` | Tracking aller ausgefuehrten DB-Migrationen |
 
 ### Provisionsmanagement (pm_*)
 

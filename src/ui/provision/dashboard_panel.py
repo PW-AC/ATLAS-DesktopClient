@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox, QTableView, QHeaderView, QSplitter, QFrame,
     QSizePolicy, QScrollArea, QDialog, QDateEdit,
 )
-from PySide6.QtCore import Qt, Signal, QAbstractTableModel, QModelIndex, QThread, QDate
+from PySide6.QtCore import Qt, Signal, QDate, QModelIndex
 from PySide6.QtGui import QColor
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, date
@@ -23,158 +23,18 @@ from ui.styles.tokens import (
     BORDER_DEFAULT, SUCCESS, ERROR, WARNING,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     PILL_COLORS, ROLE_BADGE_COLORS,
-    build_rich_tooltip, get_provision_table_style,
+    get_provision_table_style, build_rich_tooltip,
 )
 from ui.provision.widgets import (
     KpiCard, DonutChartWidget, PillBadgeDelegate, SectionHeader,
     ActivityFeedWidget, format_eur, get_combo_style,
 )
+from ui.provision.workers import DashboardLoadWorker, BeraterDetailWorker
+from ui.provision.models import BeraterRankingModel
 from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-class _BeraterDetailWorker(QThread):
-    finished = Signal(int, str, dict, object)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, berater_id: int, berater_name: str,
-                 row_data: dict, von: str = None, bis: str = None):
-        super().__init__()
-        self._api = api
-        self._berater_id = berater_id
-        self._berater_name = berater_name
-        self._row_data = row_data
-        self._von = von
-        self._bis = bis
-
-    def run(self):
-        try:
-            detail = self._api.get_berater_detail(self._berater_id, von=self._von, bis=self._bis)
-            self.finished.emit(self._berater_id, self._berater_name, self._row_data, detail)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _DashboardLoadWorker(QThread):
-    finished = Signal(object, object)
-    error = Signal(str)
-
-    def __init__(self, api: ProvisionAPI, von: str = None, bis: str = None):
-        super().__init__()
-        self._api = api
-        self._von = von
-        self._bis = bis
-
-    def run(self):
-        try:
-            logger.debug(f"Dashboard-Load: von={self._von}, bis={self._bis}")
-            summary = self._api.get_dashboard_summary(
-                von=self._von, bis=self._bis)
-            clearance = self._api.get_clearance_counts()
-            self.finished.emit(summary, clearance)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class _BeraterRankingModel(QAbstractTableModel):
-    COLUMNS = [
-        texts.PROVISION_DASH_COL_NAME,
-        texts.PROVISION_DASH_COL_ROLE,
-        texts.PROVISION_DASH_COL_BRUTTO,
-        texts.PROVISION_DASH_COL_TL_ABZUG,
-        texts.PROVISION_DASH_COL_NETTO,
-        texts.PROVISION_DASH_COL_AG,
-        texts.PROVISION_DASH_COL_RUECK,
-    ]
-
-    TOOLTIPS = [
-        texts.PROVISION_TIP_COL_BERATER,
-        "",
-        build_rich_tooltip(
-            texts.PROVISION_TIP_COL_BETRAG,
-            quelle=texts.PROVISION_DASH_TOTAL_TIP_SRC,
-        ),
-        build_rich_tooltip(
-            texts.PROVISION_TIP_COL_TL_ANTEIL,
-        ),
-        build_rich_tooltip(
-            texts.PROVISION_TIP_NETTO_DEF,
-            berechnung=texts.PROVISION_TIP_NETTO_CALC,
-        ),
-        build_rich_tooltip(
-            texts.PROVISION_TIP_COL_AG_ANTEIL,
-        ),
-        build_rich_tooltip(
-            texts.PROVISION_TIP_RUECK_DEF,
-        ),
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self._data: List[Dict] = []
-
-    def set_data(self, data: List[Dict]):
-        self.beginResetModel()
-        self._data = data
-        self.endResetModel()
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._data)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal:
-            if role == Qt.DisplayRole:
-                return self.COLUMNS[section]
-            if role == Qt.ToolTipRole and section < len(self.TOOLTIPS):
-                return self.TOOLTIPS[section] or None
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        row = self._data[index.row()]
-        col = index.column()
-
-        if role == Qt.DisplayRole:
-            if col == 0:
-                return row.get('name', '')
-            elif col == 1:
-                r = row.get('role', '')
-                return {
-                    'consulter': texts.PROVISION_EMP_ROLE_CONSULTER,
-                    'teamleiter': texts.PROVISION_EMP_ROLE_TEAMLEITER,
-                    'backoffice': texts.PROVISION_EMP_ROLE_BACKOFFICE,
-                }.get(r, r)
-            elif col == 2:
-                return format_eur(row.get('brutto', 0))
-            elif col == 3:
-                return format_eur(row.get('tl_abzug', 0))
-            elif col == 4:
-                return format_eur(row.get('berater_netto', 0))
-            elif col == 5:
-                return format_eur(row.get('ag_anteil', 0))
-            elif col == 6:
-                return format_eur(row.get('rueckbelastung', 0))
-
-        if role == Qt.ForegroundRole:
-            if col == 6:
-                val = float(row.get('rueckbelastung', 0))
-                if val < 0:
-                    return QColor(ERROR)
-            if col == 3:
-                val = float(row.get('tl_abzug', 0))
-                if val < 0:
-                    return QColor(ERROR)
-
-        if role == Qt.TextAlignmentRole and col >= 2:
-            return Qt.AlignRight | Qt.AlignVCenter
-
-        return None
 
 
 class DashboardPanel(QWidget):
@@ -328,7 +188,7 @@ class DashboardPanel(QWidget):
         )
         layout.addWidget(ranking_header)
 
-        self._ranking_model = _BeraterRankingModel()
+        self._ranking_model = BeraterRankingModel()
         self._ranking_table = QTableView()
         self._ranking_table.setModel(self._ranking_model)
         self._ranking_table.setAlternatingRowColors(True)
@@ -415,7 +275,7 @@ class DashboardPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        self._worker = _DashboardLoadWorker(self._api, von=von, bis=bis)
+        self._worker = DashboardLoadWorker(self._api, von=von, bis=bis)
         self._worker.finished.connect(self._on_data_loaded)
         self._worker.error.connect(self._on_data_error)
         self._worker.start()
@@ -508,7 +368,7 @@ class DashboardPanel(QWidget):
             return
 
         von, bis = self._get_date_range()
-        self._detail_worker = _BeraterDetailWorker(
+        self._detail_worker = BeraterDetailWorker(
             self._api, berater_id, berater_name, dict(row), von=von, bis=bis
         )
         self._detail_worker.finished.connect(self._show_berater_detail_dialog)

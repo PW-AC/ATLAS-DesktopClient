@@ -87,3 +87,13 @@
 - Rechte-/Session-/Activity-Management
 - Neue Box für Admins um falsch sortierte Dokumente auszulagern.
 - Scans implementiert.
+- Release Gate Erweiterung (v3.4.1)
+  - Gate 6: Schema-Struktur-Pruefung (6 kritische Tabellen, 12 Indexes, 10 Spalten, SHA256 Audit)
+  - Gate 7: Daten-Integritaets-Pruefung (orphaned FKs, fehlende Berater-Referenzen, Warnungen)
+  - Withdraw-Endpoint mit Auto-Fallback (POST /admin/releases/{id}/withdraw)
+  - Schema-Snapshot Endpoint (GET /admin/releases/schema-snapshot)
+  - Provision Unit Tests (23 Normalisierungs-Tests: normalize_vsnr, normalize_vermittler_name, normalize_for_db)
+  - Erweiterte Smoke Tests (+Provision Normalisierung, +Version Consistency, +API Health Check)
+  - Installer-Verifikation Script (SHA256, VERSION-Match)
+  - CI-Pipeline erweitert (Provision Tests, Installer-Check, erweiterte Artifacts)
+  - Admin-Panel: Zurueckziehen-Button mit Bestaetigungs-Dialog

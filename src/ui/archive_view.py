@@ -45,6 +45,37 @@ from api.client import APIClient
 from api.documents import DocumentsAPI, Document
 
 
+class _ThumbnailWorker(QThread):
+    """Rendert PDF-Thumbnails im Hintergrund, damit die UI nicht blockiert."""
+    thumbnail_ready = Signal(int, bytes, int, int)  # page_idx, img_bytes, w, h
+
+    def __init__(self, pdf_path: str, page_count: int):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._page_count = page_count
+
+    def run(self):
+        try:
+            import fitz
+            try:
+                doc = fitz.open(self._pdf_path)
+            except Exception:
+                with open(self._pdf_path, 'rb') as f:
+                    data = f.read()
+                doc = fitz.open(stream=data, filetype="pdf")
+            
+            for i in range(min(len(doc), self._page_count)):
+                page = doc[i]
+                zoom = 120.0 / page.rect.width
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat)
+                self.thumbnail_ready.emit(i, bytes(pix.samples), pix.width, pix.height)
+            
+            doc.close()
+        except Exception as e:
+            logger.warning(f"Thumbnail-Worker Fehler: {e}")
+
+
 def format_date_german(date_str: str) -> str:
     """Konvertiert ISO-Datum/Datetime ins deutsche Format (DD.MM.YYYY).
     
@@ -573,10 +604,10 @@ class PDFViewerDialog(QDialog):
             self._status_label.setVisible(True)
     
     def _refresh_thumbnails(self):
-        """Rendert alle Seiten als Thumbnails in die Sidebar.
+        """Rendert Thumbnails asynchron in einem Worker-Thread.
         
-        Signale werden waehrend des Rebuilds blockiert, damit der Caller
-        die Auswahl selbst steuern kann (Einzel- oder Mehrfachauswahl).
+        Platzhalter-Items werden sofort erstellt, die eigentlichen Pixmaps
+        werden im Hintergrund gerendert und per Signal stueckweise eingesetzt.
         """
         if not self._fitz_doc or not hasattr(self, '_thumbnail_list'):
             return
@@ -585,32 +616,37 @@ class PDFViewerDialog(QDialog):
         from PySide6.QtCore import QSize
         from PySide6.QtWidgets import QListWidgetItem
         
+        page_count = len(self._fitz_doc)
+        
         self._thumbnail_list.blockSignals(True)
         self._thumbnail_list.clear()
         
-        for i in range(len(self._fitz_doc)):
-            page = self._fitz_doc[i]
-            # Thumbnail rendern (120px Breite)
-            zoom = 120.0 / page.rect.width
-            mat = __import__('fitz').Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat)
-            
-            # PyMuPDF Pixmap -> QImage -> QPixmap -> QIcon
-            img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
-            pixmap = QPixmap.fromImage(img)
-            
+        for i in range(page_count):
             item = QListWidgetItem()
-            item.setIcon(QIcon(pixmap))
             item.setText(f"S. {i + 1}")
-            item.setData(Qt.ItemDataRole.UserRole, i)  # Seiten-Index
+            item.setData(Qt.ItemDataRole.UserRole, i)
             self._thumbnail_list.addItem(item)
         
         self._thumbnail_list.setIconSize(QSize(120, 160))
         self._thumbnail_list.blockSignals(False)
         
-        # Erste Seite auswaehlen (wenn kein externer Caller die Auswahl uebernimmt)
         if self._thumbnail_list.count() > 0:
             self._thumbnail_list.setCurrentRow(0)
+        
+        self._thumb_worker = _ThumbnailWorker(self.pdf_path, page_count)
+        self._thumb_worker.thumbnail_ready.connect(self._on_thumbnail_ready)
+        self._thumb_worker.start()
+    
+    def _on_thumbnail_ready(self, page_idx: int, img_bytes: bytes, width: int, height: int):
+        """Callback fuer einen fertig gerenderten Thumbnail."""
+        if not hasattr(self, '_thumbnail_list') or page_idx >= self._thumbnail_list.count():
+            return
+        from PySide6.QtGui import QPixmap, QImage, QIcon
+        img = QImage(img_bytes, width, height, width * 3, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(img)
+        item = self._thumbnail_list.item(page_idx)
+        if item:
+            item.setIcon(QIcon(pixmap))
     
     def _get_selected_page_indices(self) -> list:
         """Gibt die Indizes aller ausgewaehlten Seiten zurueck (sortiert)."""

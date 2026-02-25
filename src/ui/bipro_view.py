@@ -134,6 +134,7 @@ class BiPROProgressOverlay(QWidget):
             'download_success': 0,
             'download_failed': 0,
             'download_docs': 0,
+            'download_events': 0,
             'download_retries': 0,
             'ai_processed': 0,
             'ai_classified': 0,
@@ -320,6 +321,7 @@ class BiPROProgressOverlay(QWidget):
             'download_success': 0,
             'download_failed': 0,
             'download_docs': 0,
+            'download_events': 0,
             'download_retries': 0,
             'ai_processed': 0,
             'ai_classified': 0,
@@ -469,6 +471,9 @@ class BiPROProgressOverlay(QWidget):
             total_shipments = self._stats['download_success'] + self._stats['download_failed']
             lines.append(f"📥 {self._stats['download_success']} von {total_shipments} Lieferung(en) erfolgreich abgerufen")
             lines.append(f"📄 {self._stats['download_docs']} Dokument(e) ins Archiv übertragen")
+            dl_events = self._stats.get('download_events', 0)
+            if dl_events > 0:
+                lines.append(f"🔔 {dl_events} Meldung(en) in Handlungsaufforderungen")
             if self._stats['download_failed'] > 0:
                 lines.append(f"⚠️ {self._stats['download_failed']} Lieferung(en) fehlgeschlagen")
         
@@ -1619,7 +1624,8 @@ class BiPROView(QWidget):
         self._all_vus_current_index = 0
         self._all_vus_total = 0
         self._all_vus_stats = {
-            'vus_processed': 0, 'total_shipments': 0, 'total_docs': 0, 'vus_skipped': 0
+            'vus_processed': 0, 'total_shipments': 0, 'total_docs': 0,
+            'total_events': 0, 'vus_skipped': 0
         }
         
         # Liste aller aktiven Worker fuer sauberes Cleanup
@@ -2300,8 +2306,8 @@ class BiPROView(QWidget):
         self._all_vus_current_index = 0
         self._all_vus_total = len(active_connections)
         self._all_vus_stats = {
-            'vus_processed': 0, 'total_shipments': 0, 
-            'total_docs': 0, 'vus_skipped': 0
+            'vus_processed': 0, 'total_shipments': 0,
+            'total_docs': 0, 'total_events': 0, 'vus_skipped': 0
         }
         
         # UI sperren
@@ -2449,8 +2455,8 @@ class BiPROView(QWidget):
         ]
         
         self._download_total = len(shipment_infos)
-        self._download_stats = {'success': 0, 'failed': 0, 'docs': 0, 'retries': 0}
-        
+        self._download_stats = {'success': 0, 'failed': 0, 'docs': 0, 'events': 0, 'retries': 0}
+
         if parallel_enabled and len(shipment_infos) > 1:
             # Paralleler Download
             self._log(f"Starte parallelen Download von {self._download_total} Lieferung(en)...")
@@ -2498,19 +2504,25 @@ class BiPROView(QWidget):
         
         success = stats.get('success', 0)
         docs = stats.get('docs', 0)
+        events = stats.get('events', 0)
         
         self._all_vus_stats['vus_processed'] += 1
         self._all_vus_stats['total_shipments'] += success
         self._all_vus_stats['total_docs'] += docs
+        self._all_vus_stats['total_events'] += events
         
-        self._log(BIPRO_FETCH_ALL_VU_DONE.format(
+        vu_log = BIPRO_FETCH_ALL_VU_DONE.format(
             vu_name=vu_name, success=success, docs=docs
-        ))
+        )
+        if events > 0:
+            vu_log += f", {events} Meldung(en)"
+        self._log(vu_log)
         
         # Statistiken ans Overlay uebergeben
         self._progress_overlay._stats['download_success'] = stats.get('success', 0)
         self._progress_overlay._stats['download_failed'] = stats.get('failed', 0)
         self._progress_overlay._stats['download_docs'] = stats.get('docs', 0)
+        self._progress_overlay._stats['download_events'] = events
         
         self._cleanup_parallel_manager()
         self._current_credentials = None
@@ -2540,11 +2552,15 @@ class BiPROView(QWidget):
             pass
         
         stats = self._all_vus_stats
-        self._log(BIPRO_FETCH_ALL_DONE.format(
+        all_vus_log = BIPRO_FETCH_ALL_DONE.format(
             total_vus=stats['vus_processed'],
             total_shipments=stats['total_shipments'],
             total_docs=stats['total_docs']
-        ))
+        )
+        if stats.get('total_events', 0) > 0:
+            all_vus_log = all_vus_log.rstrip(' =')
+            all_vus_log += f", {stats['total_events']} Meldung(en) ==="
+        self._log(all_vus_log)
         
         if stats['vus_skipped'] > 0:
             self._log(f"  Uebersprungen: {stats['vus_skipped']} VU(s)")
@@ -2907,8 +2923,8 @@ class BiPROView(QWidget):
         ]
         
         self._download_total = len(shipment_infos)
-        self._download_stats = {'success': 0, 'failed': 0, 'docs': 0, 'retries': 0}
-        
+        self._download_stats = {'success': 0, 'failed': 0, 'docs': 0, 'events': 0, 'retries': 0}
+
         # Auto-Refresh pausieren während des Downloads
         try:
             from services.data_cache import DataCacheService
@@ -3007,13 +3023,17 @@ class BiPROView(QWidget):
         self._current_credentials = None
         
         # Statistiken loggen
+        events = stats.get('events', 0)
         self._log(f"=== Alle Downloads abgeschlossen ===")
-        self._log(
-            f"Erfolgreich: {stats.get('success', 0)}, "
-            f"Fehlgeschlagen: {stats.get('failed', 0)}, "
-            f"Dokumente: {stats.get('docs', 0)}, "
-            f"Retries: {stats.get('retries', 0)}"
-        )
+        summary_parts = [
+            f"Erfolgreich: {stats.get('success', 0)}",
+            f"Fehlgeschlagen: {stats.get('failed', 0)}",
+            f"Dokumente: {stats.get('docs', 0)}",
+        ]
+        if events > 0:
+            summary_parts.append(f"Meldungen: {events}")
+        summary_parts.append(f"Retries: {stats.get('retries', 0)}")
+        self._log(', '.join(summary_parts))
         
         # Fehlgeschlagene Lieferungen loggen
         failed_ids = stats.get('failed_ids', [])
@@ -3025,6 +3045,7 @@ class BiPROView(QWidget):
         self._progress_overlay._stats['download_success'] = stats.get('success', 0)
         self._progress_overlay._stats['download_failed'] = stats.get('failed', 0)
         self._progress_overlay._stats['download_docs'] = stats.get('docs', 0)
+        self._progress_overlay._stats['download_events'] = events
         self._progress_overlay._stats['download_retries'] = stats.get('retries', 0)
         
         self._progress_overlay.show_completion(auto_close_seconds=8)
@@ -3214,13 +3235,22 @@ class BiPROView(QWidget):
         self._current_credentials = None
         
         stats = self._download_stats
+        events = stats.get('events', 0)
         self._log(f"=== Alle Downloads abgeschlossen ===")
-        self._log(f"Erfolgreich: {stats['success']}, Fehlgeschlagen: {stats['failed']}, Dokumente: {stats['docs']}")
+        seq_parts = [
+            f"Erfolgreich: {stats['success']}",
+            f"Fehlgeschlagen: {stats['failed']}",
+            f"Dokumente: {stats['docs']}",
+        ]
+        if events > 0:
+            seq_parts.append(f"Meldungen: {events}")
+        self._log(', '.join(seq_parts))
         
         # Statistiken ans Overlay uebergeben
         self._progress_overlay._stats['download_success'] = stats['success']
         self._progress_overlay._stats['download_failed'] = stats['failed']
         self._progress_overlay._stats['download_docs'] = stats['docs']
+        self._progress_overlay._stats['download_events'] = events
         
         # Fazit anzeigen (kein Popup mehr!)
         # Auto-Close nach 8 Sekunden, oder Klick zum Schließen

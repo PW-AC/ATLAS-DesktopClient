@@ -22,15 +22,20 @@ class CommissionModel:
     name: str = ''
     description: Optional[str] = None
     commission_rate: float = 0.0
+    tl_rate: Optional[float] = None
+    tl_basis: Optional[str] = None
     is_active: bool = True
 
     @classmethod
     def from_dict(cls, d: Dict) -> 'CommissionModel':
+        tl_rate_raw = d.get('tl_rate')
         return cls(
             id=int(d.get('id', 0)),
             name=d.get('name', ''),
             description=d.get('description'),
             commission_rate=float(d.get('commission_rate', 0)),
+            tl_rate=float(tl_rate_raw) if tl_rate_raw is not None else None,
+            tl_basis=d.get('tl_basis'),
             is_active=bool(int(d.get('is_active', 1))),
         )
 
@@ -76,6 +81,26 @@ class Employee:
             model_name=d.get('model_name'),
             model_rate=float(d['model_rate']) if d.get('model_rate') is not None else None,
             teamleiter_name=d.get('teamleiter_name'),
+        )
+
+
+@dataclass
+class RecalcSummary:
+    """Zusammenfassung einer Neuberechnung nach Ratenaenderung."""
+    splits_recalculated: int = 0
+    abrechnungen_regenerated: int = 0
+    affected_employees: int = 0
+    from_date: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict]) -> Optional['RecalcSummary']:
+        if not d:
+            return None
+        return cls(
+            splits_recalculated=int(d.get('splits_recalculated', 0)),
+            abrechnungen_regenerated=int(d.get('abrechnungen_regenerated', 0)),
+            affected_employees=int(d.get('affected_employees', 0)),
+            from_date=d.get('from_date'),
         )
 
 
@@ -410,13 +435,16 @@ class ProvisionAPI:
             logger.error(f"Fehler beim Erstellen des Mitarbeiters: {e}")
         return None
 
-    def update_employee(self, emp_id: int, data: Dict) -> bool:
+    def update_employee(self, emp_id: int, data: Dict) -> tuple:
+        """Returns (success: bool, recalc_summary: Optional[RecalcSummary])."""
         try:
             resp = self.client.put(f'/pm/employees/{emp_id}', json_data=data)
-            return resp.get('success', False)
+            success = resp.get('success', False)
+            summary = RecalcSummary.from_dict(resp.get('data', {}).get('recalc_summary'))
+            return success, summary
         except APIError as e:
             logger.error(f"Fehler beim Aktualisieren des Mitarbeiters {emp_id}: {e}")
-        return False
+        return False, None
 
     def delete_employee(self, emp_id: int, hard: bool = False) -> bool:
         """Mitarbeiter deaktivieren (soft) oder loeschen (hard).
@@ -713,13 +741,16 @@ class ProvisionAPI:
             logger.error(f"Fehler beim Erstellen des Provisionsmodells: {e}")
         return None
 
-    def update_model(self, model_id: int, data: Dict) -> bool:
+    def update_model(self, model_id: int, data: Dict) -> tuple:
+        """Returns (success: bool, recalc_summary: Optional[RecalcSummary])."""
         try:
             resp = self.client.put(f'/pm/models/{model_id}', json_data=data)
-            return resp.get('success', False)
+            success = resp.get('success', False)
+            summary = RecalcSummary.from_dict(resp.get('data', {}).get('recalc_summary'))
+            return success, summary
         except APIError as e:
             logger.error(f"Fehler beim Aktualisieren des Provisionsmodells {model_id}: {e}")
-        return False
+        return False, None
 
     def delete_model(self, model_id: int) -> bool:
         try:

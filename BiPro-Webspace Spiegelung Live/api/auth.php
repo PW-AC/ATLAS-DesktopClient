@@ -83,7 +83,7 @@ function handleLogin(): void {
     
     // User aus DB holen (erweitert um account_type, is_locked)
     $user = Database::queryOne(
-        'SELECT id, username, password_hash, email, account_type, is_active, is_locked FROM users WHERE username = ?',
+        'SELECT id, username, password_hash, email, account_type, update_channel, is_active, is_locked FROM users WHERE username = ?',
         [$username]
     );
     
@@ -170,6 +170,7 @@ function handleLogin(): void {
             'username' => $user['username'],
             'email' => $user['email'],
             'account_type' => $user['account_type'],
+            'update_channel' => $user['update_channel'] ?? 'stable',
             'permissions' => $permissions
         ],
         'expires_in' => JWT_EXPIRY
@@ -223,7 +224,7 @@ function handleVerify(): void {
     // Session-Check
     $tokenHash = hash('sha256', $token);
     $session = Database::queryOne(
-        'SELECT s.is_active, u.is_active as user_active, u.is_locked, u.account_type
+        'SELECT s.is_active, u.is_active as user_active, u.is_locked, u.account_type, u.update_channel
          FROM sessions s
          JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = ?',
@@ -246,6 +247,7 @@ function handleVerify(): void {
         'user_id' => $payload['user_id'],
         'username' => $payload['username'],
         'account_type' => $session['account_type'],
+        'update_channel' => $session['update_channel'] ?? 'stable',
         'permissions' => $permissions,
         'expires_at' => date('c', $payload['exp'])
     ]);
@@ -259,7 +261,7 @@ function handleMe(): void {
     $payload = JWT::requireAuth();
     
     $user = Database::queryOne(
-        'SELECT id, username, email, account_type, is_active, is_locked, last_login_at, created_at 
+        'SELECT id, username, email, account_type, update_channel, is_active, is_locked, last_login_at, created_at 
          FROM users WHERE id = ?',
         [$payload['user_id']]
     );

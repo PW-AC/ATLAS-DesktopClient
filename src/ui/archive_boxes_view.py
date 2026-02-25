@@ -1725,8 +1725,11 @@ class AtlasIndexWidget(QWidget):
         
         # Laufenden Worker abbrechen
         if self._search_worker is not None and self._search_worker.isRunning():
-            self._search_worker.disconnect()
-            # Worker im Hintergrund auslaufen lassen
+            try:
+                self._search_worker.finished.disconnect(self._on_search_finished)
+                self._search_worker.error.disconnect(self._on_search_error)
+            except RuntimeError:
+                pass
             self._search_worker = None
         
         self._status_label.setText(ATLAS_INDEX_SEARCHING)
@@ -1807,7 +1810,11 @@ class AtlasIndexWidget(QWidget):
         """Bereinigt laufende Worker."""
         self._debounce_timer.stop()
         if self._search_worker is not None and self._search_worker.isRunning():
-            self._search_worker.disconnect()
+            try:
+                self._search_worker.finished.disconnect(self._on_search_finished)
+                self._search_worker.error.disconnect(self._on_search_error)
+            except RuntimeError:
+                pass
             self._search_worker = None
 
 
@@ -3098,11 +3105,18 @@ class ArchiveBoxesView(QWidget):
         """Callback wenn Auto-Refresh beendet wurde."""
         logger.debug("Auto-Refresh beendet")
         self._initial_load_done = True
-        # SmartScan-Status aktualisieren (falls Admin ihn zwischenzeitlich geaendert hat)
-        self._load_smartscan_status()
-        self.sidebar._smartscan_enabled = self._smartscan_enabled
-        if hasattr(self, '_smartscan_btn'):
-            self._smartscan_btn.setVisible(self._smartscan_enabled)
+        
+        # SmartScan-Status nur alle 5 Minuten aktualisieren (statt bei jedem
+        # 20-Sekunden-Refresh). _load_smartscan_status() ist ein SYNCHRONER
+        # API-Call auf dem Main Thread - zu haeufig verursacht UI-Haenger.
+        now = datetime.now()
+        last_ss_check = getattr(self, '_last_smartscan_check', None)
+        if last_ss_check is None or (now - last_ss_check).total_seconds() > 300:
+            self._last_smartscan_check = now
+            self._load_smartscan_status()
+            self.sidebar._smartscan_enabled = self._smartscan_enabled
+            if hasattr(self, '_smartscan_btn'):
+                self._smartscan_btn.setVisible(self._smartscan_enabled)
         
         # Einmalig: Dokumente ohne Text-Extraktion pruefen (Scan-Uploads etc.)
         if not self._missing_ai_data_checked:
@@ -3262,9 +3276,10 @@ class ArchiveBoxesView(QWidget):
         """Callback wenn Statistiken geladen wurden."""
         self._stats = stats
         self.sidebar.update_stats(stats)
-        # Cache aktualisieren ueber oeffentliche API (thread-safe!)
+        # Stats-Cache invalidieren - wird beim naechsten Auto-Refresh erneuert.
+        # KEIN get_stats(force_refresh=True) hier! Das wuerde einen synchronen
+        # API-Call auf dem Main Thread machen und die UI blockieren.
         self._cache.invalidate_stats()
-        self._cache.get_stats(force_refresh=True)  # Neu laden in Cache
     
     def _on_stats_error(self, error: str):
         """Callback bei Statistik-Fehler."""

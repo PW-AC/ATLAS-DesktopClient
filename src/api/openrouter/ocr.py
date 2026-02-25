@@ -129,7 +129,7 @@ class OpenRouterOCRMixin:
                 page_text = pytesseract.image_to_string(
                     pil_image, 
                     lang='deu+eng',
-                    config='--psm 6'  # Uniform block of text
+                    config='--psm 3'  # Fully automatic page segmentation
                 )
                 
                 if page_text.strip():

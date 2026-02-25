@@ -1,7 +1,7 @@
 """
 ACENCIA ATLAS - Mitteilungen Panel (Admin)
 
-Extrahiert aus admin_view.py (Lines 5385-5633).
+Verwaltet System-/Admin-Mitteilungen und BiPRO-Handlungsaufforderungen.
 """
 
 from typing import List, Dict
@@ -11,11 +11,14 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
     QComboBox, QHeaderView, QAbstractItemView, QMessageBox, QTextEdit,
+    QSplitter,
 )
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from i18n import de as texts
 from api.messages import MessagesAPI
+from api.bipro_events import BiproEventsAPI
 from ui.styles.tokens import (
     PRIMARY_900, PRIMARY_100, PRIMARY_0,
     ACCENT_500,
@@ -28,28 +31,36 @@ logger = logging.getLogger(__name__)
 
 
 class MessagesPanel(QWidget):
-    """Admin-Mitteilungen verwalten (System + Admin)."""
+    """Admin-Mitteilungen verwalten (System + Admin + BiPRO-Events)."""
 
     def __init__(self, api_client, toast_manager, parent=None):
         super().__init__(parent)
         self._api_client = api_client
         self._toast_manager = toast_manager
         self._admin_messages_data: List[Dict] = []
+        self._bipro_events_data: List[Dict] = []
         self._active_workers: list = []
         self._create_ui()
 
     def load_data(self):
         """Public entry point to load panel data."""
         self._load_admin_messages()
+        self._load_bipro_events()
 
     def _create_ui(self):
-        """Erstellt das Admin-Panel fuer Mitteilungen (System + Admin)."""
+        """Erstellt das Admin-Panel fuer Mitteilungen (System + Admin + BiPRO-Events)."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        # Toolbar
-        toolbar = QHBoxLayout()
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setHandleWidth(8)
 
+        # ── Sektion 1: System-/Admin-Mitteilungen ──
+        msg_section = QWidget()
+        msg_layout = QVBoxLayout(msg_section)
+        msg_layout.setContentsMargins(0, 0, 0, 0)
+
+        toolbar = QHBoxLayout()
         title = QLabel(texts.ADMIN_MSG_TITLE)
         title.setFont(QFont(FONT_HEADLINE, 18))
         title.setStyleSheet(f"color: {PRIMARY_900};")
@@ -72,10 +83,8 @@ class MessagesPanel(QWidget):
         """)
         new_msg_btn.clicked.connect(self._show_new_message_dialog)
         toolbar.addWidget(new_msg_btn)
+        msg_layout.addLayout(toolbar)
 
-        layout.addLayout(toolbar)
-
-        # Tabelle
         self._msg_table = QTableWidget()
         self._msg_table.setColumnCount(6)
         self._msg_table.setHorizontalHeaderLabels([
@@ -108,7 +117,86 @@ class MessagesPanel(QWidget):
                 padding: 6px 8px;
             }}
         """)
-        layout.addWidget(self._msg_table)
+        msg_layout.addWidget(self._msg_table)
+        splitter.addWidget(msg_section)
+
+        # ── Sektion 2: BiPRO-Handlungsaufforderungen ──
+        bipro_section = QWidget()
+        bipro_layout = QVBoxLayout(bipro_section)
+        bipro_layout.setContentsMargins(0, 12, 0, 0)
+
+        bipro_toolbar = QHBoxLayout()
+        bipro_title = QLabel(texts.ADMIN_BIPRO_EVENTS_TITLE)
+        bipro_title.setFont(QFont(FONT_HEADLINE, 16))
+        bipro_title.setStyleSheet(f"color: {PRIMARY_900};")
+        bipro_toolbar.addWidget(bipro_title)
+
+        self._bipro_count_label = QLabel("")
+        self._bipro_count_label.setStyleSheet(
+            f"color: {PRIMARY_100}; font-size: {FONT_SIZE_BODY};"
+        )
+        bipro_toolbar.addWidget(self._bipro_count_label)
+
+        bipro_toolbar.addStretch()
+
+        delete_all_btn = QPushButton(texts.ADMIN_BIPRO_EVENTS_DELETE_ALL)
+        delete_all_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: #dc2626;
+                background: transparent;
+                border: 1px solid #dc2626;
+                border-radius: {RADIUS_MD};
+                padding: 6px 16px;
+                font-size: {FONT_SIZE_BODY};
+            }}
+            QPushButton:hover {{
+                background-color: #fee2e2;
+            }}
+        """)
+        delete_all_btn.clicked.connect(self._delete_all_bipro_events)
+        bipro_toolbar.addWidget(delete_all_btn)
+
+        bipro_layout.addLayout(bipro_toolbar)
+
+        self._bipro_table = QTableWidget()
+        self._bipro_table.setColumnCount(7)
+        self._bipro_table.setHorizontalHeaderLabels([
+            texts.ADMIN_BIPRO_EVENTS_COL_DATE,
+            texts.ADMIN_BIPRO_EVENTS_COL_VU,
+            texts.ADMIN_BIPRO_EVENTS_COL_TYPE,
+            texts.ADMIN_BIPRO_EVENTS_COL_VSNR,
+            texts.ADMIN_BIPRO_EVENTS_COL_DESCRIPTION,
+            texts.ADMIN_BIPRO_EVENTS_COL_READ,
+            texts.ADMIN_BIPRO_EVENTS_COL_ACTIONS,
+        ])
+        self._bipro_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.Stretch
+        )
+        self._bipro_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._bipro_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self._bipro_table.verticalHeader().setVisible(False)
+        self._bipro_table.setAlternatingRowColors(True)
+        self._bipro_table.setStyleSheet(f"""
+            QTableWidget {{
+                border: 1px solid {PRIMARY_100};
+                border-radius: {RADIUS_MD};
+                gridline-color: {PRIMARY_100};
+                font-size: {FONT_SIZE_BODY};
+            }}
+            QTableWidget::item {{
+                padding: 6px 8px;
+            }}
+        """)
+        bipro_layout.addWidget(self._bipro_table)
+        splitter.addWidget(bipro_section)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter)
 
     def _load_admin_messages(self):
         """Laedt alle Mitteilungen fuer die Admin-Tabelle."""
@@ -283,3 +371,134 @@ class MessagesPanel(QWidget):
             logger.error(f"Mitteilung loeschen: {e}")
             if self._toast_manager:
                 self._toast_manager.show_error(texts.ADMIN_MSG_DELETE_ERROR)
+
+    # ====================================================================
+    # BiPRO-Events Verwaltung
+    # ====================================================================
+
+    def _load_bipro_events(self):
+        """Laedt alle BiPRO-Events fuer die Admin-Tabelle."""
+        try:
+            api = BiproEventsAPI(self._api_client)
+            result = api.get_events(page=1, per_page=500)
+            self._bipro_events_data = result.get('data', [])
+            self._populate_bipro_table()
+        except Exception as e:
+            logger.error(f"BiPRO-Events laden: {e}")
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.ADMIN_BIPRO_EVENTS_LOAD_ERROR)
+
+    def _populate_bipro_table(self):
+        """Fuellt die BiPRO-Events-Tabelle."""
+        from datetime import datetime
+        from PySide6.QtGui import QColor
+
+        self._bipro_table.setRowCount(len(self._bipro_events_data))
+        self._bipro_count_label.setText(f"({len(self._bipro_events_data)})")
+
+        type_labels = getattr(texts, 'BIPRO_EVENT_TYPE_LABELS', {})
+
+        for row, ev in enumerate(self._bipro_events_data):
+            created = getattr(ev, 'created_at', '')
+            try:
+                dt = datetime.fromisoformat(str(created).replace('Z', '+00:00'))
+                date_str = dt.strftime('%d.%m.%Y %H:%M')
+            except (ValueError, AttributeError):
+                date_str = str(created)
+            self._bipro_table.setItem(row, 0, QTableWidgetItem(date_str))
+
+            self._bipro_table.setItem(row, 1, QTableWidgetItem(
+                getattr(ev, 'vu_name', '') or ''
+            ))
+
+            etype = getattr(ev, 'event_type', '')
+            self._bipro_table.setItem(row, 2, QTableWidgetItem(
+                type_labels.get(etype, etype)
+            ))
+
+            self._bipro_table.setItem(row, 3, QTableWidgetItem(
+                getattr(ev, 'vsnr', '') or ''
+            ))
+
+            desc = getattr(ev, 'kurzbeschreibung', '') or getattr(ev, 'category_name', '') or ''
+            self._bipro_table.setItem(row, 4, QTableWidgetItem(desc))
+
+            is_read = getattr(ev, 'is_read', False)
+            read_text = texts.ADMIN_BIPRO_EVENTS_READ_YES if is_read else texts.ADMIN_BIPRO_EVENTS_READ_NO
+            read_item = QTableWidgetItem(read_text)
+            if not is_read:
+                read_item.setForeground(QColor('#dc2626'))
+            self._bipro_table.setItem(row, 5, read_item)
+
+            delete_btn = QPushButton(texts.ADMIN_BIPRO_EVENTS_DELETE)
+            delete_btn.setStyleSheet(f"""
+                QPushButton {{
+                    color: #dc2626;
+                    background: transparent;
+                    border: 1px solid #dc2626;
+                    border-radius: 4px;
+                    padding: 3px 10px;
+                    font-size: 11px;
+                }}
+                QPushButton:hover {{
+                    background-color: #fee2e2;
+                }}
+            """)
+            event_id = getattr(ev, 'id', 0)
+            delete_btn.clicked.connect(
+                lambda checked, eid=event_id: self._delete_bipro_event(eid)
+            )
+            self._bipro_table.setCellWidget(row, 6, delete_btn)
+
+    def _delete_bipro_event(self, event_id: int):
+        """Loescht einen einzelnen BiPRO-Event."""
+        reply = QMessageBox.question(
+            self,
+            texts.ADMIN_BIPRO_EVENTS_DELETE,
+            texts.ADMIN_BIPRO_EVENTS_DELETE_CONFIRM,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            api = BiproEventsAPI(self._api_client)
+            if api.delete_event(event_id):
+                if self._toast_manager:
+                    self._toast_manager.show_success(texts.ADMIN_BIPRO_EVENTS_DELETED)
+                self._load_bipro_events()
+            else:
+                if self._toast_manager:
+                    self._toast_manager.show_error(texts.ADMIN_BIPRO_EVENTS_DELETE_ERROR)
+        except Exception as e:
+            logger.error(f"BiPRO-Event loeschen: {e}")
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.ADMIN_BIPRO_EVENTS_DELETE_ERROR)
+
+    def _delete_all_bipro_events(self):
+        """Loescht alle BiPRO-Events nach Bestaetigung."""
+        count = len(self._bipro_events_data)
+        if count == 0:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            texts.ADMIN_BIPRO_EVENTS_DELETE_ALL,
+            texts.ADMIN_BIPRO_EVENTS_DELETE_ALL_CONFIRM.format(count=count),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            api = BiproEventsAPI(self._api_client)
+            deleted = api.delete_all_events()
+            if self._toast_manager:
+                self._toast_manager.show_success(
+                    texts.ADMIN_BIPRO_EVENTS_ALL_DELETED.format(count=deleted)
+                )
+            self._load_bipro_events()
+        except Exception as e:
+            logger.error(f"Alle BiPRO-Events loeschen: {e}")
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.ADMIN_BIPRO_EVENTS_DELETE_ERROR)

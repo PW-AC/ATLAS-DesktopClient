@@ -848,16 +848,32 @@ class SmartScanWorker(QThread):
             
             self.progress.emit(processed, total, "Versendet...")
             
-            # Chunks verarbeiten
-            max_iterations = (total // 10) + 5  # Sicherheitslimit
+            # Chunks verarbeiten (Server-CHUNK_SIZE=10, daher mehrere Iterationen noetig)
+            max_iterations = (total // 5) + 10  # Grosszuegiges Sicherheitslimit
             iteration = 0
+            max_chunk_retries = 2
             
             while remaining > 0 and not self._cancelled and iteration < max_iterations:
                 iteration += 1
-                chunk_result = api.process_chunk(job_id)
                 
-                if not chunk_result:
-                    self.error.emit("Chunk-Verarbeitung fehlgeschlagen.")
+                chunk_result = None
+                for retry in range(max_chunk_retries + 1):
+                    try:
+                        chunk_result = api.process_chunk(job_id)
+                        if chunk_result and 'remaining' in chunk_result:
+                            break
+                        logger.warning(f"Chunk-Antwort unvollstaendig (Versuch {retry + 1}): {chunk_result}")
+                        chunk_result = None
+                    except Exception as e:
+                        logger.warning(f"Chunk-Fehler (Versuch {retry + 1}/{max_chunk_retries + 1}): {e}")
+                        if retry < max_chunk_retries:
+                            import time
+                            time.sleep(2 * (retry + 1))
+                        else:
+                            raise
+                
+                if not chunk_result or 'remaining' not in chunk_result:
+                    self.error.emit("Chunk-Verarbeitung nach Retries fehlgeschlagen.")
                     return
                 
                 processed += chunk_result.get('processed', 0)
@@ -866,7 +882,7 @@ class SmartScanWorker(QThread):
                 
                 self.progress.emit(processed, total, f"Versendet: {processed}/{total}")
                 
-                if status in ('sent', 'partial', 'failed'):
+                if remaining == 0 and status in ('sent', 'partial', 'failed'):
                     break
             
             if self._cancelled:

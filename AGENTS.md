@@ -1,7 +1,7 @@
 # AGENTS.md
 # Agent Instructions for ACENCIA ATLAS
 
-> **Version**: 3.3.0 | **Stand**: 24.02.2026
+> **Version**: 3.4.0 | **Stand**: 25.02.2026
 > Diese Datei ist der Einstiegspunkt fuer jeden KI-Agenten. Lies zuerst nur diese Datei.
 > Weitere Dokumentation findest du unter `docs/`. Lies sie nur, wenn die Aufgabe es erfordert.
 
@@ -41,6 +41,13 @@
 | `DOMAIN.md` | Fachliche Datenmodelle, Satzarten, GDV-Felder, PM-Entitaeten |
 | `PROVISION_SYSTEM.md` | Provisionsmanagement-Spezifika (Import, Matching, Splits, UI) |
 
+**Ergaenzende Entwickler-Dokumentation** (`docs/01_DEVELOPMENT/`):
+
+| Datei | Wann lesen |
+|-------|------------|
+| `GIT_GOVERNANCE.md` | Branch-Strategie, PR-Regeln, Secret Policy, CODEOWNERS |
+| `RELEASE_STRATEGY.md` | Release-Channels, Gate Engine, SemVer, Release-Flow |
+
 ### Stufe 3: Die Bibel (`docs/00_CORE/ATLAS_KOMPLETT.md`)
 - **~2200 Zeilen**, enthaelt ALLE Details zu ALLEN Features
 - **Nur lesen wenn**: Stufe 2 nicht ausreicht, tiefere Details noetig, Feature-spezifische Implementierung gesucht
@@ -67,6 +74,8 @@ docs/
     RELEASE_HOWTO.md
     RELEASE_FEATURES_HISTORY.txt
     MIGRATIONS.md
+    GIT_GOVERNANCE.md
+    RELEASE_STRATEGY.md
   02_SECURITY/       ← Sicherheit & Berechtigungen
     SECURITY.md
     PERMISSIONS.md
@@ -140,6 +149,14 @@ docs/
 - Muessen explizit zugewiesen werden
 - Nur Nutzer mit `provision_manage` koennen diese Rechte an andere vergeben
 
+### 4.8 Git-Governance & Release-Regeln
+- **Branch-Strategie**: `main` (stable) / `develop` (beta) / `dev` (experimental)
+- **Kein Direktcommit** auf `main` -- nur ueber PR aus `develop`
+- **VERSION-Datei** ist Single Source of Truth fuer Versionierung
+- **Release Gate Engine**: Releases starten als `pending`, muessen alle Gates passieren bevor Aktivierung
+- **Release-Channels**: `stable`, `beta`, `dev` -- pro User server-seitig konfigurierbar
+- Details: `docs/01_DEVELOPMENT/GIT_GOVERNANCE.md` und `docs/01_DEVELOPMENT/RELEASE_STRATEGY.md`
+
 ---
 
 ## 5. Architektur-Ueberblick (Kurzform)
@@ -150,8 +167,8 @@ Desktop-App (PySide6)          Strato Webspace
 │   ├── main_hub.py            │   ├── auth.php
 │   ├── bipro_view.py          │   ├── documents.php
 │   ├── archive_boxes_view.py  │   ├── provision.php
-│   ├── provision/ (7 Panels)  │   ├── ai.php (Proxy)
-│   ├── admin/ (15 Panels)     │   └── ... (~20 Dateien)
+│   ├── provision/ (8 Panels)  │   ├── ai.php (Proxy)
+│   ├── admin/ (15 Panels)     │   └── ... (~27 Dateien)
 │   └── message_center_view.py │
 ├── API Clients                ├── MySQL Datenbank
 │   ├── client.py (Base)       ├── Dokumente-Storage
@@ -199,24 +216,31 @@ Desktop-App (PySide6)          Strato Webspace
 
 | Pfad | Zweck |
 |------|-------|
-| `run.py` | Entry Point |
+| `run.py` | Entry Point (+ `--background-update` Weiche fuer Hintergrund-Updater) |
 | `VERSION` | Zentrale Versionsdatei |
 | `src/main.py` | Qt-App Initialisierung + Update-Check |
-| `src/ui/main_hub.py` | Navigation, DragDrop, Polling (~1324 Z.) |
+| `src/background_updater.py` | Headless Hintergrund-Updater (kein Qt, Scheduled Task) |
+| `src/ui/auto_update_window.py` | Zero-Interaction Pflicht-Update-Fenster |
+| `src/ui/main_hub.py` | Navigation, DragDrop, Polling (~1529 Z.) |
 | `src/ui/bipro_view.py` | BiPRO UI (~3530 Z.) |
 | `src/ui/archive_boxes_view.py` | Dokumentenarchiv (~5645 Z.) |
 | `src/ui/provision/provision_hub.py` | PM-Hub mit 7 Panels |
+| `src/ui/provision/workers.py` | **24 QThread-Worker fuer PM (Refactoring v3.4.0)** |
+| `src/ui/provision/models.py` | **12 QAbstractTableModel-Klassen + Helper fuer PM (Refactoring v3.4.0)** |
+| `src/ui/provision/dialogs.py` | **MatchContractDialog + DiffDialog fuer PM (Refactoring v3.4.0)** |
 | `src/ui/admin/admin_shell.py` | Admin mit 15 Panels |
 | `src/services/document_processor.py` | KI-Dokumentenverarbeitung |
 | `src/services/provision_import.py` | VU/Xempus-Parser |
 | `src/bipro/transfer_service.py` | BiPRO SOAP Client (~1329 Z.) |
-| `src/bipro/workers.py` | BiPRO Worker-Klassen (~1336 Z.) |
+| `src/bipro/workers.py` | BiPRO Worker-Klassen (~1699 Z.) |
 | `src/api/client.py` | API-Base-Client |
 | `src/api/documents.py` | Dokumenten-API |
-| `src/api/provision.py` | Provisions-API (~830 Z.) |
-| `src/i18n/de.py` | Zentrale i18n-Datei (~1380+ Keys) |
+| `src/api/provision.py` | Provisions-API (~859 Z.) |
+| `src/i18n/de.py` | Zentrale i18n-Datei (~2179 Z., ~1400+ Keys) |
 | `BiPro-Webspace Spiegelung Live/api/index.php` | API-Router |
-| `BiPro-Webspace Spiegelung Live/api/provision.php` | PM-Backend (~1400 Z.) |
+| `src/api/bipro_events.py` | BiPRO-Events API-Client (~135 Z.) |
+| `BiPro-Webspace Spiegelung Live/api/provision.php` | PM-Backend (~2480 Z.) |
+| `BiPro-Webspace Spiegelung Live/api/bipro_events.php` | BiPRO-Events Backend (~278 Z.) |
 | `BiPro-Webspace Spiegelung Live/api/documents.php` | Dokumenten-Backend |
 | `BiPro-Webspace Spiegelung Live/api/ai.php` | KI-Proxy (OpenRouter/OpenAI) |
 

@@ -31,6 +31,7 @@ Beim Wechsel in Admin, Chat oder GF-Bereich verschwindet die Sidebar und der Ber
 
 ### Was der Nutzer sieht:
 - **Grosse Kachel**: System- und Admin-Mitteilungen mit Severity-Farben (Info, Warnung, Fehler)
+- **BiPRO-Events-Kachel**: Handlungsaufforderungen aus BiPRO-0-Dokument-Lieferungen (Vertragsdaten-XML, Statusmeldungen, GDV-Ankuendigungen) mit Badge fuer ungelesene Events und "Alle als gelesen markieren"-Button
 - **Kleine Kachel**: Aktuelle Version + Release Notes
 - **Button**: "Nachrichten" → oeffnet Vollbild-Chat
 
@@ -41,8 +42,9 @@ Beim Wechsel in Admin, Chat oder GF-Bereich verschwindet die Sidebar und der Ber
 - Badge auf "Zentrale"-Button zeigt ungelesene Nachrichten
 
 ### Polling
-- Alle 30 Sekunden: Pruefung auf neue Nachrichten/Mitteilungen
+- Alle 30 Sekunden: Pruefung auf neue Nachrichten/Mitteilungen + BiPRO-Events-Summary
 - Toast-Benachrichtigung bei neuer Chat-Nachricht
+- BiPRO-Events-Badge wird bei jedem Poll aktualisiert
 
 ---
 
@@ -61,10 +63,11 @@ Beim Wechsel in Admin, Chat oder GF-Bereich verschwindet die Sidebar und der Ber
 3. Lieferungen auflisten (BiPRO 430 listShipments)
 4. Dokumente herunterladen (getShipment mit MTOM/XOP)
 5. Automatisch ins Dokumentenarchiv hochladen
-6. Empfang quittieren (acknowledgeShipment)
+6. Empfang quittieren (acknowledgeShipment) -- parallelisiert bei >3 Lieferungen (max 4 gleichzeitig)
 
 ### Parallelisierung:
 - Max. 10 Worker-Threads fuer gleichzeitige Downloads
+- Max. 4 parallele Quittierungen (bei >3 Lieferungen)
 - Automatische Anpassung bei wenigen Lieferungen
 - AdaptiveRateLimiter bei HTTP 429/503
 
@@ -93,14 +96,19 @@ Beim Wechsel in Admin, Chat oder GF-Bereich verschwindet die Sidebar und der Ber
 
 ### Dokumenten-Verarbeitung (automatisch):
 1. Dokument landet in **Eingang** (via BiPRO, Upload, Drag&Drop, E-Mail, Scan)
-2. **Vorsortierung**: XML → Roh, GDV-Endung → GDV, Courtage-Code → Courtage
+2. **Vorsortierung**: XML → Roh, GDV-Endung → GDV, Courtage-Code → Courtage, Dateiname "Vermittlerabrechnung" → Courtage
 3. **KI-Klassifikation** (fuer PDFs):
    - Stufe 1: GPT-4o-mini (2 Seiten, schnell) → Confidence high/medium/low
    - Stufe 2: GPT-4o-mini (5 Seiten, nur bei low Confidence)
    - Ergebnis: Box-Zuweisung + automatische Benennung (z.B. "Allianz_Courtage_2026-02-04.pdf")
-4. **Leere-Seiten-Erkennung**: 4-Stufen-Algorithmus (Text → Vektoren → Bilder → Pixel)
-5. **Duplikat-Erkennung**: SHA256-Hash (Datei) + extrahierter-Text-Hash (Inhalt)
-6. **Dokumenten-Regeln** (Admin-konfigurierbar): Automatische Aktionen bei Duplikaten/leeren Seiten
+   - Erweiterte Courtage-Erkennung: Buchnote, Provisionskonto, VU-Kontoauszuege mit Provisionen
+   - VU-Sparten-Kuerzel-Erkennung: MKF/KFZ/RR/PHV/HR/WG etc. fuer praezise Zuordnung
+   - Mahnung/Rueckstandsliste: Zuordnung nach Sparte des zugrundeliegenden Vertrags (nicht "sonstige")
+   - Keyword-Hint-System: Lokale Voranalyse (0 Tokens) erkennt Courtage-, Sach-, Mahnung-Patterns
+4. **OCR fuer Scan-PDFs**: Tesseract (lokal, kostenlos, 200 DPI) → Cloud-OCR als Fallback
+5. **Leere-Seiten-Erkennung**: 4-Stufen-Algorithmus (Text → Vektoren → Bilder → Pixel)
+6. **Duplikat-Erkennung**: SHA256-Hash (Datei) + extrahierter-Text-Hash (Inhalt)
+7. **Dokumenten-Regeln** (Admin-konfigurierbar): Automatische Aktionen bei Duplikaten/leeren Seiten
 
 ### Upload-Wege:
 - **Drag & Drop**: Dateien/Ordner auf das App-Fenster ziehen (funktioniert ueberall)
@@ -144,7 +152,9 @@ Beim Wechsel in Admin, Chat oder GF-Bereich verschwindet die Sidebar und der Ber
 
 ### Smart!Scan (E-Mail-Versand):
 - Dokumente per E-Mail an SmartScan-System senden
-- Einzel- oder Sammelversand
+- Einzel- oder Sammelversand (Chunk-basiert, Server-seitig 10er-Batches)
+- Retry-Logik bei Chunk-Fehlern (max 2 Wiederholungen pro Chunk)
+- Robuste Fehlererkennung (leere API-Antworten werden korrekt erkannt)
 - Post-Send: Automatisch archivieren und/oder umfaerben
 - Revisionssichere Historie
 
@@ -264,9 +274,12 @@ Beim Wechsel in Admin, Chat oder GF-Bereich verschwindet die Sidebar und der Ber
 
 - **Check bei Login**: Synchron nach erfolgreicher Anmeldung
 - **Periodisch**: Alle 30 Minuten im Hintergrund
-- **3 Modi**: Optional (Spaeter moeglich), Pflicht (App blockiert), Veraltet (Warnung)
-- **Installation**: Inno Setup Silent Install
-- **Sicherheit**: SHA256-Hash-Verifikation vor Installation
+- **3 Modi**: Optional (Spaeter moeglich), Pflicht (Zero-Interaction), Veraltet (Warnung)
+- **Pflicht-Update (Zero-Interaction)**: Kein Button, kein Klick -- Download + Installation starten sofort automatisch, neue Version startet danach von allein. Nutzer sieht nur eine Fortschrittsanzeige.
+- **Hintergrund-Updater**: Laeuft bei jedem PC-Start (Scheduled Task + Registry-Autostart). Prueft ob Token vorhanden und gueltig ist, laedt Updates still herunter und installiert sie ohne App-Start. Nutzer hat beim naechsten App-Start automatisch die neueste Version.
+- **Installation**: Inno Setup Silent Install, `/norun`-Parameter fuer Hintergrund-Updates ohne App-Start
+- **Mutex-Freigabe vor Install**: Vor dem Installer-Start wird der Single-Instance-Mutex (`ACENCIA_ATLAS_SINGLE_INSTANCE`) explizit freigegeben. So sieht der Inno-Setup-Installer keinen Mutex-Konflikt und kann sofort installieren, ohne auf `CloseApplications=force` angewiesen zu sein. Gilt fuer Pflicht- und optionale Updates.
+- **Sicherheit**: SHA256-Hash-Verifikation vor Installation, Lock-File gegen Doppelausfuehrung
 
 ---
 

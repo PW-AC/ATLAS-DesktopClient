@@ -62,7 +62,7 @@ class ReleaseUploadDialog(QDialog):
         self.channel_combo = QComboBox()
         self.channel_combo.addItem(texts.RELEASES_CHANNEL_STABLE, 'stable')
         self.channel_combo.addItem(texts.RELEASES_CHANNEL_BETA, 'beta')
-        self.channel_combo.addItem(texts.RELEASES_CHANNEL_INTERNAL, 'internal')
+        self.channel_combo.addItem(texts.RELEASES_CHANNEL_DEV, 'dev')
         form.addRow(texts.RELEASES_CHANNEL + ":", self.channel_combo)
         
         # Min-Version (optional)
@@ -148,6 +148,9 @@ class ReleaseEditDialog(QDialog):
     
     # Status-Mapping
     STATUS_OPTIONS = [
+        ('pending', texts.RELEASES_STATUS_PENDING),
+        ('validated', texts.RELEASES_STATUS_VALIDATED),
+        ('blocked', texts.RELEASES_STATUS_BLOCKED),
         ('active', texts.RELEASES_STATUS_ACTIVE),
         ('mandatory', texts.RELEASES_STATUS_MANDATORY),
         ('deprecated', texts.RELEASES_STATUS_DEPRECATED),
@@ -157,7 +160,7 @@ class ReleaseEditDialog(QDialog):
     CHANNEL_OPTIONS = [
         ('stable', texts.RELEASES_CHANNEL_STABLE),
         ('beta', texts.RELEASES_CHANNEL_BETA),
-        ('internal', texts.RELEASES_CHANNEL_INTERNAL),
+        ('dev', texts.RELEASES_CHANNEL_DEV),
     ]
     
     def __init__(self, release_data: dict, parent=None):
@@ -318,6 +321,17 @@ class UserEditDialog(QDialog):
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         form.addRow(texts.ADMIN_DIALOG_TYPE + ":", self.type_combo)
         
+        # Update-Channel
+        self.channel_combo = QComboBox()
+        self.channel_combo.addItem(texts.RELEASES_CHANNEL_STABLE, 'stable')
+        self.channel_combo.addItem(texts.RELEASES_CHANNEL_BETA, 'beta')
+        self.channel_combo.addItem(texts.RELEASES_CHANNEL_DEV, 'dev')
+        current_channel = self._user_data.get('update_channel', 'stable')
+        idx = self.channel_combo.findData(current_channel)
+        if idx >= 0:
+            self.channel_combo.setCurrentIndex(idx)
+        form.addRow(texts.ADMIN_DIALOG_UPDATE_CHANNEL + ":", self.channel_combo)
+        
         layout.addLayout(form)
         
         # Berechtigungen
@@ -400,6 +414,7 @@ class UserEditDialog(QDialog):
         data = {
             'email': self.email_edit.text().strip(),
             'account_type': self.type_combo.currentData(),
+            'update_channel': self.channel_combo.currentData(),
             'permissions': [k for k, cb in self._perm_checkboxes.items() if cb.isChecked()]
         }
         if self._is_new:

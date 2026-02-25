@@ -188,6 +188,10 @@ class DataCacheService(QObject):
         
         Ein einzelner API-Call statt N Calls pro Box.
         Client-seitiges Filtern erfolgt in get_documents().
+        
+        Sicherheitsmechanismus: Leere API-Antworten ueberschreiben NICHT
+        einen Cache der bereits Dokumente enthaelt (verhindert Datenverlust
+        durch transiente Fehler, Session-Konflikte, Netzwerkprobleme).
         """
         try:
             logger.info("Lade alle Dokumente vom Server (1 API-Call)")
@@ -195,7 +199,17 @@ class DataCacheService(QObject):
             documents = self.docs_api.list_documents()
             
             with self._cache_lock:
-                # Nur 'all' cachen - Box-Filter erfolgt client-seitig
+                cached_count = 0
+                if 'all' in self._documents_cache:
+                    cached_count = len(self._documents_cache['all'].data)
+                
+                if not documents and cached_count > 0:
+                    logger.warning(
+                        f"API lieferte 0 Dokumente, Cache hat {cached_count} - "
+                        f"behalte Cache (transienter Fehler vermutet)"
+                    )
+                    return self._documents_cache['all'].data
+                
                 self._documents_cache['all'] = CacheEntry(data=documents)
             
             logger.info(f"Dokumente geladen und gecached: {len(documents)} Stk")
@@ -203,11 +217,65 @@ class DataCacheService(QObject):
             
         except Exception as e:
             logger.error(f"Fehler beim Laden der Dokumente: {e}")
-            # Bei Fehler: Alten Cache zurueckgeben falls vorhanden
             with self._cache_lock:
                 if 'all' in self._documents_cache:
                     return self._documents_cache['all'].data
             return []
+    
+    def _load_all_documents_with_api(self, docs_api: DocumentsAPI) -> List[Document]:
+        """Wie _load_all_documents(), aber mit uebergebener API-Instanz.
+        
+        Wird von Background-Threads verwendet, die eine eigene
+        thread-sichere requests.Session nutzen muessen.
+        """
+        try:
+            logger.info("Lade alle Dokumente vom Server (Background-Thread, eigene Session)")
+            
+            documents = docs_api.list_documents()
+            
+            with self._cache_lock:
+                cached_count = 0
+                if 'all' in self._documents_cache:
+                    cached_count = len(self._documents_cache['all'].data)
+                
+                if not documents and cached_count > 0:
+                    logger.warning(
+                        f"API lieferte 0 Dokumente, Cache hat {cached_count} - "
+                        f"behalte Cache (transienter Fehler vermutet)"
+                    )
+                    return self._documents_cache['all'].data
+                
+                self._documents_cache['all'] = CacheEntry(data=documents)
+            
+            logger.info(f"Dokumente geladen und gecached: {len(documents)} Stk")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Fehler beim Laden der Dokumente (BG): {e}")
+            with self._cache_lock:
+                if 'all' in self._documents_cache:
+                    return self._documents_cache['all'].data
+            return []
+    
+    def _load_stats_with_api(self, docs_api: DocumentsAPI) -> Any:
+        """Wie _load_stats(), aber mit uebergebener API-Instanz."""
+        try:
+            logger.info("Lade Statistiken vom Server (Background-Thread)")
+            stats = docs_api.get_box_stats()
+            
+            with self._cache_lock:
+                self._stats_cache = CacheEntry(data=stats)
+            
+            logger.info(f"Statistiken geladen: {stats}")
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Fehler beim Laden der Statistiken (BG): {e}")
+            with self._cache_lock:
+                if self._stats_cache:
+                    return self._stats_cache.data
+            from api.documents import BoxStats
+            return BoxStats()
     
     def invalidate_documents(self, box_type: str = None):
         """
@@ -262,57 +330,15 @@ class DataCacheService(QObject):
         """
         Berechnet Box-Statistiken aus dem Dokumente-Cache (kein API-Call).
         
+        DEAKTIVIERT: Stats muessen immer vom Server kommen, da der Dokumente-Cache
+        durch das serverseitige LIMIT (z.B. 10000) unvollstaendig sein kann.
+        Wenn der Cache weniger Dokumente hat als tatsaechlich existieren,
+        waeren berechnete Stats falsch (z.B. Box-Zaehler = 0).
+        
         Returns:
-            BoxStats wenn Dokumente-Cache vorhanden, sonst None
+            Immer None (= Fallback auf Server-Stats)
         """
-        with self._cache_lock:
-            if 'all' not in self._documents_cache:
-                return None
-            entry = self._documents_cache['all']
-            if entry.is_expired():
-                return None
-            all_docs = entry.data
-        
-        # Zaehler initialisieren
-        box_counts = {}
-        archived_counts = {}
-        total = 0
-        
-        for doc in all_docs:
-            box = doc.box_type or 'sonstige'
-            total += 1
-            
-            if doc.is_archived:
-                archived_counts[box] = archived_counts.get(box, 0) + 1
-            else:
-                box_counts[box] = box_counts.get(box, 0) + 1
-        
-        stats = BoxStats(
-            eingang=box_counts.get('eingang', 0),
-            verarbeitung=box_counts.get('verarbeitung', 0),
-            gdv=box_counts.get('gdv', 0),
-            courtage=box_counts.get('courtage', 0),
-            sach=box_counts.get('sach', 0),
-            leben=box_counts.get('leben', 0),
-            kranken=box_counts.get('kranken', 0),
-            sonstige=box_counts.get('sonstige', 0),
-            roh=box_counts.get('roh', 0),
-            falsch=box_counts.get('falsch', 0),
-            total=total,
-            gdv_archived=archived_counts.get('gdv', 0),
-            courtage_archived=archived_counts.get('courtage', 0),
-            sach_archived=archived_counts.get('sach', 0),
-            leben_archived=archived_counts.get('leben', 0),
-            kranken_archived=archived_counts.get('kranken', 0),
-            sonstige_archived=archived_counts.get('sonstige', 0),
-            falsch_archived=archived_counts.get('falsch', 0),
-        )
-        
-        with self._cache_lock:
-            self._stats_cache = CacheEntry(data=stats)
-        
-        logger.info(f"Statistiken aus Dokumente-Cache berechnet: {stats}")
-        return stats
+        return None
     
     def _load_stats(self) -> Dict[str, int]:
         """Laedt Statistiken vom Server und cached sie (Fallback)."""
@@ -503,18 +529,25 @@ class DataCacheService(QObject):
         da kein Qt-Event-Loop vorhanden ist. Direkte Emission ist sicher,
         weil alle UI-Verbindungen QueuedConnection verwenden - Qt stellt
         die Zustellung im Main-Thread automatisch sicher.
+        
+        Thread-Safety: Verwendet eine eigene DocumentsAPI-Instanz mit
+        separater requests.Session, da requests.Session NICHT thread-safe ist
+        und der CacheDocumentLoadWorker die Haupt-Session parallel nutzen kann.
         """
         try:
+            # Eigene API-Instanz fuer diesen Thread (thread-safe Session)
+            from api.client import APIClient
+            bg_client = APIClient(self.api_client.config)
+            bg_client.set_token(self.api_client._token)
+            bg_docs_api = DocumentsAPI(bg_client)
+            
             # 1. Alle Dokumente in einem API-Call laden (statt pro Box)
-            self._load_all_documents()
+            self._load_all_documents_with_api(bg_docs_api)
             # 'all' Signal emittieren - UI filtert lokal
             self.documents_updated.emit('all')
             
-            # 2. Statistiken aus Dokumente-Cache berechnen (kein extra API-Call)
-            computed = self._compute_stats_from_cache()
-            if computed is None:
-                # Fallback: Vom Server laden
-                self._load_stats()
+            # 2. Statistiken immer vom Server laden (eigene Session)
+            self._load_stats_with_api(bg_docs_api)
             self.stats_updated.emit()
             
             # VU-Verbindungen
@@ -536,20 +569,15 @@ class DataCacheService(QObject):
     
     def refresh_all_sync(self):
         """
-        Aktualisiert alle Caches synchron (blockierend).
+        Delegiert an refresh_all_async() um UI-Freezes zu vermeiden.
         
-        Fuer manuellen Refresh-Button.
+        Legacy-Methode -- existierende Aufrufer muessen nicht angepasst werden.
         """
-        logger.info("Manueller Refresh gestartet")
-        
-        # Alles invalidieren
+        logger.info("Manueller Refresh (async-delegiert)")
         self.invalidate_documents()
         self.invalidate_stats()
         self.invalidate_connections()
-        
-        # Neu laden (wird beim naechsten Abruf gemacht)
-        self._load_stats()
-        self.stats_updated.emit()
+        self.refresh_all_async()
     
     # =========================================================================
     # HILFSMETHODEN

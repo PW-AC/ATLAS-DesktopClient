@@ -981,6 +981,49 @@ class DocumentProcessor:
                         classification_confidence = 'low'
                         classification_reason = f'KI-Klassifikation fehlgeschlagen: {str(e)[:100]}'
             
+            # 5c. Dateinamen-basierte Courtage-Erkennung (Vermittlerabrechnung im Dateinamen)
+            elif doc.is_pdf and 'vermittlerabrechnung' in (doc.original_filename or '').lower():
+                target_box = 'courtage'
+                category = 'courtage_filename'
+                classification_source = 'rule_filename'
+                classification_confidence = 'high'
+                classification_reason = f'Dateiname enthaelt "Vermittlerabrechnung" -> Courtage'
+                logger.info(f"Courtage per Dateiname erkannt: {doc.original_filename} -> courtage")
+                
+                try:
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        local_path = self.docs_api.download(doc.id, tmpdir)
+                        if local_path:
+                            is_valid, repaired_path = self._validate_pdf(local_path)
+                            if not is_valid:
+                                logger.warning(f"Vermittlerabrechnung-PDF korrupt: {doc.original_filename}")
+                                new_filename = "Beschaedigte_Datei_Courtage.pdf"
+                            else:
+                                pdf_path = repaired_path or local_path
+                                self._check_and_log_empty_pages(doc, pdf_path)
+                                openrouter = self._get_openrouter()
+                                result = openrouter.classify_courtage_minimal(pdf_path)
+                                
+                                _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                _ki_result_for_ai = result
+                                
+                                if result:
+                                    _doc_cost_usd += result.get('_server_cost_usd', 0) or 0
+                                    insurer = result.get('insurer') or 'Unbekannt'
+                                    date_iso = result.get('document_date_iso') or ''
+                                    
+                                    insurer_slug = self._slugify(insurer)
+                                    if date_iso:
+                                        new_filename = f"{insurer_slug}_Courtage_{date_iso}.pdf"
+                                    else:
+                                        new_filename = f"{insurer_slug}_Courtage.pdf"
+                                    
+                                    classification_source = 'rule_filename_ki'
+                                    classification_reason = f'Dateiname "Vermittlerabrechnung" + KI: {insurer}, {date_iso}'
+                                    logger.info(f"Vermittlerabrechnung klassifiziert: {insurer}, {date_iso}")
+                except Exception as e:
+                    logger.warning(f"Vermittlerabrechnung-KI fehlgeschlagen: {e}")
+            
             # 6. PDFs ohne BiPRO-Kategorie -> KI fuer Sparte
             elif doc.is_pdf:
                 logger.debug(f"PDF ohne BiPRO-Kategorie: {doc.original_filename}")

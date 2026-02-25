@@ -910,8 +910,8 @@ Antwort NUR als JSON:
         text = self._extract_relevant_text(pdf_path, for_triage=True)
         
         if not text.strip():
-            # Stufe A: Lokale OCR via Tesseract (kostenlos, ~50-200ms)
-            text = self.ocr_pdf_local(pdf_path, max_pages=2, dpi=150)
+            # Stufe A: Lokale OCR via Tesseract (kostenlos, ~50-300ms)
+            text = self.ocr_pdf_local(pdf_path, max_pages=2, dpi=200)
         
         if not text.strip():
             # Stufe B: Cloud-OCR als letzter Fallback (teuer, nur wenn Tesseract fehlt/versagt)
@@ -1052,8 +1052,13 @@ Antwort NUR als JSON:
             prompt = '''Klassifiziere dieses Versicherungsdokument in eine Sparte.
 
 SPARTEN:
-- courtage: NUR Provisionsabrechnungen/Courtageabrechnungen vom VU an den MAKLER/VERMITTLER
-  MUSS enthalten: Auflistung von Vertraegen mit Provisionssaetzen/Courtagebetraegen
+- courtage: Provisionsabrechnungen/Courtageabrechnungen vom VU an den MAKLER/VERMITTLER.
+  Erkennungsmerkmale: Provisionsliste, Courtageabrechnung, Vermittlerabrechnung,
+  Buchnote, Provisionskonto, Kontoauszug mit Provisions-/Courtagebetraegen,
+  DI-Provision, Bestandsprovision, Abschlussprovision, Stornoreserve,
+  Verguetungsdatenblatt, Verguetungsnachweis, Provisionsnachweis, Inkassoprovision,
+  Saldo aus Provisionen, Courtagenote.
+  Auch wenn "Kontoauszug" draufsteht: wenn Provisionen/Courtage aufgefuehrt werden = courtage!
   NICHT courtage: Beitragsrechnungen, Kuendigungen, Policen, Nachtraege, Mahnungen,
   Adressaenderungen, Schadensmeldungen, Zahlungserinnerungen, Antraege - auch wenn
   sie von einer Versicherung kommen! Courtage = PROVISION FUER DEN MAKLER.
@@ -1074,24 +1079,43 @@ SPARTEN:
 - sonstige: Nur wenn wirklich KEINE der obigen Sparten erkennbar ist
 
 WICHTIG - HAEUFIGE VERWECHSLUNGEN:
-- Unfallversicherung = IMMER sach! Auch wenn Todesfallsumme, Invaliditaet oder
-  Progressionsstaffel erwaehnt wird - das sind Unfallleistungen, NICHT Lebensversicherung!
+- Unfallversicherung = IMMER sach! Auch wenn Todesfallsumme, Invaliditaet,
+  Progressionsstaffel oder Beitragsinformation erwaehnt wird!
+  Beispiel: "Zurich Unfallversicherung Beitragsinformation" = sach, NICHT kranken!
+  Invaliditaet + Progression = typisch Unfall = sach. NIEMALS kranken!
 - PrivatSchutzversicherung, Kombi-Schutz, Buendelpolice = sach (Haftpflicht+Unfall+Hausrat)
 - NICHT leben: Todesfallsumme/Invaliditaet bei Unfallversicherung
 - Schadenlisten / Schadenaufstellungen / Schadenstatistiken = IMMER sach
 - Dokumente ueber Fahrzeuge / Fahrzeugerprobung = sach (KFZ-Versicherung)
 
+VU-SPARTEN-KUERZEL (haeufig in Dokumenten):
+- MKF, MFK = Motor-Kraftfahrt = sach
+- RR, RS = Rechtsschutz = sach
+- HV, PHV = Haftpflicht = sach
+- HR = Hausrat = sach
+- WG, WGB = Wohngebaeude = sach
+- UV, UNF = Unfall = sach
+- KFZ, KH = Kraftfahrt = sach
+- LV, LEB = Leben = leben
+- BU = Berufsunfaehigkeit = leben
+- KV, PKV = Kranken = kranken
+
 REGELN:
-1. Courtage NUR wenn Hauptzweck = Provisionsabrechnung fuer Makler mit Provisionsliste
-2. Kuendigung/Mahnung/Zahlungserinnerung/Lastschriftproblem/Adressaenderung/Nachtrag/Beitragsrechnung
+1. Courtage wenn Hauptzweck = Provisionsabrechnung/Vermittlerabrechnung/Buchnote/
+   Provisionskonto fuer Makler. Auch Kontoauszuege mit Provisionsbetraegen!
+2. Kuendigung/Mahnung/Zahlungserinnerung/Rueckstandsliste/Lastschriftproblem/
+   Adressaenderung/Nachtrag/Beitragsrechnung
    -> IMMER nach SPARTE des zugrundeliegenden Versicherungsvertrags zuordnen!
    Beispiel: Kuendigung einer Wohngebaeudeversicherung = "sach", nicht "sonstige"
    Beispiel: Kuendigung einer Unfallversicherung = "sach", nicht "leben"!
+   Beispiel: Rueckstandsliste fuer KFZ-Vertrag (MKF) = "sach", nicht "sonstige"!
+   Beispiel: Zahlungserinnerung fuer Rechtsschutz = "sach", nicht "sonstige"!
 3. Bei Zweifel zwischen Sach und Sonstige -> IMMER Sach
 4. Bei Zweifel zwischen Sach und Leben -> Sach bevorzugen (ausser eindeutig Lebensversicherung/Rente/BU)
 5. "sonstige" nur wenn wirklich KEINE Versicherungssparte erkennbar ist
-6. Wenn ein Dokument Versicherungsnummern (VS-Nr, VN, Policennummer) enthaelt, ist es ein
-   Versicherungsdokument und gehoert in eine Sparte, NICHT in sonstige
+6. Wenn ein Dokument Versicherungsnummern (VS-Nr, VN, VSNR, Policennummer) oder
+   Mahnbetraege/Rueckstaende enthaelt, ist es ein Versicherungsdokument und
+   gehoert in eine Sparte, NICHT in sonstige
 
 CONFIDENCE:
 - "high": Sparte ist eindeutig erkennbar (z.B. "Wohngebaeudeversicherung", "Provisionsabrechnung")
@@ -1209,7 +1233,13 @@ JSON: {{"sparte": "...", "confidence": "high"|"medium"|"low", "document_date_iso
             prompt = '''Analysiere dieses Versicherungsdokument detailliert.
 
 SPARTEN:
-- courtage: NUR Provisionsabrechnungen/Courtageabrechnungen fuer Makler
+- courtage: Provisionsabrechnungen/Courtageabrechnungen fuer Makler.
+  Erkennungsmerkmale: Provisionsliste, Courtageabrechnung, Vermittlerabrechnung,
+  Buchnote, Provisionskonto, Kontoauszug mit Provisions-/Courtagebetraegen,
+  DI-Provision, Bestandsprovision, Abschlussprovision, Stornoreserve,
+  Verguetungsdatenblatt, Verguetungsnachweis, Provisionsnachweis, Inkassoprovision,
+  Saldo aus Provisionen, Courtagenote.
+  Auch wenn "Kontoauszug" draufsteht: wenn Provisionen/Courtage aufgefuehrt werden = courtage!
 - sach: KFZ, Haftpflicht, PHV, Tierhalterhaftpflicht, Hausrat, Wohngebaeude, Unfall,
   Unfallversicherung, Rechtsschutz, Gewerbe, Betriebshaftpflicht, Glas, Reise,
   Gebaeudeversicherung, PrivatSchutzversicherung, Kombi-Schutz, Buendelversicherung,
@@ -1219,13 +1249,24 @@ SPARTEN:
 - kranken: PKV, Krankenzusatz, Zahnzusatz, Pflege, Krankentagegeld
 - sonstige: Wenn wirklich KEINE Versicherungssparte erkennbar ist
 
-WICHTIG: Unfallversicherung = IMMER sach (auch bei Todesfallsumme/Invaliditaet)!
+WICHTIG: Unfallversicherung = IMMER sach! Auch bei Todesfallsumme, Invaliditaet,
+Progressionsstaffel oder Beitragsinformation! Invaliditaet + Progression = Unfall = sach!
 WICHTIG: Schadenlisten/Schadenaufstellungen = IMMER sach!
-WICHTIG: Wenn Versicherungsnummern (VS-Nr, VN, Policennummer) enthalten -> Sparte zuordnen, NICHT sonstige!
+WICHTIG: Wenn Versicherungsnummern (VS-Nr, VN, VSNR, Policennummer) oder
+Mahnbetraege/Rueckstaende enthalten -> Sparte zuordnen, NICHT sonstige!
+
+VU-SPARTEN-KUERZEL: MKF/MFK = KFZ = sach, RR/RS = Rechtsschutz = sach,
+HV/PHV = Haftpflicht = sach, HR = Hausrat = sach, WG/WGB = Wohngebaeude = sach,
+UV/UNF = Unfall = sach, LV/LEB = Leben = leben, BU = Berufsunfaehigkeit = leben,
+KV/PKV = Kranken = kranken
 
 REGELN:
-1. Courtage NUR bei Provisionsabrechnungen mit Provisionsliste
-2. Kuendigung/Mahnung/Beitragsrechnung -> nach Sparte des Vertrags zuordnen
+1. Courtage wenn Hauptzweck = Provisionsabrechnung/Vermittlerabrechnung/Buchnote/
+   Provisionskonto. Auch Kontoauszuege mit Provisionsbetraegen!
+2. Kuendigung/Mahnung/Zahlungserinnerung/Rueckstandsliste/Beitragsrechnung
+   -> nach Sparte des zugrundeliegenden Vertrags zuordnen!
+   Beispiel: Rueckstandsliste fuer KFZ (MKF) = "sach", nicht "sonstige"!
+   Beispiel: Zahlungserinnerung fuer Rechtsschutz = "sach", nicht "sonstige"!
 3. Bei Zweifel zwischen Sach und Sonstige -> Sach bevorzugen
 4. Bei Zweifel zwischen Sach und Leben -> Sach bevorzugen (ausser eindeutig Lebensversicherung/Rente/BU)
 5. Bei "sonstige": Gib einen kurzen Dokumentnamen als document_name zurueck!
