@@ -150,8 +150,8 @@ docs/
 - Nur Nutzer mit `provision_manage` koennen diese Rechte an andere vergeben
 
 ### 4.8 Git-Governance & Release-Regeln
-- **Branch-Strategie**: `main` (stable) / `develop` (beta) / `dev` (experimental)
-- **Kein Direktcommit** auf `main` -- nur ueber PR aus `develop`
+- **Branch-Strategie**: `main` (stable) / `beta` (beta) / `dev` (experimental)
+- **Kein Direktcommit** auf `main` -- nur ueber PR aus `beta`
 - **VERSION-Datei** ist Single Source of Truth fuer Versionierung
 - **Release Gate Engine**: Releases starten als `pending`, muessen alle Gates passieren bevor Aktivierung
 - **Release-Channels**: `stable`, `beta`, `dev` -- pro User server-seitig konfigurierbar

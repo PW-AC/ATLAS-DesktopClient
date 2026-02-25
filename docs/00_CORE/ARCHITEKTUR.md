@@ -302,7 +302,7 @@
 | Datei | Zweck |
 |-------|-------|
 | `run.py` | Start-Script (`python run.py` oder `--background-update` fuer Hintergrund-Updater) |
-| `VERSION` | Zentrale Versionsdatei (aktuell: 2.2.0) |
+| `VERSION` | Zentrale Versionsdatei (aktuell: 2.2.6) |
 | `requirements.txt` | 13 Python-Abhaengigkeiten |
 | `AGENTS.md` | Agent-Dokumentation (Single Source of Truth) |
 | `docs/ARCHITECTURE.md` | Architektur-Dokumentation |
@@ -355,7 +355,7 @@
 | Channel | Branch | Zielgruppe |
 |---------|--------|------------|
 | `stable` | `main` | Alle Berater |
-| `beta` | `develop` | GF, Tester |
+| `beta` | `beta` | GF, Tester |
 | `dev` | `dev` | Nur Entwickler |
 
 - Feld `update_channel` in `users`-Tabelle (ENUM: stable/beta/dev, Default: stable)
@@ -387,7 +387,7 @@ Details: `docs/01_DEVELOPMENT/RELEASE_STRATEGY.md`
 
 ### Git-Governance
 
-- Branch-Strategie: `main` (stable) / `develop` (beta) / `dev` (experimental)
-- PR-Pflicht fuer `main` und `develop`
+- Branch-Strategie: `main` (stable) / `beta` (beta) / `dev` (experimental)
+- PR-Pflicht fuer `main` und `beta`
 - CI: GitHub Actions Smoke Tests bei PRs
 - Details: `docs/01_DEVELOPMENT/GIT_GOVERNANCE.md`

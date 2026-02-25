@@ -2,9 +2,9 @@ name: ATLAS CI - Smoke Tests & Release Gates
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main, beta]
   push:
-    branches: [main, develop]
+    branches: [main, beta]
 
 jobs:
   smoke-tests:

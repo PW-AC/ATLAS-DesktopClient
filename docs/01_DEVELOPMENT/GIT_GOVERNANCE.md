@@ -14,17 +14,17 @@
 
 | Branch | Channel | Zweck | Protection |
 |--------|---------|-------|------------|
-| `main` | stable | Produktiv, nur PRs aus `develop` | Require PR, Status Checks, No direct push |
-| `develop` | beta | Fast stabil, Feature-komplett | Require PR, Status Checks empfohlen |
+| `main` | stable | Produktiv, nur PRs aus `beta` | Require PR, Status Checks, No direct push |
+| `beta` | beta | Fast stabil, Feature-komplett | Require PR, Status Checks empfohlen |
 | `dev` | dev | Experimentell, Refactoring | Keine Protection |
 
 ### Feature-Workflow
 
 ```
-feature/* --> dev --> PR --> develop --> PR --> main
-fix/*     --> dev --> PR --> develop --> PR --> main
-refactor/* --> dev --> PR --> develop --> PR --> main
-chore/*   --> dev --> PR --> develop --> PR --> main
+feature/* --> dev --> PR --> beta --> PR --> main
+fix/*     --> dev --> PR --> beta --> PR --> main
+refactor/* --> dev --> PR --> beta --> PR --> main
+chore/*   --> dev --> PR --> beta --> PR --> main
 ```
 
 ### Branch-Naming-Konventionen
@@ -57,9 +57,9 @@ Ein PR darf **nicht** gemerged werden wenn:
    - [x] Require linear history
    - [x] Do not allow bypassing the above settings
 
-### develop
+### beta
 
-1. Branch name pattern: `develop`
+1. Branch name pattern: `beta`
 2. Aktivieren:
    - [x] Require a pull request before merging
    - [x] Require status checks to pass (empfohlen)
@@ -80,5 +80,5 @@ Definiert in `.github/CODEOWNERS`. Repository-Owner wird automatisch als Reviewe
 ## CI/CD
 
 GitHub Actions Workflow: `.github/workflows/smoke-tests.yml`
-- Trigger: PRs und Pushes auf `main` und `develop`
+- Trigger: PRs und Pushes auf `main` und `beta`
 - Steps: Python Setup, Dependencies, Smoke Tests, VERSION-Check

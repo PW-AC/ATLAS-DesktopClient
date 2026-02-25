@@ -23,7 +23,7 @@
 | Channel | Branch | Zielgruppe | Stabilitaet |
 |---------|--------|------------|-------------|
 | `stable` | `main` | Alle Berater | 100% produktionsreif |
-| `beta` | `develop` | Ausgewaehlte Tester, GF | Feature-komplett, getestet |
+| `beta` | `beta` | Ausgewaehlte Tester, GF | Feature-komplett, getestet |
 | `dev` | `dev` | Nur Entwickler | Experimentell, keine Garantie |
 
 ### Channel-Zuweisung (Server-seitig)
@@ -86,9 +86,9 @@ Gate 6 generiert einen SHA256-Hash ueber alle `SHOW CREATE TABLE` Statements der
 
 ```
  1. Feature in dev entwickeln
- 2. PR: dev -> develop (Beta-Test)
+ 2. PR: dev -> beta (Beta-Test)
  3. Beta-Tester erhalten Update automatisch (channel=beta)
- 4. Nach Validierung: PR: develop -> main
+ 4. Nach Validierung: PR: beta -> main
  5. VERSION-Datei anpassen (z.B. 2.3.0)
  6. Git Tag: git tag v2.3.0
  7. Smoke Tests ausfuehren: python src/tests/run_smoke_tests.py --json-report
@@ -119,7 +119,7 @@ Gate 6 generiert einen SHA256-Hash ueber alle `SHOW CREATE TABLE` Statements der
 
 ## CI-Pipeline (GitHub Actions)
 
-`.github/workflows/smoke-tests.yml` laeuft bei PR/Push auf `main`/`develop`:
+`.github/workflows/smoke-tests.yml` laeuft bei PR/Push auf `main`/`beta`:
 
 1. Smoke Tests (8 Basis-Tests + 3 erweiterte Gruppen)
 2. Provision Unit Tests (23 Normalisierungs-Tests)
