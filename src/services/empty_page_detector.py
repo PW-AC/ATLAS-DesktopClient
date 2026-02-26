@@ -25,6 +25,13 @@ OCR_NOISE_MAX_LENGTH = 30
 PIXEL_BRIGHTNESS_THRESHOLD = 250.0
 PIXEL_VARIANCE_THRESHOLD = 5.5
 
+# Performance-Optimierung: Sampling-Rate fuer Pixel-Analyse
+# Wir pruefen nur jedes 5. Byte, das reicht statistisch fuer die "Weiss-Erkennung"
+# und beschleunigt die Analyse signifikant (~5x).
+PIXEL_SAMPLING_STEP = 5
+# Erst ab dieser Groesse sampeln, um bei kleinen Bildern keine Genauigkeit zu verlieren
+PIXEL_SAMPLING_MIN_SIZE = 10000
+
 
 def _is_pixmap_blank(pix, brightness_threshold: float = PIXEL_BRIGHTNESS_THRESHOLD,
                      variance_threshold: float = PIXEL_VARIANCE_THRESHOLD) -> bool:
@@ -54,6 +61,11 @@ def _is_pixmap_blank(pix, brightness_threshold: float = PIXEL_BRIGHTNESS_THRESHO
         
         n = len(pixel_bytes)
         
+        # Performance-Optimierung: Bei grossen Bildern Sampling verwenden
+        if n > PIXEL_SAMPLING_MIN_SIZE:
+            pixel_bytes = pixel_bytes[::PIXEL_SAMPLING_STEP]
+            n = len(pixel_bytes)
+
         # Durchschnittliche Helligkeit
         total = sum(pixel_bytes)
         mean = total / n
