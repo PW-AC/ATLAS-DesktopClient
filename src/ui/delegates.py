@@ -3,13 +3,15 @@
 Custom Item Delegates for QTableWidget/QTableView.
 """
 
-from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtWidgets import (
+    QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle
+)
 from PySide6.QtCore import Qt, QRectF, QSize
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont
 
 from ui.styles.tokens import (
-    BOX_COLORS, PILL_COLORS, TEXT_PRIMARY, TEXT_INVERSE,
-    FONT_BODY, FONT_SIZE_CAPTION, RADIUS_SM
+    TEXT_PRIMARY, TEXT_INVERSE,
+    FONT_BODY
 )
 
 class BadgeDelegate(QStyledItemDelegate):
@@ -33,11 +35,15 @@ class BadgeDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Draw background (handle selection)
-        if option.state & QStyleOptionViewItem.State.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight())
-        else:
-            painter.fillRect(option.rect, option.palette.base())
+        # Draw background using the style (handles selection, focus, alternating colors)
+        widget = option.widget
+        style = widget.style() if widget else QApplication.style()
+        style.drawPrimitive(
+            QStyle.PrimitiveElement.PE_PanelItemViewItem,
+            option,
+            painter,
+            widget
+        )
 
         # Get data
         text = index.data(Qt.ItemDataRole.DisplayRole)

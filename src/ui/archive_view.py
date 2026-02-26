@@ -6,7 +6,6 @@ und KI-basierter automatischer Benennung.
 """
 
 from typing import Optional, List, Tuple
-from datetime import datetime
 import tempfile
 import os
 import logging
@@ -15,15 +14,15 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QComboBox, QLineEdit,
     QFileDialog, QMessageBox, QMenu, QProgressDialog, QFrame,
-    QSplitter, QGroupBox, QFormLayout, QDialog, QToolBar, QApplication
+    QSplitter, QGroupBox, QDialog, QToolBar, QApplication,
+    QFileIconProvider
 )
-from PySide6.QtCore import Qt, Signal, QThread, QUrl, QTimer
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QFileInfo
 from PySide6.QtGui import QAction, QFont, QColor
 
 from ui.delegates import BadgeDelegate
 from ui.styles.tokens import (
-    BOX_COLORS, TEXT_PRIMARY, TEXT_SECONDARY, FONT_BODY, FONT_SIZE_BODY,
-    PILL_COLORS
+    TEXT_PRIMARY, TEXT_SECONDARY, FONT_BODY
 )
 
 logger = logging.getLogger(__name__)
@@ -172,7 +171,7 @@ class AIRenameWorker(QThread):
         self._cancelled = True
     
     def run(self):
-        from api.openrouter import OpenRouterClient, DocumentClassification
+        from api.openrouter import OpenRouterClient
         
         results = []
         total = len(self.documents)
@@ -495,7 +494,7 @@ class PDFViewerDialog(QDialog):
         if HAS_PDF_VIEW:
             if self._editable:
                 # Splitter: Thumbnails links, QPdfView rechts
-                from PySide6.QtWidgets import QSplitter, QListWidget, QListWidgetItem
+                from PySide6.QtWidgets import QSplitter, QListWidget
                 splitter = QSplitter(Qt.Orientation.Horizontal)
                 
                 # Thumbnail-Liste mit Mehrfachauswahl (Strg+Klick, Shift+Klick, Strg+A)
@@ -618,7 +617,6 @@ class PDFViewerDialog(QDialog):
         if not self._fitz_doc or not hasattr(self, '_thumbnail_list'):
             return
         
-        from PySide6.QtGui import QPixmap, QImage, QIcon
         from PySide6.QtCore import QSize
         from PySide6.QtWidgets import QListWidgetItem
         
@@ -1439,6 +1437,8 @@ class ArchiveView(QWidget):
         self._upload_worker = None
         self._ai_rename_worker = None
         
+        self._icon_provider = QFileIconProvider()
+
         self._setup_ui()
         self.refresh_documents()
     
@@ -1580,7 +1580,7 @@ class ArchiveView(QWidget):
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(40) # Taller rows
+        self.table.verticalHeader().setDefaultSectionSize(44) # Taller rows
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -1653,12 +1653,11 @@ class ArchiveView(QWidget):
             
             # Dateiname (mit Icon)
             name = doc.original_filename
-            icon = "📄" # Default
-            if name.endswith('.pdf'): icon = "🟥" # PDF-like
-            if name.endswith('.xlsx') or name.endswith('.xls'): icon = "📊"
-            if name.endswith('.gdv'): icon = "📋"
 
-            name_item = QTableWidgetItem(f"{icon}  {name}")
+            file_info = QFileInfo(name)
+            icon = self._icon_provider.icon(file_info)
+
+            name_item = QTableWidgetItem(icon, name)
             name_item.setToolTip(name)
             name_item.setForeground(QColor(TEXT_PRIMARY))
             self.table.setItem(row, 1, name_item)

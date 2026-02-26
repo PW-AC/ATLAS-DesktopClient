@@ -26,12 +26,13 @@ This document lists identified tasks for improving the performance, UI/UX, and c
 
 ## UI/UX
 
-1.  **[ACTIVE] Archive View Visual Rework**
+1.  **[COMPLETED] Archive View Visual Rework**
     - **Current:** Standard `QTableWidget` with colored text. Functional but dated.
     - **Task:**
         - Replace text-based "Source" and "KI" columns with **Badge/Pill** styling (using `QStyledItemDelegate`).
         - Increase row height for better touch/readability.
         - Add file type icons (PDF, Excel, GDV) next to filenames.
+    - **Status:** Completed. Implemented `QFileIconProvider` for native file icons and fixed `BadgeDelegate` rendering. Row height increased to 44px.
     - **Impact:** Modern, professional look and better readability.
 
 2.  **Card View Toggle**
@@ -54,7 +55,7 @@ This document lists identified tasks for improving the performance, UI/UX, and c
 
 ## Refactoring
 
-1.  **Extract Dialogs**
+1.  **[PRIORITY] Extract Dialogs**
     - **Current:** `PDFViewerDialog` and `DuplicateCompareDialog` are large classes inside `archive_view.py`.
     - **Task:** Move these classes to `src/ui/dialogs/pdf_viewer.py` and `src/ui/dialogs/duplicate_compare.py`.
     - **Impact:** Better code organization and maintainability.
