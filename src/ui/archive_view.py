@@ -20,6 +20,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QUrl, QTimer
 from PySide6.QtGui import QAction, QFont, QColor
 
+from ui.delegates import BadgeDelegate
+from ui.styles.tokens import (
+    BOX_COLORS, TEXT_PRIMARY, TEXT_SECONDARY, FONT_BODY, FONT_SIZE_BODY,
+    PILL_COLORS
+)
+
 logger = logging.getLogger(__name__)
 
 # PDF-Viewer: Versuche QPdfView zu importieren (Qt6 native PDF)
@@ -1439,8 +1445,8 @@ class ArchiveView(QWidget):
     def _setup_ui(self):
         """UI aufbauen."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
         
         # Header
         header_layout = QHBoxLayout()
@@ -1524,6 +1530,58 @@ class ArchiveView(QWidget):
             "ID", "Dateiname", "Quelle", "GDV", "KI", "Groesse", "Hochgeladen", "Von"
         ])
         
+        # Delegates
+        source_colors = {
+            'bipro_auto': {'bg': '#dbeafe', 'text': '#1e40af'},    # Blue
+            'manual_upload': {'bg': '#f3f4f6', 'text': '#374151'}, # Gray
+            'self_created': {'bg': '#d1fae5', 'text': '#065f46'},  # Green
+            'scan': {'bg': '#e0e7ff', 'text': '#3730a3'},          # Indigo
+        }
+        ki_colors = {
+            'ok': {'bg': '#d1fae5', 'text': '#065f46'},    # Green
+            'error': {'bg': '#fee2e2', 'text': '#991b1b'}, # Red
+            'pending': {'bg': '#fff7ed', 'text': '#9a3412'}, # Orange
+            'none': {'bg': '#f1f5f9', 'text': '#64748b'},  # Gray
+        }
+
+        self.table.setItemDelegateForColumn(2, BadgeDelegate(self.table, source_colors))
+        self.table.setItemDelegateForColumn(4, BadgeDelegate(self.table, ki_colors))
+
+        # Styling
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: white;
+                alternate-background-color: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                gridline-color: #e2e8f0;
+                font-family: {FONT_BODY};
+                font-size: 13px;
+            }}
+            QTableWidget::item {{
+                padding: 10px;
+                border-bottom: 1px solid #f1f5f9;
+            }}
+            QTableWidget::item:selected {{
+                background-color: #e0f2fe;
+                color: {TEXT_PRIMARY};
+            }}
+            QHeaderView::section {{
+                background-color: #f1f5f9;
+                color: {TEXT_SECONDARY};
+                padding: 10px;
+                border: none;
+                border-bottom: 2px solid #e2e8f0;
+                font-weight: 600;
+                text-transform: uppercase;
+                font-size: 11px;
+            }}
+        """)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(40) # Taller rows
+
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -1590,57 +1648,72 @@ class ArchiveView(QWidget):
             # ID
             id_item = QTableWidgetItem(str(doc.id))
             id_item.setData(Qt.ItemDataRole.UserRole, doc)
+            id_item.setForeground(QColor(TEXT_SECONDARY))
             self.table.setItem(row, 0, id_item)
             
-            # Dateiname
-            name_item = QTableWidgetItem(doc.original_filename)
+            # Dateiname (mit Icon)
+            name = doc.original_filename
+            icon = "📄" # Default
+            if name.endswith('.pdf'): icon = "🟥" # PDF-like
+            if name.endswith('.xlsx') or name.endswith('.xls'): icon = "📊"
+            if name.endswith('.gdv'): icon = "📋"
+
+            name_item = QTableWidgetItem(f"{icon}  {name}")
+            name_item.setToolTip(name)
+            name_item.setForeground(QColor(TEXT_PRIMARY))
             self.table.setItem(row, 1, name_item)
             
-            # Quelle
+            # Quelle (Badge)
             source_item = QTableWidgetItem(doc.source_type_display)
-            if doc.source_type == 'bipro_auto':
-                source_item.setForeground(QColor("#2196F3"))
-            elif doc.source_type == 'self_created':
-                source_item.setForeground(QColor("#4CAF50"))
-            elif doc.source_type == 'scan':
-                source_item.setForeground(QColor("#9C27B0"))  # Lila fuer Scan
+            source_item.setData(Qt.ItemDataRole.UserRole, doc.source_type)
             self.table.setItem(row, 2, source_item)
             
             # GDV
-            gdv_item = QTableWidgetItem("Ja" if doc.is_gdv else "")
+            gdv_item = QTableWidgetItem("✓" if doc.is_gdv else "")
+            gdv_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             if doc.is_gdv:
-                gdv_item.setForeground(QColor("#4CAF50"))
+                gdv_item.setForeground(QColor("#10b981")) # Green
+                gdv_item.setFont(QFont("Segoe UI Emoji", 12))
             self.table.setItem(row, 3, gdv_item)
             
-            # KI-Benennung Status
+            # KI-Benennung (Badge)
+            ki_text = "-"
+            ki_status = "none"
+            ki_tooltip = "Keine PDF-Datei"
+
             if doc.ai_renamed:
-                ai_item = QTableWidgetItem("Ja")
-                ai_item.setForeground(QColor("#9C27B0"))  # Lila fuer KI
-                ai_item.setToolTip("Durch KI umbenannt")
+                ki_text = "Ja"
+                ki_status = "ok"
+                ki_tooltip = "Durch KI umbenannt"
             elif doc.ai_processing_error:
-                ai_item = QTableWidgetItem("Fehler")
-                ai_item.setForeground(QColor("#F44336"))  # Rot fuer Fehler
-                ai_item.setToolTip(f"Fehler: {doc.ai_processing_error}")
+                ki_text = "Fehler"
+                ki_status = "error"
+                ki_tooltip = f"Fehler: {doc.ai_processing_error}"
             elif doc.is_pdf:
-                ai_item = QTableWidgetItem("-")
-                ai_item.setToolTip("Noch nicht durch KI verarbeitet")
-            else:
-                ai_item = QTableWidgetItem("")
-                ai_item.setToolTip("Keine PDF-Datei")
+                ki_text = "Ausstehend"
+                ki_status = "pending"
+                ki_tooltip = "Noch nicht durch KI verarbeitet"
+
+            ai_item = QTableWidgetItem(ki_text)
+            ai_item.setData(Qt.ItemDataRole.UserRole, ki_status)
+            ai_item.setToolTip(ki_tooltip)
             self.table.setItem(row, 4, ai_item)
             
             # Groesse
             size_item = QTableWidgetItem(doc.file_size_display)
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            size_item.setForeground(QColor(TEXT_SECONDARY))
             self.table.setItem(row, 5, size_item)
             
-            # Datum im deutschen Format
+            # Datum
             date_item = QTableWidgetItem(format_date_german(doc.created_at))
-            date_item.setToolTip(doc.created_at or "")  # Original als Tooltip
+            date_item.setToolTip(doc.created_at or "")
+            date_item.setForeground(QColor(TEXT_SECONDARY))
             self.table.setItem(row, 6, date_item)
             
             # Hochgeladen von
             by_item = QTableWidgetItem(doc.uploaded_by_name or "")
+            by_item.setForeground(QColor(TEXT_SECONDARY))
             self.table.setItem(row, 7, by_item)
     
     def _filter_table(self):
