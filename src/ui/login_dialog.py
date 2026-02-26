@@ -12,13 +12,13 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QLabel, QCheckBox,
     QProgressBar
 )
-from PySide6.QtCore import Qt, QThread, Signal, QEvent
+from PySide6.QtCore import Qt, QThread, Signal, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QAbstractAnimation
 from PySide6.QtGui import QFont, QPixmap, QAction, QIcon, QPainter, QColor, QPen
 
 from ui.styles.tokens import TEXT_SECONDARY, ERROR
 from i18n.de import PASSWORD_SHOW, PASSWORD_HIDE, LOGIN_CAPS_LOCK_WARNING
 
-from api.client import APIClient, APIError
+from api.client import APIClient
 from api.auth import AuthAPI, AuthState
 
 logger = logging.getLogger(__name__)
@@ -103,6 +103,35 @@ class LoginDialog(QDialog):
 
         return super().eventFilter(source, event)
     
+    def shake_window(self):
+        """Wackelt das Fenster bei Fehler (Feedback)."""
+        if hasattr(self, '_shake_animation') and self._shake_animation.state() == QAbstractAnimation.State.Running:
+            return
+
+        animation = QPropertyAnimation(self, b"pos", self)
+        animation.setDuration(400)
+        animation.setLoopCount(1)
+        animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        pos = self.pos()
+        x = pos.x()
+        y = pos.y()
+
+        # Shake Keyframes
+        animation.setKeyValueAt(0, QPoint(x, y))
+        animation.setKeyValueAt(0.1, QPoint(x + 5, y))
+        animation.setKeyValueAt(0.2, QPoint(x - 5, y))
+        animation.setKeyValueAt(0.3, QPoint(x + 5, y))
+        animation.setKeyValueAt(0.4, QPoint(x - 5, y))
+        animation.setKeyValueAt(0.5, QPoint(x + 3, y))
+        animation.setKeyValueAt(0.6, QPoint(x - 3, y))
+        animation.setKeyValueAt(0.7, QPoint(x + 2, y))
+        animation.setKeyValueAt(0.8, QPoint(x - 2, y))
+        animation.setKeyValueAt(1, QPoint(x, y))
+
+        animation.start()
+        self._shake_animation = animation
+
     def _generate_eye_icon(self, crossed=False):
         """Generiert ein Augen-Icon (optional durchgestrichen) mit Primitiven."""
         pixmap = QPixmap(20, 20)
@@ -301,12 +330,14 @@ class LoginDialog(QDialog):
             self.status_label.setText("Bitte Benutzername eingeben.")
             self.status_label.setStyleSheet("color: #dc2626;")
             self.username_input.setFocus()
+            self.shake_window()
             return
         
         if not password:
             self.status_label.setText("Bitte Passwort eingeben.")
             self.status_label.setStyleSheet("color: #dc2626;")
             self.password_input.setFocus()
+            self.shake_window()
             return
         
         # UI deaktivieren
@@ -342,6 +373,7 @@ class LoginDialog(QDialog):
             self.password_input.clear()
             self.password_input.setFocus()
             self._enable_inputs()
+            self.shake_window()
     
     def _on_login_error(self, error_msg: str):
         """Callback bei Login-Fehler."""
@@ -349,6 +381,7 @@ class LoginDialog(QDialog):
         self.status_label.setText("Verbindungsfehler")
         self.status_label.setStyleSheet("color: red;")
         self._enable_inputs()
+        self.shake_window()
         
         # Fehler wird ueber status_label angezeigt (inline, nicht modal)
     
