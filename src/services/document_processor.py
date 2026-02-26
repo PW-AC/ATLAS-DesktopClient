@@ -8,14 +8,13 @@ Unterstuetzt parallele Verarbeitung fuer bessere Performance.
 import logging
 from typing import List, Optional, Tuple, Callable
 from dataclasses import dataclass
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import threading
 import tempfile
 import os
 
-from api.documents import Document, DocumentsAPI, BOX_TYPES
+from api.documents import Document, DocumentsAPI
 from api.openrouter import OpenRouterClient, ExtractedDocumentData, DocumentClassification
 from api.client import APIClient
 from api.processing_history import ProcessingHistoryAPI
@@ -482,7 +481,7 @@ class DocumentProcessor:
             logger.info(f"Gesamtkosten:     ${total_cost:.6f} USD")
             if cost_per_doc:
                 logger.info(f"Kosten/Dokument:  ${cost_per_doc:.8f} USD ({batch_result.total_documents} Dokumente)")
-            logger.info(f"==========================================")
+            logger.info("==========================================")
             
             cost_details = {
                 'batch_type': 'cost_update',
@@ -718,10 +717,9 @@ class DocumentProcessor:
                                     else:
                                         # PDF ist gueltig -> KI-Klassifikation (wie Schritt 5b/6)
                                         pdf_path = repaired_path or local_path_fb
-                                        self._check_and_log_empty_pages(doc, pdf_path)
 
-                                        # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
-                                        _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                        # Leere-Seiten-Erkennung + Volltext extrahieren (Optimiert: 1x PDF oeffnen)
+                                        _ai_extracted_text, _ai_page_count = self._process_pdf_content_optimized(doc, pdf_path)
 
                                         openrouter = self._get_openrouter()
                                         ki_result = openrouter.classify_sparte_with_date(
@@ -858,11 +856,9 @@ class DocumentProcessor:
                                     new_filename = "Beschaedigte_Datei_Courtage.pdf"
                                 else:
                                     pdf_path = repaired_path or local_path
-                                    # Leere-Seiten-Erkennung (informativ, blockiert nicht)
-                                    self._check_and_log_empty_pages(doc, pdf_path)
                                     
-                                    # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
-                                    _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                    # Leere-Seiten-Erkennung + Volltext extrahieren (Optimiert: 1x PDF oeffnen)
+                                    _ai_extracted_text, _ai_page_count = self._process_pdf_content_optimized(doc, pdf_path)
 
                                     openrouter = self._get_openrouter()
                                     result = openrouter.classify_courtage_minimal(
@@ -921,21 +917,19 @@ class DocumentProcessor:
                                         new_filename = None
                                         classification_source = 'rule_validation'
                                         classification_confidence = 'high'
-                                        classification_reason = f'PDF verschluesselt (kein Passwort), KI uebersprungen'
+                                        classification_reason = 'PDF verschluesselt (kein Passwort), KI uebersprungen'
                                     else:
                                         logger.warning(f"VU-PDF korrupt, ueberspringe KI: {doc.original_filename}")
                                         category = 'pdf_corrupt'
                                         new_filename = "Beschaedigte_Datei.pdf"
                                         classification_source = 'rule_validation'
                                         classification_confidence = 'high'
-                                        classification_reason = f'PDF korrupt/nicht lesbar, KI uebersprungen'
+                                        classification_reason = 'PDF korrupt/nicht lesbar, KI uebersprungen'
                                 else:
                                     pdf_path = repaired_path or local_path
-                                    # Leere-Seiten-Erkennung (informativ, blockiert nicht)
-                                    self._check_and_log_empty_pages(doc, pdf_path)
 
-                                    # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
-                                    _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                    # Leere-Seiten-Erkennung + Volltext extrahieren (Optimiert: 1x PDF oeffnen)
+                                    _ai_extracted_text, _ai_page_count = self._process_pdf_content_optimized(doc, pdf_path)
 
                                     openrouter = self._get_openrouter()
                                     ki_result = openrouter.classify_sparte_with_date(
@@ -1004,7 +998,7 @@ class DocumentProcessor:
                 category = 'courtage_filename'
                 classification_source = 'rule_filename'
                 classification_confidence = 'high'
-                classification_reason = f'Dateiname enthaelt "Vermittlerabrechnung" -> Courtage'
+                classification_reason = 'Dateiname enthaelt "Vermittlerabrechnung" -> Courtage'
                 logger.info(f"Courtage per Dateiname erkannt: {doc.original_filename} -> courtage")
                 
                 try:
@@ -1017,10 +1011,9 @@ class DocumentProcessor:
                                 new_filename = "Beschaedigte_Datei_Courtage.pdf"
                             else:
                                 pdf_path = repaired_path or local_path
-                                self._check_and_log_empty_pages(doc, pdf_path)
                                 
-                                # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
-                                _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                # Leere-Seiten-Erkennung + Volltext extrahieren (Optimiert: 1x PDF oeffnen)
+                                _ai_extracted_text, _ai_page_count = self._process_pdf_content_optimized(doc, pdf_path)
 
                                 openrouter = self._get_openrouter()
                                 result = openrouter.classify_courtage_minimal(
@@ -1073,21 +1066,19 @@ class DocumentProcessor:
                                     new_filename = None
                                     classification_source = 'rule_validation'
                                     classification_confidence = 'high'
-                                    classification_reason = f'PDF verschluesselt (kein Passwort), KI uebersprungen'
+                                    classification_reason = 'PDF verschluesselt (kein Passwort), KI uebersprungen'
                                 else:
                                     logger.warning(f"PDF korrupt, ueberspringe KI: {doc.original_filename}")
                                     category = 'pdf_corrupt'
                                     new_filename = "Beschaedigte_Datei.pdf"
                                     classification_source = 'rule_validation'
                                     classification_confidence = 'high'
-                                    classification_reason = f'PDF korrupt/nicht lesbar, KI uebersprungen'
+                                    classification_reason = 'PDF korrupt/nicht lesbar, KI uebersprungen'
                             else:
                                 pdf_path = repaired_path or local_path
-                                # Leere-Seiten-Erkennung (informativ, blockiert nicht)
-                                self._check_and_log_empty_pages(doc, pdf_path)
 
-                                # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
-                                _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+                                # Leere-Seiten-Erkennung + Volltext extrahieren (Optimiert: 1x PDF oeffnen)
+                                _ai_extracted_text, _ai_page_count = self._process_pdf_content_optimized(doc, pdf_path)
 
                                 openrouter = self._get_openrouter()
                                 ki_result = openrouter.classify_sparte_with_date(
@@ -1403,7 +1394,7 @@ class DocumentProcessor:
                     logger.info(f"PDF erfolgreich repariert: {repaired_path} ({page_count} Seiten)")
                     return (True, repaired_path)
                 else:
-                    logger.warning(f"Repariertes PDF hat 0 Seiten")
+                    logger.warning("Repariertes PDF hat 0 Seiten")
                     # Aufraeumen
                     try:
                         os.remove(repaired_path)
@@ -1421,7 +1412,7 @@ class DocumentProcessor:
                     pass
                 return (False, None)
     
-    def _check_and_log_empty_pages(self, doc: Document, pdf_path: str) -> None:
+    def _check_and_log_empty_pages(self, doc: Document, pdf_path: str, pdf_doc: Optional[object] = None) -> None:
         """
         Prueft ein PDF auf leere Seiten und speichert das Ergebnis in der DB.
         
@@ -1438,11 +1429,12 @@ class DocumentProcessor:
         Args:
             doc: Das Document-Objekt
             pdf_path: Pfad zur (ggf. reparierten) PDF-Datei
+            pdf_doc: Optionales fitz.Document Objekt
         """
         try:
             from services.empty_page_detector import get_empty_pages
             
-            empty_indices, total_pages = get_empty_pages(pdf_path)
+            empty_indices, total_pages = get_empty_pages(pdf_path, pdf_doc)
             empty_count = len(empty_indices)
             
             if total_pages == 0:
@@ -1486,7 +1478,7 @@ class DocumentProcessor:
             # Fehler in der Leere-Seiten-Erkennung darf die Pipeline NICHT blockieren
             logger.warning(f"Leere-Seiten-Erkennung fehlgeschlagen fuer {doc.original_filename}: {e}")
     
-    def _extract_full_text(self, pdf_path: str) -> tuple:
+    def _extract_full_text(self, pdf_path: str, pdf_doc: Optional[object] = None) -> tuple:
         """
         Extrahiert Volltext ueber ALLE Seiten einer PDF.
         
@@ -1495,6 +1487,7 @@ class DocumentProcessor:
         
         Args:
             pdf_path: Lokaler Pfad zur PDF-Datei
+            pdf_doc: Optionales fitz.Document Objekt
             
         Returns:
             Tuple (extracted_text: str, pages_with_text: int)
@@ -1507,20 +1500,58 @@ class DocumentProcessor:
         
         extracted_text = ""
         pages_with_text = 0
+        doc = pdf_doc
+        should_close = False
         
         try:
-            pdf_doc = fitz.open(pdf_path)
-            for page in pdf_doc:
+            if doc is None:
+                doc = fitz.open(pdf_path)
+                should_close = True
+
+            for page in doc:
                 page_text = page.get_text("text")
                 if page_text and page_text.strip():
                     extracted_text += page_text + "\n"
                     pages_with_text += 1
-            pdf_doc.close()
+
+            if should_close:
+                doc.close()
+
         except Exception as e:
             logger.warning(f"Volltext-Extraktion fehlgeschlagen: {e}")
+            if should_close and doc:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
         
         return (extracted_text, pages_with_text)
     
+    def _process_pdf_content_optimized(self, doc: Document, pdf_path: str) -> Tuple[str, int]:
+        """
+        Optimized helper: Opens PDF once to check for empty pages and extract text.
+        Returns (extracted_text, page_count).
+        """
+        extracted_text = ""
+        page_count = 0
+
+        try:
+            import fitz
+            with fitz.open(pdf_path) as pdf_doc:
+                # 1. Check empty pages (logs to DB/History)
+                self._check_and_log_empty_pages(doc, pdf_path, pdf_doc=pdf_doc)
+
+                # 2. Extract text
+                extracted_text, page_count = self._extract_full_text(pdf_path, pdf_doc=pdf_doc)
+
+        except Exception as e:
+             logger.warning(f"Optimized PDF processing failed for {doc.id}: {e}. Falling back.")
+             # Fallback
+             self._check_and_log_empty_pages(doc, pdf_path)
+             extracted_text, page_count = self._extract_full_text(pdf_path)
+
+        return extracted_text, page_count
+
     def _persist_ai_data(self, doc: Document, extracted_text: str,
                          extracted_page_count: int, ki_result: dict) -> None:
         """
