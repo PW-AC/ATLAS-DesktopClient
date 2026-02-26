@@ -13,7 +13,10 @@ from PySide6.QtWidgets import (
     QProgressBar
 )
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QFont, QPixmap, QAction, QIcon, QPainter, QColor, QPen
+
+from ui.styles.tokens import TEXT_SECONDARY
+from i18n.de import PASSWORD_SHOW, PASSWORD_HIDE
 
 from api.client import APIClient, APIError
 from api.auth import AuthAPI, AuthState
@@ -82,6 +85,48 @@ class LoginDialog(QDialog):
         self._setup_ui()
         self._check_connection()
     
+    def _generate_eye_icon(self, crossed=False):
+        """Generiert ein Augen-Icon (optional durchgestrichen) mit Primitiven."""
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor(TEXT_SECONDARY)
+        pen = QPen(color)
+        pen.setWidth(2)
+        painter.setPen(pen)
+
+        # Auge zeichnen (Ellipse)
+        # rect(x, y, w, h) -> Mitte ist 10,10
+        painter.drawEllipse(2, 5, 16, 10)
+
+        # Pupille (Kreis)
+        painter.setBrush(color)
+        painter.drawEllipse(8, 8, 4, 4)
+
+        if crossed:
+            # Diagonale Linie
+            pen.setWidth(2)
+            # Etwas Abstand lassen (Outline) - optional
+            painter.setPen(pen)
+            painter.drawLine(3, 3, 17, 17)
+
+        painter.end()
+        return QIcon(pixmap)
+
+    def _toggle_password_visibility(self):
+        """Schaltet Passwort-Sichtbarkeit um."""
+        if self.password_input.echoMode() == QLineEdit.Password:
+            self.password_input.setEchoMode(QLineEdit.Normal)
+            self.toggle_password_action.setIcon(self._icon_hide)
+            self.toggle_password_action.setToolTip(PASSWORD_HIDE)
+        else:
+            self.password_input.setEchoMode(QLineEdit.Password)
+            self.toggle_password_action.setIcon(self._icon_show)
+            self.toggle_password_action.setToolTip(PASSWORD_SHOW)
+
     def _setup_ui(self):
         """UI aufbauen."""
         layout = QVBoxLayout(self)
@@ -132,6 +177,17 @@ class LoginDialog(QDialog):
         self.password_input.setPlaceholderText("Passwort")
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.returnPressed.connect(self._do_login)
+
+        # Passwort-Toggle Action
+        self._icon_show = self._generate_eye_icon(crossed=False)
+        self._icon_hide = self._generate_eye_icon(crossed=True)
+
+        self.toggle_password_action = QAction(self)
+        self.toggle_password_action.setIcon(self._icon_show)
+        self.toggle_password_action.setToolTip(PASSWORD_SHOW)
+        self.toggle_password_action.triggered.connect(self._toggle_password_visibility)
+        self.password_input.addAction(self.toggle_password_action, QLineEdit.ActionPosition.TrailingPosition)
+
         form_layout.addRow("Passwort:", self.password_input)
         
         layout.addLayout(form_layout)
