@@ -751,7 +751,7 @@ TEXT:
     # Fuer BiPRO-Code-basierte Vorsortierung
     # =========================================================================
     
-    def classify_courtage_minimal(self, pdf_path: str) -> Optional[dict]:
+    def classify_courtage_minimal(self, pdf_path: str, pre_extracted_text: Optional[str] = None) -> Optional[dict]:
         """
         Minimale Klassifikation fuer Courtage-Dokumente.
         
@@ -760,6 +760,7 @@ TEXT:
         
         Args:
             pdf_path: Pfad zur PDF-Datei
+            pre_extracted_text: Optionaler, bereits extrahierter Text (spart File-I/O)
             
         Returns:
             {"insurer": "...", "document_date_iso": "YYYY-MM-DD"} oder None
@@ -768,8 +769,14 @@ TEXT:
         
         logger.info(f"Courtage-Klassifikation (minimal): {pdf_path}")
         
-        # Text extrahieren (nur erste Seite)
-        text = self._extract_relevant_text(pdf_path, for_triage=True)
+        text = ""
+        if pre_extracted_text is not None and pre_extracted_text.strip():
+            # Bereits extrahierten Text verwenden (auf max. 2000 Zeichen gekuerzt fuer Prompt)
+            # Wir verwenden hier etwas mehr fuer die Auswahl, der Prompt-Formatter kuerzt spaeter
+            text = pre_extracted_text[:3000]
+        else:
+            # Text extrahieren (nur erste Seite)
+            text = self._extract_relevant_text(pdf_path, for_triage=True)
         
         if not text.strip():
             # Fallback zu OCR
@@ -874,7 +881,8 @@ Antwort NUR als JSON:
                                    stage2_prompt: str = None,
                                    stage2_model: str = None,
                                    stage2_max_tokens: int = None,
-                                   stage2_trigger: str = 'low') -> dict:
+                                   stage2_trigger: str = 'low',
+                                   pre_extracted_text: Optional[str] = None) -> dict:
         """
         Zweistufige Klassifikation mit Confidence-Scoring (nur PDFs).
         
@@ -898,6 +906,7 @@ Antwort NUR als JSON:
             stage2_model: Optionales Modell fuer Stufe 2
             stage2_max_tokens: Optionale max_tokens fuer Stufe 2
             stage2_trigger: Wann Stufe 2 ausloesen: 'low' oder 'low_medium'
+            pre_extracted_text: Optionaler, bereits extrahierter Text (spart File-I/O)
             
         Returns:
             {"sparte": ..., "confidence": ..., "document_date_iso": ..., "vu_name": ..., "document_name": ...}
@@ -906,8 +915,14 @@ Antwort NUR als JSON:
         
         logger.info(f"Sparten-Klassifikation (minimal): {pdf_path}")
         
-        # Text extrahieren (erste 2 Seiten)
-        text = self._extract_relevant_text(pdf_path, for_triage=True)
+        text = ""
+        if pre_extracted_text is not None and pre_extracted_text.strip():
+            # Bereits extrahierten Text verwenden (Stufe 1: ~2500 Zeichen)
+            # Wir nehmen hier etwas mehr (3000), die Kürzung passiert unten oder im Prompt
+            text = pre_extracted_text[:3000]
+        else:
+            # Text extrahieren (erste 2 Seiten)
+            text = self._extract_relevant_text(pdf_path, for_triage=True)
         
         if not text.strip():
             # Stufe A: Lokale OCR via Tesseract (kostenlos, ~50-300ms)
@@ -976,7 +991,11 @@ Antwort NUR als JSON:
             logger.info(f"Confidence '{confidence}' -> Stufe 2 mit {s2_model} (mehr Text, praeziser)")
             
             # Mehr Text: 5 Seiten statt 2
-            full_text = self._extract_relevant_text(pdf_path, for_triage=False)
+            if pre_extracted_text is not None and pre_extracted_text.strip():
+                full_text = pre_extracted_text[:10000]
+            else:
+                full_text = self._extract_relevant_text(pdf_path, for_triage=False)
+
             if not full_text.strip():
                 full_text = text  # Fallback auf vorherigen Text
             

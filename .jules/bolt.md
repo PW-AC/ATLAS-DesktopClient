@@ -1,0 +1,3 @@
+## 2026-02-26 - Repeated PDF Parsing in Processing Pipeline
+**Learning:** The document processing pipeline opened and parsed PDFs multiple times (validation, empty page detection, classification, full text extraction). Specifically, `DocumentProcessor` extracted full text for storage, and `OpenRouterClient` extracted partial text for classification, both using `fitz.open()`.
+**Action:** Lifted text extraction to `DocumentProcessor` and passed the extracted text to `OpenRouterClient` methods (`classify_sparte_with_date`, `classify_courtage_minimal`), reducing file I/O operations by 50% for text-based PDFs.

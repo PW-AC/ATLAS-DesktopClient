@@ -719,12 +719,19 @@ class DocumentProcessor:
                                         # PDF ist gueltig -> KI-Klassifikation (wie Schritt 5b/6)
                                         pdf_path = repaired_path or local_path_fb
                                         self._check_and_log_empty_pages(doc, pdf_path)
+
+                                        # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
+                                        _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+
                                         openrouter = self._get_openrouter()
-                                        ki_result = openrouter.classify_sparte_with_date(pdf_path, **self._get_classify_kwargs())
+                                        ki_result = openrouter.classify_sparte_with_date(
+                                            pdf_path,
+                                            pre_extracted_text=_ai_extracted_text,
+                                            **self._get_classify_kwargs()
+                                        )
                                         if ki_result:
                                             _doc_cost_usd += ki_result.get('_server_cost_usd', 0) or 0
                                         
-                                        _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
                                         _ki_result_for_ai = ki_result
                                         
                                         if ki_result is None:
@@ -853,12 +860,16 @@ class DocumentProcessor:
                                     pdf_path = repaired_path or local_path
                                     # Leere-Seiten-Erkennung (informativ, blockiert nicht)
                                     self._check_and_log_empty_pages(doc, pdf_path)
-                                    openrouter = self._get_openrouter()
-                                    result = openrouter.classify_courtage_minimal(pdf_path)
                                     
-                                    # AI-Data: Volltext extrahieren + ki_result merken
-                                    # (muss im tempfile-Block passieren, da pdf_path danach geloescht wird)
+                                    # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
                                     _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+
+                                    openrouter = self._get_openrouter()
+                                    result = openrouter.classify_courtage_minimal(
+                                        pdf_path,
+                                        pre_extracted_text=_ai_extracted_text
+                                    )
+
                                     _ki_result_for_ai = result
                                     
                                     if result:
@@ -922,13 +933,19 @@ class DocumentProcessor:
                                     pdf_path = repaired_path or local_path
                                     # Leere-Seiten-Erkennung (informativ, blockiert nicht)
                                     self._check_and_log_empty_pages(doc, pdf_path)
+
+                                    # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
+                                    _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+
                                     openrouter = self._get_openrouter()
-                                    ki_result = openrouter.classify_sparte_with_date(pdf_path, **self._get_classify_kwargs())
+                                    ki_result = openrouter.classify_sparte_with_date(
+                                        pdf_path,
+                                        pre_extracted_text=_ai_extracted_text,
+                                        **self._get_classify_kwargs()
+                                    )
                                     if ki_result:
                                         _doc_cost_usd += ki_result.get('_server_cost_usd', 0) or 0
                                     
-                                    # AI-Data: Volltext extrahieren + ki_result merken
-                                    _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
                                     _ki_result_for_ai = ki_result
                                     
                                     # Schutz gegen None-Rueckgabe bei KI-Fehler
@@ -1001,10 +1018,16 @@ class DocumentProcessor:
                             else:
                                 pdf_path = repaired_path or local_path
                                 self._check_and_log_empty_pages(doc, pdf_path)
-                                openrouter = self._get_openrouter()
-                                result = openrouter.classify_courtage_minimal(pdf_path)
                                 
+                                # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
                                 _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+
+                                openrouter = self._get_openrouter()
+                                result = openrouter.classify_courtage_minimal(
+                                    pdf_path,
+                                    pre_extracted_text=_ai_extracted_text
+                                )
+
                                 _ki_result_for_ai = result
                                 
                                 if result:
@@ -1062,13 +1085,19 @@ class DocumentProcessor:
                                 pdf_path = repaired_path or local_path
                                 # Leere-Seiten-Erkennung (informativ, blockiert nicht)
                                 self._check_and_log_empty_pages(doc, pdf_path)
+
+                                # Volltext extrahieren vor KI-Klassifikation (Performance-Optimierung)
+                                _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
+
                                 openrouter = self._get_openrouter()
-                                ki_result = openrouter.classify_sparte_with_date(pdf_path, **self._get_classify_kwargs())
+                                ki_result = openrouter.classify_sparte_with_date(
+                                    pdf_path,
+                                    pre_extracted_text=_ai_extracted_text,
+                                    **self._get_classify_kwargs()
+                                )
                                 if ki_result:
                                     _doc_cost_usd += ki_result.get('_server_cost_usd', 0) or 0
                                 
-                                # AI-Data: Volltext extrahieren + ki_result merken
-                                _ai_extracted_text, _ai_page_count = self._extract_full_text(pdf_path)
                                 _ki_result_for_ai = ki_result
                                 
                                 # Schutz gegen None-Rueckgabe bei KI-Fehler
