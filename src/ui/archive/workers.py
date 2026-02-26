@@ -914,3 +914,235 @@ class SmartScanWorker(QThread):
         except Exception as e:
             logger.error(f"SmartScan Worker Fehler: {e}")
             self.error.emit(str(e))
+
+class ThumbnailWorker(QThread):
+    """Rendert PDF-Thumbnails im Hintergrund, damit die UI nicht blockiert."""
+    thumbnail_ready = Signal(int, bytes, int, int)  # page_idx, img_bytes, w, h
+
+    def __init__(self, pdf_path: str, page_count: int):
+        super().__init__()
+        self._pdf_path = pdf_path
+        self._page_count = page_count
+
+    def run(self):
+        try:
+            import fitz
+            try:
+                doc = fitz.open(self._pdf_path)
+            except Exception:
+                with open(self._pdf_path, 'rb') as f:
+                    data = f.read()
+                doc = fitz.open(stream=data, filetype="pdf")
+
+            for i in range(min(len(doc), self._page_count)):
+                page = doc[i]
+                zoom = 120.0 / page.rect.width
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat)
+                self.thumbnail_ready.emit(i, bytes(pix.samples), pix.width, pix.height)
+
+            doc.close()
+        except Exception as e:
+            logger.warning(f"Thumbnail-Worker Fehler: {e}")
+
+
+class DocumentLoadWorker(QThread):
+    """Worker zum Laden der Dokumente."""
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, docs_api: DocumentsAPI, filters: dict):
+        super().__init__()
+        self.docs_api = docs_api
+        self.filters = filters
+
+    def run(self):
+        try:
+            docs = self.docs_api.list_documents(**self.filters)
+            self.finished.emit(docs)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class UploadWorker(QThread):
+    """Worker zum Hochladen von Dateien."""
+    finished = Signal(object)  # Document or None
+    error = Signal(str)
+    progress = Signal(str)
+
+    def __init__(self, docs_api: DocumentsAPI, file_path: str, source_type: str):
+        super().__init__()
+        self.docs_api = docs_api
+        self.file_path = file_path
+        self.source_type = source_type
+
+    def run(self):
+        try:
+            self.progress.emit("Lade hoch...")
+            doc = self.docs_api.upload(self.file_path, self.source_type)
+            self.finished.emit(doc)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class AIRenameWorker(QThread):
+    """
+    Worker fuer KI-basierte PDF-Benennung.
+
+    Verarbeitet PDFs im Hintergrund mit zweistufigem KI-System:
+    1. Laedt PDF herunter
+    2. Stufe 1 (Triage): Schnelle Kategorisierung mit GPT-4o-mini
+    3. Stufe 2 (Detail): Detailanalyse mit GPT-4o nur bei Bedarf
+    4. Umbenennung auf Server
+    """
+    # Signale
+    finished = Signal(list)  # Liste von (doc_id, success, new_name_or_error)
+    progress = Signal(int, int, str)  # current, total, current_filename
+    single_finished = Signal(int, bool, str)  # doc_id, success, new_name_or_error
+    error = Signal(str)
+
+    def __init__(self, api_client, docs_api: DocumentsAPI, documents: List):
+        super().__init__()
+        self.api_client = api_client
+        self.docs_api = docs_api
+        self.documents = documents
+        self._cancelled = False
+
+    def cancel(self):
+        """Abbrechen der Verarbeitung."""
+        self._cancelled = True
+
+    def run(self):
+        from api.openrouter import OpenRouterClient
+
+        results = []
+        total = len(self.documents)
+
+        try:
+            # OpenRouter Client initialisieren
+            openrouter = OpenRouterClient(self.api_client)
+
+            for i, doc in enumerate(self.documents):
+                if self._cancelled:
+                    logger.info("KI-Benennung abgebrochen")
+                    break
+
+                self.progress.emit(i + 1, total, doc.original_filename)
+                logger.info(f"Verarbeite {i+1}/{total}: {doc.original_filename}")
+
+                # Bereits umbenannt? Skip.
+                if doc.ai_renamed:
+                    logger.info(f"Ueberspringe bereits umbenanntes Dokument: {doc.original_filename}")
+                    results.append((doc.id, True, doc.original_filename))
+                    self.single_finished.emit(doc.id, True, doc.original_filename)
+                    continue
+
+                # Nicht PDF? Skip.
+                if not doc.is_pdf:
+                    logger.info(f"Ueberspringe Nicht-PDF: {doc.original_filename}")
+                    results.append((doc.id, True, doc.original_filename))
+                    self.single_finished.emit(doc.id, True, doc.original_filename)
+                    continue
+
+                try:
+                    # PDF herunterladen (filename_override spart extra API-Call)
+                    temp_dir = tempfile.mkdtemp(prefix='bipro_ai_')
+                    pdf_path = self.docs_api.download(doc.id, temp_dir, filename_override=doc.original_filename)
+
+                    if not pdf_path or not os.path.exists(pdf_path):
+                        raise Exception("Download fehlgeschlagen")
+
+                    # Zweistufige KI-Klassifikation (Triage -> Detail bei Bedarf)
+                    classification = openrouter.classify_pdf_smart(pdf_path)
+                    logger.info(f"Klassifikation: {classification.target_box} ({classification.confidence})")
+
+                    # Neuen Dateinamen generieren
+                    original_ext = os.path.splitext(doc.original_filename)[1] or '.pdf'
+                    new_filename = classification.generate_filename(original_ext)
+
+                    # Auf Server umbenennen
+                    success = self.docs_api.rename_document(doc.id, new_filename, mark_ai_renamed=True)
+
+                    if success:
+                        logger.info(f"Umbenannt: {doc.original_filename} -> {new_filename}")
+                        results.append((doc.id, True, new_filename))
+                        self.single_finished.emit(doc.id, True, new_filename)
+                    else:
+                        raise Exception("Server-Update fehlgeschlagen")
+
+                    # Temporaere Dateien aufraeumen
+                    try:
+                        os.unlink(pdf_path)
+                        os.rmdir(temp_dir)
+                    except OSError:
+                        pass
+
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error(f"Fehler bei {doc.original_filename}: {error_msg}")
+
+                    # Fehler in DB speichern
+                    try:
+                        self.docs_api.update(doc.id, ai_processing_error=error_msg[:500])
+                    except Exception:
+                        pass
+
+                    results.append((doc.id, False, error_msg))
+                    self.single_finished.emit(doc.id, False, error_msg)
+
+            self.finished.emit(results)
+
+        except Exception as e:
+            logger.error(f"AIRenameWorker Fehler: {e}")
+            self.error.emit(str(e))
+
+
+class PDFSaveWorker(QThread):
+    """Worker zum asynchronen Speichern eines bearbeiteten PDFs auf dem Server."""
+    finished = Signal(bool)   # success
+    error = Signal(str)       # error_message
+
+    def __init__(self, docs_api, doc_id: int, file_path: str, parent=None):
+        super().__init__(parent)
+        self.docs_api = docs_api
+        self.doc_id = doc_id
+        self.file_path = file_path
+
+    def run(self):
+        try:
+            success = self.docs_api.replace_document_file(self.doc_id, self.file_path)
+            self.finished.emit(success)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class PDFRefreshWorker(QThread):
+    """Aktualisiert Leere-Seiten-Daten und Textinhalt nach PDF-Bearbeitung."""
+    finished = Signal(bool)
+
+    def __init__(self, docs_api, doc_id: int, pdf_path: str, parent=None):
+        super().__init__(parent)
+        self.docs_api = docs_api
+        self.doc_id = doc_id
+        self.pdf_path = pdf_path
+
+    def run(self):
+        try:
+            from services.empty_page_detector import get_empty_pages
+            empty_indices, total_pages = get_empty_pages(self.pdf_path)
+            if total_pages > 0:
+                self.docs_api.client.put(
+                    f'/documents/{self.doc_id}',
+                    json_data={
+                        'empty_page_count': len(empty_indices),
+                        'total_page_count': total_pages
+                    }
+                )
+
+            from services.early_text_extract import extract_and_save_text
+            extract_and_save_text(self.docs_api, self.doc_id, self.pdf_path)
+
+            self.finished.emit(True)
+        except Exception as e:
+            logger.error(f"PDF-Refresh nach Bearbeitung fehlgeschlagen fuer Dokument {self.doc_id}: {e}")
+            self.finished.emit(False)

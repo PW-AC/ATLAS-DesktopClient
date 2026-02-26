@@ -5,7 +5,7 @@ This document lists identified tasks for improving the performance, UI/UX, and c
 ## Performance
 
 1.  **Lazy Loading for PDF Thumbnails**
-    - **Current:** `_ThumbnailWorker` in `archive_view.py` and `PDFViewerDialog` renders all pages of a PDF upfront. For large PDFs, this causes UI freeze or high memory usage.
+    - **Current:** `ThumbnailWorker` (was `_ThumbnailWorker`) in `ui/archive/workers.py` and `PDFViewerDialog` renders all pages of a PDF upfront. For large PDFs, this causes UI freeze or high memory usage.
     - **Task:** Implement lazy loading in `QListWidget` or `QListView`. Only render thumbnails for pages currently visible in the viewport.
     - **Impact:** Significant performance improvement for large documents.
 
@@ -55,12 +55,14 @@ This document lists identified tasks for improving the performance, UI/UX, and c
 
 ## Refactoring
 
-1.  **[PRIORITY] Extract Dialogs**
-    - **Current:** `PDFViewerDialog` and `DuplicateCompareDialog` are large classes inside `archive_view.py`.
+1.  **[COMPLETED] Extract Dialogs**
+    - **Current:** `PDFViewerDialog`, `DuplicateCompareDialog` and `SpreadsheetViewerDialog` are in dedicated files in `src/ui/dialogs/`.
     - **Task:** Move these classes to `src/ui/dialogs/pdf_viewer.py` and `src/ui/dialogs/duplicate_compare.py`.
+    - **Status:** Completed. Also extracted `SpreadsheetViewerDialog` to `src/ui/dialogs/spreadsheet_viewer.py` and created `src/ui/utils/formatting.py` for shared utilities.
     - **Impact:** Better code organization and maintainability.
 
-2.  **Worker Extraction**
-    - **Current:** `DocumentLoadWorker`, `UploadWorker`, `AIRenameWorker` are in `archive_view.py`.
+2.  **[COMPLETED] Worker Extraction**
+    - **Current:** All worker classes are in `src/ui/archive/workers.py`.
     - **Task:** Move all worker classes to `src/ui/archive/workers.py`.
+    - **Status:** Completed. Moved `DocumentLoadWorker`, `UploadWorker`, `AIRenameWorker`, `ThumbnailWorker`, `PDFSaveWorker`, `PDFRefreshWorker` from `archive_view.py`.
     - **Impact:** Cleaner `ArchiveView` class, easier to test workers in isolation.
