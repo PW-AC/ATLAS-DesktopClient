@@ -1,7 +1,7 @@
 # AGENTS.md
 # ACENCIA ATLAS -- Desktop Client
 
-> **Version**: 3.4.0
+> **Version**: siehe `VERSION`-Datei (aktuell 2.2.6)
 > Detaillierte Dokumentation liegt im privaten Submodule `ATLAS_private - Doku - Backend/`.
 
 ---
@@ -54,17 +54,25 @@
 ## Projektstruktur (oeffentlich)
 
 ```
-src/                    Python Desktop-App
-  ui/                   UI-Layer (PySide6)
-  api/                  API-Client-Module
-  bipro/                BiPRO SOAP Client
-  services/             Business-Services
-  parser/               GDV-Parser
-  i18n/                 Internationalisierung
-  tests/                Smoke-Tests
-run.py                  Entry Point
-VERSION                 Versionsdatei
-requirements.txt        Dependencies
+src/                           Python Desktop-App (~130 Dateien, ~63.000 Zeilen)
+  ui/                          UI-Layer (PySide6)
+    admin/                     Admin-Bereich (16 Panels)
+      panels/                  Einzelne Admin-Panels
+    archive/                   Dokumentenarchiv (Workers)
+    provision/                 Provisionsmanagement (9 Panels)
+    styles/                    Design-Tokens
+  api/                         API-Client-Module (~22 Dateien)
+    openrouter/                KI-Integration (Klassifikation, OCR)
+  bipro/                       BiPRO SOAP Client (~7 Dateien)
+  services/                    Business-Services (~14 Dateien)
+  config/                      Konfiguration (VU-Endpoints, Zertifikate)
+  domain/                      Datenmodelle (GDV, Xempus)
+  parser/                      GDV-Parser
+  i18n/                        Internationalisierung (~1917 Keys)
+  tests/                       Smoke- und Stability-Tests (5 Dateien)
+run.py                         Entry Point
+VERSION                        Versionsdatei (aktuell 2.2.6)
+requirements.txt               Dependencies
 ```
 
 ## Interne Dokumentation
@@ -74,9 +82,19 @@ liegen im privaten Submodule:
 
 ```
 ATLAS_private - Doku - Backend/     (Git Submodule, privat)
-  docs/                             Kern- und Entwickler-Dokumentation
+  docs/                             Kern- und Entwickler-Dokumentation (3-Stufen-Hierarchie)
+    00_CORE/                        Kern-Dokumentation (6 Dateien + Bibel)
+    01_DEVELOPMENT/                 Entwickler-Dokumentation
+    02_SECURITY/                    Sicherheit & Berechtigungen
+    03_REFERENCE/                   Referenz-Material
+    04_PRODUCT/                     Produkt-Planung (Roadmap, Ideas)
+    99_ARCHIVE/                     Historische Dokumente
   governance/                       Pipeline-Skripte
-  testdata/                         Testdaten
-  BiPro-Webspace Spiegelung Live/   PHP REST-API Backend
-  AGENTS.md                         Vollstaendige Agent-Instruktionen
+  build-tools/                      Build-Werkzeuge
+  scripts/                          Hilfsskripte
+  testdata/                         Testdaten (inkl. Provision)
+  BiPro-Webspace Spiegelung Live/   PHP REST-API Backend (~29 Dateien, ~14.600 Zeilen)
+    api/lib/                        Shared Libraries (DB, JWT, Crypto, Permissions)
+    setup/                          DB-Migrationen (26 Skripte)
+  AGENTS.md                         Vollstaendige Agent-Instruktionen (Single Source of Truth)
 ```

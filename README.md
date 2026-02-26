@@ -110,10 +110,10 @@
 ### Installation
 
 ```bash
-# Repository klonen oder Ordner öffnen
-cd "X:\projekte\5510_GDV Tool V1"
+# Repository klonen oder Ordner oeffnen
+cd "X:\projekte\5530_ATLAS MIT GIT\ATLAS-DesktopClient"
 
-# Abhängigkeiten installieren
+# Abhaengigkeiten installieren
 pip install -r requirements.txt
 ```
 
@@ -194,115 +194,85 @@ python run.py
 ## Projektstruktur
 
 ```
-5510_GDV Tool V1/
+ATLAS-DesktopClient/
 ├── run.py                     # Entry Point
-├── VERSION                    # Zentrale Versionsdatei (3.0.0)
+├── VERSION                    # Zentrale Versionsdatei (aktuell 2.2.6)
 ├── requirements.txt           # Python-Abhaengigkeiten
 ├── requirements-dev.txt       # Dev-Dependencies (pytest, ruff)
+├── requirements-lock.txt      # Gelockte Dependencies
 ├── AGENTS.md                  # Agent-Anweisungen (aktuell halten!)
 ├── README.md                  # Diese Datei
-├── build.bat                  # Build-Script (PyInstaller + Inno Setup)
+├── build_config.spec          # PyInstaller Build-Konfiguration
 ├── installer.iss              # Inno Setup Installer-Konfiguration
 │
-├── src/                       # Quellcode
+├── src/                       # Quellcode (~130 Dateien, ~63.000 Zeilen)
 │   ├── main.py               # Qt-Anwendung
+│   ├── background_updater.py # Headless Hintergrund-Updater
 │   │
-│   ├── api/                  # Server-API Clients
+│   ├── api/                  # Server-API Clients (~22 Dateien)
 │   │   ├── client.py         # Base-Client mit JWT-Auth + Retry
 │   │   ├── documents.py      # Dokumenten-Operationen (Box-Support)
-│   │   ├── vu_connections.py # VU-Verbindungen API
-│   │   ├── admin.py          # Admin API (Nutzerverwaltung)
-│   │   ├── messages.py       # Mitteilungen + Notification-Polling API (NEU v2.0.0)
-│   │   ├── chat.py           # 1:1 Chat API (NEU v2.0.0)
+│   │   ├── provision.py      # Provisions-API
+│   │   ├── auth.py           # Login/Logout, User-Model
+│   │   ├── xempus.py         # Xempus Insight Engine API
+│   │   ├── bipro_events.py   # BiPRO-Events API
 │   │   ├── smartscan.py      # SmartScan + EmailAccounts API
-│   │   ├── openrouter.py     # KI-Klassifikation (OpenRouter/OpenAI Proxy)
-│   │   ├── ai_providers.py   # KI-Provider API Client (NEU v2.1.2)
-│   │   ├── model_pricing.py  # Modell-Preise + Request-Historie (NEU v2.1.2)
-│   │   ├── provision.py      # Provisions-API (NEU v3.0.0)
-│   │   ├── passwords.py      # Passwort-Verwaltung API
-│   │   ├── releases.py       # Auto-Update API
-│   │   ├── processing_history.py  # Audit-Trail API
-│   │   └── document_rules.py # Dokumenten-Regeln API (NEU v2.1.3)
+│   │   ├── openrouter/       # KI-Integration (Klassifikation, OCR)
+│   │   └── ...               # (15 weitere Module)
 │   │
-│   ├── bipro/                # BiPRO SOAP Client
+│   ├── bipro/                # BiPRO SOAP Client (7 Dateien)
 │   │   ├── transfer_service.py  # BiPRO 410 STS + 430 Transfer
+│   │   ├── workers.py        # 6 QThread-Worker
 │   │   ├── bipro_connector.py   # SmartAdmin vs. Standard-Flow
-│   │   ├── rate_limiter.py   # AdaptiveRateLimiter
-│   │   └── categories.py     # Kategorie-Mapping
+│   │   └── ...
 │   │
-│   ├── services/             # Business-Logik
-│   │   ├── data_cache.py     # Cache + Auto-Refresh
-│   │   ├── document_processor.py  # KI-Klassifikation
-│   │   ├── provision_import.py    # VU/Xempus-Parser (NEU v3.0.0)
-│   │   ├── pdf_unlock.py     # PDF-Entsperrung
-│   │   ├── zip_handler.py    # ZIP-Entpackung
-│   │   ├── msg_handler.py    # Outlook .msg Verarbeitung
-│   │   ├── update_service.py # Auto-Update Service
-│   │   ├── empty_page_detector.py  # Leere-Seiten-Erkennung (NEU v2.0.2)
-│   │   ├── early_text_extract.py   # Proaktive Text-Extraktion (NEU v2.0.3)
-│   │   ├── cost_calculator.py # Token-Zaehlung + Kostenberechnung (NEU v2.1.2)
-│   │   └── atomic_ops.py    # Atomic File Operations
+│   ├── services/             # Business-Logik (14 Dateien)
+│   │   ├── document_processor.py  # KI-Klassifikation (~2.327 Z.)
+│   │   ├── data_cache.py     # Cache + Auto-Refresh (~620 Z.)
+│   │   ├── provision_import.py    # VU/Xempus-Parser
+│   │   ├── xempus_parser.py  # Xempus 5-Sheet Parser
+│   │   └── ...
 │   │
-│   ├── domain/               # Datenmodelle
-│   │   ├── models.py         # Contract, Customer, Risk, Coverage
-│   │   └── mapper.py         # ParsedRecord → Domain-Objekt
+│   ├── domain/               # Datenmodelle (GDV + Xempus)
+│   ├── config/               # Konfiguration (VU-Endpoints, Zertifikate)
+│   ├── i18n/                 # Internationalisierung (~1.917 Keys)
+│   ├── layouts/              # GDV-Satzart-Definitionen
+│   ├── parser/               # GDV Fixed-Width Parser
+│   ├── tests/                # Tests (6 Dateien: Smoke, Security, Stability, Provision)
 │   │
-│   ├── config/               # Konfiguration
-│   │   ├── processing_rules.py  # Verarbeitungsregeln + BiPRO-Codes
-│   │   ├── ai_models.py      # Modell-Definitionen pro Provider (NEU v2.1.2)
-│   │   ├── vu_endpoints.py   # VU-Endpunkt-Konfiguration
-│   │   ├── smartadmin_endpoints.py # SmartAdmin VU-Endpunkte (47 VUs)
-│   │   └── certificates.py   # Zertifikat-Manager (PFX/P12)
-│   │
-│   ├── i18n/                 # Internationalisierung
-│   │   └── de.py             # Deutsche UI-Texte (~1380+ Keys)
-│   │
-│   ├── layouts/
-│   │   └── gdv_layouts.py    # GDV-Satzart-Definitionen
-│   │
-│   ├── parser/
-│   │   └── gdv_parser.py     # Fixed-Width Parser
-│   │
-│   └── ui/                   # Benutzeroberflaeche
+│   └── ui/                   # Benutzeroberflaeche (~50 Dateien)
 │       ├── main_hub.py       # Navigation + Drag & Drop + NotificationPoller
-│       ├── message_center_view.py  # Mitteilungszentrale Dashboard (NEU v2.0.0)
-│       ├── chat_view.py      # Vollbild-Chat 1:1 (NEU v2.0.0)
-│       ├── bipro_view.py     # BiPRO Datenabruf + MailImportWorker
-│       ├── archive_boxes_view.py  # Dokumentenarchiv (Box-System)
-│       ├── admin_view.py     # Administration (15 Panels, Sidebar)
-│       ├── provision/        # Provisionsmanagement (NEU v3.0.0)
-│       │   ├── provision_hub.py   # Hub mit Sidebar (7 Panels)
+│       ├── bipro_view.py     # BiPRO Datenabruf (~4.178 Z.)
+│       ├── archive_boxes_view.py  # Dokumentenarchiv (~5.660 Z.)
+│       ├── message_center_view.py # Mitteilungszentrale
+│       ├── chat_view.py      # Vollbild-Chat 1:1
+│       ├── admin/             # Admin-Bereich (16 Panels)
+│       │   ├── admin_shell.py    # Shell mit Sidebar
+│       │   └── panels/          # 16 Panel-Dateien (inkl. server_health.py)
+│       ├── provision/         # Provisionsmanagement (9 Panels)
+│       │   ├── provision_hub.py  # Hub mit Sidebar
 │       │   ├── dashboard_panel.py # KPI + Berater-Ranking
-│       │   ├── employees_panel.py # Mitarbeiter-CRUD
-│       │   ├── contracts_panel.py # Vertraege
-│       │   ├── commissions_panel.py # Provisionen + Auto-Match
-│       │   ├── import_panel.py    # VU/Xempus-Import
-│       │   ├── mappings_panel.py  # Vermittler-Zuordnung
-│       │   └── billing_panel.py   # Monatsabrechnungen
+│       │   └── ...               # (12 weitere Dateien)
+│       ├── archive/           # Archiv-Worker
 │       ├── gdv_editor_view.py # GDV-Editor
-│       ├── toast.py          # Toast-Benachrichtigungen + Progress
-│       ├── main_window.py    # GDV Hauptfenster
-│       ├── partner_view.py   # Partner-Uebersicht
-│       ├── login_dialog.py   # Login
-│       ├── update_dialog.py  # Auto-Update Dialog
-│       └── styles/tokens.py  # Design-Tokens (Farben, Fonts)
+│       ├── toast.py           # Toast-Benachrichtigungen + Progress
+│       └── styles/tokens.py   # Design-Tokens (Farben, Fonts)
 │
-├── BiPro-Webspace Spiegelung Live/  # Server-API (LIVE synchronisiert!)
-│   └── api/                  # PHP REST API (~40 Endpunkte)
-│       ├── index.php         # Router
-│       ├── lib/              # Shared Libraries (DB, JWT, Permissions)
-│       └── lib/PHPMailer/    # SMTP-Versand
-│
-├── testdata/                  # Testdaten
-│   ├── sample.gdv
-│   └── create_testdata.py
-│
-└── docs/                      # Dokumentation
-    ├── ARCHITECTURE.md
-    ├── DEVELOPMENT.md
-    ├── DOMAIN.md
-    ├── BIPRO_ENDPOINTS.md
-    └── ui/UX_RULES.md
+├── ATLAS_private - Doku - Backend/  # Git Submodule (privat)
+│   ├── BiPro-Webspace Spiegelung Live/  # Server-API (LIVE synchronisiert!)
+│   │   ├── api/               # PHP REST API (29 Dateien, ~14.600 Zeilen)
+│   │   │   ├── index.php      # Router
+│   │   │   ├── lib/           # Shared Libraries (DB, JWT, Crypto, Permissions)
+│   │   │   └── lib/PHPMailer/ # SMTP-Versand
+│   │   └── setup/             # DB-Migrationen (26 Skripte)
+│   ├── docs/                  # Technische Dokumentation
+│   │   ├── 00_CORE/           # Kern-Dokumentation
+│   │   ├── 01_DEVELOPMENT/    # Entwickler-Dokumentation
+│   │   ├── 02_SECURITY/       # Sicherheit
+│   │   ├── 03_REFERENCE/      # Referenz-Material
+│   │   └── 04_PRODUCT/        # Produkt-Planung
+│   ├── governance/            # Pipeline-Skripte
+│   └── testdata/              # Testdaten
 ```
 
 ---
