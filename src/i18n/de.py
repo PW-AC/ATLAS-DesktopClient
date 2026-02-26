@@ -928,6 +928,8 @@ EMAIL_INBOX_FILTER_ALL = "Alle"
 EMAIL_INBOX_FILTER_NEW = "Neu"
 EMAIL_INBOX_FILTER_PROCESSED = "Verarbeitet"
 EMAIL_INBOX_FILTER_IGNORED = "Ignoriert"
+EMAIL_INBOX_IGNORE_SUCCESS = "E-Mail erfolgreich ignoriert."
+EMAIL_INBOX_IGNORE_ERROR = "Fehler beim Ignorieren der E-Mail."
 
 # --- IMAP Import Worker ---
 IMAP_IMPORT_STARTING = "Starte IMAP-Import..."

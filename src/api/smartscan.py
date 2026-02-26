@@ -499,3 +499,20 @@ class EmailAccountsAPI:
                 f"als uebersprungen: {e}"
             )
             raise
+
+    def ignore_mail(self, inbox_id: int) -> bool:
+        """
+        Markiert eine E-Mail als ignoriert (Admin).
+
+        Args:
+            inbox_id: ID der E-Mail
+
+        Returns:
+            True bei Erfolg
+        """
+        try:
+            response = self.client.put(f'/email-inbox/{inbox_id}/ignore')
+            return response.get('success', False)
+        except APIError as e:
+            logger.error(f"Fehler beim Ignorieren der E-Mail {inbox_id}: {e}")
+            raise

@@ -317,5 +317,19 @@ class EmailInboxPanel(QWidget):
         """Markiert eine Mail als ignoriert."""
         if row < 0 or row >= len(self._inbox_data):
             return
-        # TODO: API-Call zum Ignorieren
-        self._load_email_inbox()
+
+        mail = self._inbox_data[row]
+        mail_id = mail.get('id')
+        if not mail_id:
+            return
+
+        try:
+            success = self._email_accounts_api.ignore_mail(mail_id)
+            if success:
+                self._toast_manager.show_success(texts.EMAIL_INBOX_IGNORE_SUCCESS)
+                self._load_email_inbox()
+            else:
+                self._toast_manager.show_error(texts.EMAIL_INBOX_IGNORE_ERROR)
+        except Exception as e:
+            logger.error(f"Fehler beim Ignorieren der Mail {mail_id}: {e}")
+            self._toast_manager.show_error(str(e))
