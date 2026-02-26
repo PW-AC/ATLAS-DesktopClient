@@ -12,11 +12,11 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QLabel, QCheckBox,
     QProgressBar
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QEvent
 from PySide6.QtGui import QFont, QPixmap, QAction, QIcon, QPainter, QColor, QPen
 
-from ui.styles.tokens import TEXT_SECONDARY
-from i18n.de import PASSWORD_SHOW, PASSWORD_HIDE
+from ui.styles.tokens import TEXT_SECONDARY, ERROR
+from i18n.de import PASSWORD_SHOW, PASSWORD_HIDE, LOGIN_CAPS_LOCK_WARNING
 
 from api.client import APIClient, APIError
 from api.auth import AuthAPI, AuthState
@@ -83,7 +83,25 @@ class LoginDialog(QDialog):
         self.setModal(True)
         
         self._setup_ui()
+        self.password_input.installEventFilter(self)
         self._check_connection()
+
+    def eventFilter(self, source, event):
+        """Event-Filter zur Erkennung von Caps Lock."""
+        if source == self.password_input and event.type() == QEvent.KeyPress:
+            text = event.text()
+            if text and text.isalpha():
+                is_upper = text.isupper()
+                modifiers = event.modifiers()
+                shift_pressed = bool(modifiers & Qt.ShiftModifier)
+
+                # Logic: Upper without Shift OR Lower with Shift => Caps Lock ON
+                if (is_upper and not shift_pressed) or (not is_upper and shift_pressed):
+                    self.caps_lock_label.show()
+                else:
+                    self.caps_lock_label.hide()
+
+        return super().eventFilter(source, event)
     
     def _generate_eye_icon(self, crossed=False):
         """Generiert ein Augen-Icon (optional durchgestrichen) mit Primitiven."""
@@ -190,6 +208,12 @@ class LoginDialog(QDialog):
 
         form_layout.addRow("Passwort:", self.password_input)
         
+        # Caps Lock Warning (hidden by default)
+        self.caps_lock_label = QLabel(LOGIN_CAPS_LOCK_WARNING)
+        self.caps_lock_label.setStyleSheet(f"color: {ERROR}; font-size: 11px; margin-top: -5px;")
+        self.caps_lock_label.hide()
+        form_layout.addRow("", self.caps_lock_label)
+
         layout.addLayout(form_layout)
         
         # Angemeldet bleiben
