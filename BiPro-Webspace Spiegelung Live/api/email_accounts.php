@@ -811,6 +811,19 @@ function handleEmailInboxRequest(?string $idOrAction, string $method): void {
         json_error('Unbekannte Anhangs-Aktion', 404);
     }
 
+    // Routes fuer /email-inbox/{id}/ignore
+    if (is_numeric($idOrAction)) {
+        $route = isset($_GET['route']) ? trim($_GET['route'], '/') : '';
+        $routeParts = explode('/', $route);
+        // /email-inbox/{id}/ignore -> [email-inbox, {id}, ignore]
+        $subAction = $routeParts[2] ?? null;
+
+        if ($subAction === 'ignore' && $method === 'PUT') {
+            handleIgnoreInboxMail((int)$idOrAction, $payload);
+            return;
+        }
+    }
+
     switch ($method) {
         case 'GET':
             if (empty($idOrAction)) {
@@ -1024,4 +1037,37 @@ function handleMarkAttachmentStatus(int $attachmentId, array $payload): void {
     ]);
 
     json_success([], "Anhang als {$status} markiert");
+}
+
+/**
+ * PUT /email-inbox/{id}/ignore
+ * Markiert eine E-Mail als ignoriert.
+ */
+function handleIgnoreInboxMail(int $id, array $payload): void {
+    $mail = Database::queryOne('SELECT * FROM email_inbox WHERE id = ?', [$id]);
+    if (!$mail) {
+        json_error('E-Mail nicht gefunden', 404);
+    }
+
+    Database::execute(
+        'UPDATE email_inbox SET status = ? WHERE id = ?',
+        ['ignored', $id]
+    );
+
+    ActivityLogger::log([
+        'user_id' => $payload['user_id'],
+        'username' => $payload['username'] ?? '',
+        'action_category' => 'email_inbox',
+        'action' => 'email_ignored',
+        'entity_type' => 'email_inbox',
+        'entity_id' => $id,
+        'description' => "E-Mail '{$mail['subject']}' ignoriert",
+        'details' => [
+            'subject' => $mail['subject'],
+            'from' => $mail['from_address']
+        ],
+        'status' => 'success',
+    ]);
+
+    json_success([], 'E-Mail ignoriert');
 }
