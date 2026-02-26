@@ -11,7 +11,7 @@ Performance: ~5-20ms pro Seite, typisches 10-Seiten-PDF unter 200ms.
 """
 
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +140,13 @@ def is_page_empty(page) -> bool:
         return False
 
 
-def get_empty_pages(pdf_path: str) -> Tuple[List[int], int]:
+def get_empty_pages(pdf_path: str, pdf_doc: Optional[object] = None) -> Tuple[List[int], int]:
     """
     Analysiert ein PDF und gibt die Indizes aller leeren Seiten zurueck.
     
     Args:
-        pdf_path: Pfad zur PDF-Datei
+        pdf_path: Pfad zur PDF-Datei (genutzt fuer Logging oder wenn pdf_doc None)
+        pdf_doc: Optionales fitz.Document Objekt (wenn vorhanden, wird es genutzt und NICHT geschlossen)
         
     Returns:
         Tuple aus (Liste der leeren Seiten-Indizes, Gesamtseitenzahl).
@@ -157,12 +158,19 @@ def get_empty_pages(pdf_path: str) -> Tuple[List[int], int]:
         logger.warning("PyMuPDF nicht installiert, ueberspringe Leere-Seiten-Erkennung")
         return ([], 0)
     
+    doc = pdf_doc
+    should_close = False
+
     try:
-        doc = fitz.open(pdf_path)
+        if doc is None:
+            doc = fitz.open(pdf_path)
+            should_close = True
+
         total_pages = len(doc)
         
         if total_pages == 0:
-            doc.close()
+            if should_close:
+                doc.close()
             return ([], 0)
         
         empty_pages: List[int] = []
@@ -171,8 +179,6 @@ def get_empty_pages(pdf_path: str) -> Tuple[List[int], int]:
             page = doc[i]
             if is_page_empty(page):
                 empty_pages.append(i)
-        
-        doc.close()
         
         if empty_pages:
             if len(empty_pages) == total_pages:
@@ -188,3 +194,9 @@ def get_empty_pages(pdf_path: str) -> Tuple[List[int], int]:
     except Exception as e:
         logger.warning(f"Leere-Seiten-Erkennung fehlgeschlagen fuer {pdf_path}: {e}")
         return ([], 0)
+    finally:
+        if should_close and doc:
+            try:
+                doc.close()
+            except Exception:
+                pass
