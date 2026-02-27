@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor
 from typing import List, Dict, Optional
 from datetime import datetime
 
-from api.provision import (
+from domain.provision.entities import (
     Commission, Employee, Contract, VermittlerMapping,
     ContractSearchResult, BeraterAbrechnung, ImportBatch,
     DashboardSummary,
@@ -322,18 +322,27 @@ class VuBatchesModel(QAbstractTableModel):
 # =============================================================================
 
 
+VU_BADGE_COLORS = {
+    'Allianz': '#003781',
+    'SwissLife': '#E30613',
+    'VB': '#009640',
+    'Xempus': '#5b8def',
+}
+
+
 class PositionsModel(QAbstractTableModel):
     COL_DATUM = 0
     COL_VU = 1
     COL_VSNR = 2
     COL_KUNDE = 3
     COL_BETRAG = 4
-    COL_XEMPUS_BERATER = 5
-    COL_BERATER = 6
-    COL_STATUS = 7
-    COL_BERATER_ANTEIL = 8
-    COL_SOURCE = 9
-    COL_MENU = 10
+    COL_BUCHUNGSART = 5
+    COL_XEMPUS_BERATER = 6
+    COL_BERATER = 7
+    COL_STATUS = 8
+    COL_BERATER_ANTEIL = 9
+    COL_SOURCE = 10
+    COL_MENU = 11
 
     COLUMNS = [
         texts.PROVISION_POS_COL_DATUM,
@@ -341,6 +350,7 @@ class PositionsModel(QAbstractTableModel):
         texts.PROVISION_POS_COL_VSNR,
         texts.PROVISION_POS_COL_KUNDE,
         texts.PROVISION_POS_COL_BETRAG,
+        texts.PROVISION_POS_COL_BUCHUNGSART,
         texts.PROVISION_POS_COL_XEMPUS_BERATER,
         texts.PROVISION_POS_COL_BERATER,
         texts.PROVISION_POS_COL_STATUS,
@@ -355,6 +365,7 @@ class PositionsModel(QAbstractTableModel):
         texts.PROVISION_TIP_COL_VSNR,
         texts.PROVISION_TIP_COL_KUNDE,
         build_rich_tooltip(texts.PROVISION_TIP_COL_BETRAG),
+        texts.PROVISION_TIP_COL_BUCHUNGSART,
         texts.PROVISION_TIP_COL_XEMPUS_BERATER,
         texts.PROVISION_TIP_COL_BERATER,
         build_rich_tooltip(
@@ -402,7 +413,7 @@ class PositionsModel(QAbstractTableModel):
 
         if role == Qt.DisplayRole:
             if col == self.COL_VU:
-                return c.versicherer or c.vu_name or ""
+                return c.vu_name or c.versicherer or ""
             elif col == self.COL_DATUM:
                 d = c.auszahlungsdatum or ""
                 if len(d) >= 10:
@@ -418,6 +429,8 @@ class PositionsModel(QAbstractTableModel):
                 return c.vsnr or ""
             elif col == self.COL_BETRAG:
                 return format_eur(c.betrag)
+            elif col == self.COL_BUCHUNGSART:
+                return c.buchungsart_raw or ART_LABELS.get(c.art, c.art)
             elif col == self.COL_BERATER_ANTEIL:
                 return format_eur(c.berater_anteil) if c.berater_anteil is not None else ""
             elif col == self.COL_STATUS:
@@ -435,12 +448,20 @@ class PositionsModel(QAbstractTableModel):
             if col in (self.COL_BETRAG, self.COL_BERATER_ANTEIL):
                 return Qt.AlignRight | Qt.AlignVCenter
 
-        if role == Qt.ForegroundRole and col == self.COL_BETRAG:
-            if c.betrag < 0:
+        if role == Qt.ForegroundRole:
+            if col == self.COL_BETRAG and c.betrag < 0:
                 return QColor(ERROR)
+            if col == self.COL_VU:
+                vu = c.vu_name or c.versicherer or ''
+                color = VU_BADGE_COLORS.get(vu)
+                if color:
+                    return QColor(color)
 
         if role == Qt.UserRole:
             return c
+
+        if role == Qt.UserRole + 1:
+            return getattr(c, 'is_relevant', True)
 
         return None
 

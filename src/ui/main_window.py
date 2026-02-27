@@ -975,6 +975,7 @@ class GDVMainWindow(QMainWindow):
         self._archive_window.setMinimumSize(1000, 600)
         
         archive_view = ArchiveView(self._api_client, self._archive_window)
+        archive_view._toast_manager = self._toast_manager
         archive_view.open_gdv_requested.connect(self._on_open_gdv_from_archive)
         
         self._archive_window.setCentralWidget(archive_view)

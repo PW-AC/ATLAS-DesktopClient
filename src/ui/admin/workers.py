@@ -206,6 +206,41 @@ class LoadHealthHistoryWorker(QThread):
             self.error.emit(str(e))
 
 
+class LoadMigrationsWorker(QThread):
+    """Laedt verfuegbare Migrationsdateien im Hintergrund."""
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, admin_api: AdminAPI):
+        super().__init__()
+        self._admin_api = admin_api
+
+    def run(self):
+        try:
+            result = self._admin_api.get_migrations()
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class ExecuteMigrationWorker(QThread):
+    """Fuehrt eine Migrationsdatei im Hintergrund aus."""
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, admin_api: AdminAPI, filename: str):
+        super().__init__()
+        self._admin_api = admin_api
+        self._filename = filename
+
+    def run(self):
+        try:
+            result = self._admin_api.execute_migration(self._filename)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class ImapPollWorker(QThread):
     """Ruft IMAP-Postfach im Hintergrund ab (verhindert UI-Freeze)."""
     finished = Signal(dict)

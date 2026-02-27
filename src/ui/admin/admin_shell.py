@@ -30,6 +30,7 @@ KOMMUNIKATION:
 
 SYSTEM:
 15. Server-Gesundheit (Health-Check mit ~35 Einzel-Checks + Trend-Vergleich)
+16. Migrationen (DB-Migrationen aus setup/ anzeigen + ausfuehren)
 
 Extrahiert aus admin_view.py (Schritt 4 Refactoring).
 """
@@ -63,7 +64,7 @@ from ui.styles.tokens import (
 
 logger = logging.getLogger(__name__)
 
-NUM_PANELS = 16
+NUM_PANELS = 17
 
 
 class AdminNavButton(QPushButton):
@@ -246,6 +247,7 @@ class AdminView(QWidget):
         # === SYSTEM ===
         add_section(texts.ADMIN_SECTION_SYSTEM)
         self._btn_server_health      = add_nav("›", texts.ADMIN_TAB_SERVER_HEALTH, 15)
+        self._btn_migrations         = add_nav("›", texts.ADMIN_TAB_MIGRATIONS, 16)
         
         sb_layout.addStretch()
         root.addWidget(admin_sidebar)
@@ -378,6 +380,11 @@ class AdminView(QWidget):
         elif index == 15:
             from ui.admin.panels.server_health import ServerHealthPanel
             return ServerHealthPanel(
+                api_client=ac, toast_manager=tm, admin_api=self._admin_api
+            )
+        elif index == 16:
+            from ui.admin.panels.migrations import MigrationsPanel
+            return MigrationsPanel(
                 api_client=ac, toast_manager=tm, admin_api=self._admin_api
             )
         

@@ -14,6 +14,13 @@ from PySide6.QtCore import Signal, Qt, QTimer
 from api.client import APIClient
 from api.auth import AuthAPI
 from api.provision import ProvisionAPI
+from infrastructure.api.provision_repository import ProvisionRepository
+from presenters.provision.positions_presenter import PositionsPresenter
+from presenters.provision.dashboard_presenter import DashboardPresenter
+from presenters.provision.import_presenter import ImportPresenter
+from presenters.provision.clearance_presenter import ClearancePresenter
+from presenters.provision.distribution_presenter import DistributionPresenter
+from presenters.provision.payouts_presenter import PayoutsPresenter
 from ui.styles.tokens import (
     SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_WIDTH_INT,
     ACCENT_500, PRIMARY_500, PRIMARY_0, PRIMARY_900,
@@ -95,6 +102,16 @@ class ProvisionHub(QWidget):
         self._toast_manager = None
         self._nav_buttons = []
         self._panels_loaded = set()
+
+        self._repository = ProvisionRepository(api_client)
+        self._presenters = {
+            'positions': PositionsPresenter(self._repository),
+            'dashboard': DashboardPresenter(self._repository),
+            'import': ImportPresenter(self._repository),
+            'clearance': ClearancePresenter(self._repository),
+            'distribution': DistributionPresenter(self._repository),
+            'payouts': PayoutsPresenter(self._repository),
+        }
 
         user = self._auth_api.current_user
         if not user or not user.has_permission('provision_access'):
@@ -249,25 +266,31 @@ class ProvisionHub(QWidget):
         try:
             if index == self.PANEL_OVERVIEW:
                 from ui.provision.dashboard_panel import DashboardPanel
-                panel = DashboardPanel(self._provision_api)
+                panel = DashboardPanel()
+                panel.set_presenter(self._presenters['dashboard'])
             elif index == self.PANEL_IMPORT:
                 from ui.provision.abrechnungslaeufe_panel import AbrechnungslaeufPanel
-                panel = AbrechnungslaeufPanel(self._provision_api)
+                panel = AbrechnungslaeufPanel()
+                panel.set_presenter(self._presenters['import'])
             elif index == self.PANEL_VU:
                 from ui.provision.provisionspositionen_panel import ProvisionspositionenPanel
-                panel = ProvisionspositionenPanel(self._provision_api)
+                panel = ProvisionspositionenPanel()
+                panel.set_presenter(self._presenters['positions'])
             elif index == self.PANEL_XEMPUS:
                 from ui.provision.xempus_insight_panel import XempusInsightPanel
                 panel = XempusInsightPanel(self._provision_api)
             elif index == self.PANEL_CLEARANCE:
                 from ui.provision.zuordnung_panel import ZuordnungPanel
-                panel = ZuordnungPanel(self._provision_api)
+                panel = ZuordnungPanel()
+                panel.set_presenter(self._presenters['clearance'])
             elif index == self.PANEL_DISTRIBUTION:
                 from ui.provision.verteilschluessel_panel import VerteilschluesselPanel
-                panel = VerteilschluesselPanel(self._provision_api)
+                panel = VerteilschluesselPanel()
+                panel.set_presenter(self._presenters['distribution'])
             elif index == self.PANEL_PAYOUTS:
                 from ui.provision.auszahlungen_panel import AuszahlungenPanel
-                panel = AuszahlungenPanel(self._provision_api)
+                panel = AuszahlungenPanel()
+                panel.set_presenter(self._presenters['payouts'])
             elif index == self.PANEL_SETTINGS:
                 from ui.provision.settings_panel import SettingsPanel
                 panel = SettingsPanel(self._provision_api)

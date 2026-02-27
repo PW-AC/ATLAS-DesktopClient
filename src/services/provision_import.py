@@ -3,6 +3,9 @@ Import-Service fuer Provisionsmanagement.
 
 Parst VU-Provisionslisten (Allianz, SwissLife, VB) und Xempus-Exporte
 und bereitet die Daten fuer den Server-Import auf.
+
+Normalisierungsfunktionen sind in domain/provision/normalization.py
+definiert und werden hier re-exportiert fuer Abwaertskompatibilitaet.
 """
 
 import re
@@ -21,79 +24,12 @@ except ImportError:
     HAS_OPENPYXL = False
     logger.warning("openpyxl nicht installiert -- Excel-Import nicht verfuegbar")
 
-
-def normalize_vsnr(raw) -> str:
-    """VSNR normalisieren: Nicht-Ziffern raus, ALLE Nullen raus (fuehrend + intern).
-    
-    Beispiele:
-    - "ABC-001-234" -> "1234"
-    - "00123045" -> "12345"
-    - "1.23E+10" -> "123" (Scientific Notation)
-    
-    Identisch mit PHP normalizeVsnr() fuer konsistentes Matching.
-    """
-    s = str(raw).strip()
-    if not s:
-        return ''
-    # Scientific notation (z.B. aus Excel) in Integer konvertieren
-    if 'e' in s.lower() and (',' in s or '.' in s):
-        s = s.replace(',', '.')
-        try:
-            num = float(s)
-            if num > 0 and not (num != num):  # not NaN
-                s = f'{int(num)}'
-        except (ValueError, OverflowError):
-            pass
-    # Alle Nicht-Ziffern entfernen (Buchstaben, Sonderzeichen, Leerzeichen)
-    digits = re.sub(r'\D', '', s)
-    # ALLE Nullen entfernen (fuehrend UND intern) fuer robustes Matching
-    no_zeros = digits.replace('0', '')
-    return no_zeros if no_zeros else '0'
-
-
-def normalize_vermittler_name(name: str) -> str:
-    """Vermittler-Namen normalisieren fuer Matching."""
-    name = name.strip().lower()
-    replacements = {'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss'}
-    for k, v in replacements.items():
-        name = name.replace(k, v)
-    name = re.sub(r'[^a-z0-9\s]', '', name)
-    name = re.sub(r'\s+', ' ', name)
-    return name.strip()
-
-
-def normalize_for_db(name: str) -> str:
-    """Person-Namen normalisieren fuer DB-Spalte versicherungsnehmer_normalized.
-
-    Identisch mit PHP normalizeForDb(): lowercase, Umlaute, Klammern aufloesen,
-    Sonderzeichen raus.
-    """
-    if not name:
-        return ''
-    name = name.strip().lower()
-    for k, v in {'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss'}.items():
-        name = name.replace(k, v)
-    name = re.sub(r'\(([^)]+)\)', r' \1', name)
-    name = re.sub(r'[^a-z0-9\s]', ' ', name)
-    name = re.sub(r'\s+', ' ', name).strip()
-    return name
-
-
-def _normalize_vb_name(raw: str) -> str:
-    """VB-Format 'NACHNAME (VORNAME)' in 'Nachname Vorname' normalisieren.
-
-    VB liefert: 'MUELLER (HANS)' → 'Mueller Hans'
-    Falls kein Klammer-Format: einfaches Title-Case.
-    """
-    if not raw:
-        return ''
-    raw = raw.strip()
-    m = re.match(r'^([^(]+)\(([^)]+)\)$', raw)
-    if m:
-        nachname = m.group(1).strip().title()
-        vorname = m.group(2).strip().title()
-        return f"{nachname} {vorname}"
-    return raw.title()
+from domain.provision.normalization import (  # noqa: F401, E402 – Re-Export
+    normalize_vsnr,
+    normalize_vermittler_name,
+    normalize_for_db,
+    normalize_vb_name as _normalize_vb_name,
+)
 
 
 def _compute_row_hash(vu_name: str, vsnr: str, betrag: float, datum: str, art: str = '') -> str:
@@ -176,6 +112,7 @@ VU_COLUMN_MAPPINGS = {
         'datum_col': 'G',
         'courtage_rate_col': 'K',
         'vn_col': 'AE',
+        'konditionssatz_col': None,
     },
     'SwissLife': {
         'vsnr_col': 'Y',
@@ -184,6 +121,7 @@ VU_COLUMN_MAPPINGS = {
         'datum_col': 'C',
         'courtage_rate_col': None,
         'vn_col': 'U',
+        'konditionssatz_col': None,
     },
     'VB': {
         'vsnr_col': 'B',
@@ -193,6 +131,7 @@ VU_COLUMN_MAPPINGS = {
         'datum_col': 'AR',
         'courtage_rate_col': None,
         'vn_col': 'C',
+        'konditionssatz_col': 'M',
     },
 }
 
@@ -248,12 +187,13 @@ def parse_vu_sheet(wb, sheet_name: str) -> ParseResult:
     datum_idx = _col_index(mapping['datum_col']) if mapping['datum_col'] else None
     courtage_rate_idx = _col_index(mapping['courtage_rate_col']) if mapping.get('courtage_rate_col') else None
     vn_idx = _col_index(mapping['vn_col']) if mapping.get('vn_col') else None
+    konditionssatz_idx = _col_index(mapping['konditionssatz_col']) if mapping.get('konditionssatz_col') else None
 
     if betrag_idx is None:
         result.errors.append(f"{sheet_name}: Betrag-Spalte nicht konfiguriert")
         return result
 
-    max_col_needed = max(filter(None, [vsnr_idx, betrag_idx, lastschrift_idx, art_idx, datum_idx, courtage_rate_idx, vn_idx]))
+    max_col_needed = max(filter(None, [vsnr_idx, betrag_idx, lastschrift_idx, art_idx, datum_idx, courtage_rate_idx, vn_idx, konditionssatz_idx]))
 
     logger.info(f"Parsing {sheet_name}: vsnr={vsnr_idx}, betrag={betrag_idx}, "
                 f"art={art_idx}, datum={datum_idx}")
@@ -299,6 +239,11 @@ def parse_vu_sheet(wb, sheet_name: str) -> ParseResult:
                 rate_val = row[courtage_rate_idx - 1].value
                 courtage_rate = _parse_amount(rate_val)
 
+            konditionssatz = None
+            if konditionssatz_idx and konditionssatz_idx - 1 < len(row):
+                kond_val = row[konditionssatz_idx - 1].value
+                konditionssatz = str(kond_val).strip() if kond_val is not None else None
+
             if betrag < 0:
                 art = 'rueckbelastung'
 
@@ -308,6 +253,7 @@ def parse_vu_sheet(wb, sheet_name: str) -> ParseResult:
                 'vsnr': vsnr,
                 'betrag': round(betrag, 2),
                 'art': art,
+                'buchungsart_raw': art_raw,
                 'auszahlungsdatum': datum,
                 'versicherungsnehmer': vn_name,
                 'provisions_basissumme': None,
@@ -315,6 +261,8 @@ def parse_vu_sheet(wb, sheet_name: str) -> ParseResult:
                 'rate_anzahl': None,
                 'row_hash': row_hash,
                 'courtage_rate': round(courtage_rate, 2) if courtage_rate is not None else None,
+                'konditionssatz': konditionssatz,
+                'source_row': row_num + 1,
             })
         except Exception as e:
             result.errors.append(f"Zeile {row_num + 1}: {str(e)}")
@@ -424,12 +372,19 @@ def detect_vu_format(filepath: str) -> List[Tuple[str, float]]:
     return unique
 
 
-def normalize_swisslife_vsnr(raw: str) -> str:
-    """Swiss Life VSNR in das XXXXX/XXXXX Format konvertieren (fuer Anzeige/Vergleich)."""
-    digits = re.sub(r'\D', '', str(raw).strip())
-    if len(digits) == 10:
-        return f"{digits[:5]}/{digits[5:]}"
-    return raw
+from domain.provision.normalization import normalize_swisslife_vsnr  # noqa: F401, E402
+
+from domain.provision.vu_parser import (  # noqa: F401, E402 – Re-Export
+    compute_row_hash,
+    parse_amount,
+    parse_date,
+    col_index,
+    compute_file_hash as domain_compute_file_hash,
+)
+from domain.provision.relevance import (  # noqa: F401, E402 – Re-Export
+    is_commission_relevant,
+    classify_buchungsart,
+)
 
 
 # ═══════════════════════════════════════════════════════

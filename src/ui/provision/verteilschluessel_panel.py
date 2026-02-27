@@ -17,7 +17,8 @@ from PySide6.QtCore import (
 from typing import List, Optional
 
 from api.client import APIError
-from api.provision import ProvisionAPI, Employee, CommissionModel
+from api.provision import ProvisionAPI
+from domain.provision.entities import Employee, CommissionModel
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
@@ -38,21 +39,58 @@ logger = logging.getLogger(__name__)
 
 
 class VerteilschluesselPanel(QWidget):
-    """Provisionsmodelle und Mitarbeiter mit Rollen."""
+    """Provisionsmodelle und Mitarbeiter mit Rollen.
+
+    Implementiert IDistributionView fuer den DistributionPresenter.
+    """
 
     navigate_to_panel = Signal(int)
     data_changed = Signal()
 
-    def __init__(self, api: ProvisionAPI):
+    def __init__(self, api: ProvisionAPI = None):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._worker = None
         self._save_worker = None
         self._models: List[CommissionModel] = []
         self._employees: List[Employee] = []
         self._toast_manager = None
         self._setup_ui()
-        QTimer.singleShot(100, self._load_data)
+        if api:
+            QTimer.singleShot(100, self._load_data)
+
+    @property
+    def _backend(self):
+        return self._presenter or self._api
+
+    def set_presenter(self, presenter) -> None:
+        """Verbindet dieses Panel mit dem DistributionPresenter."""
+        self._presenter = presenter
+        presenter.set_view(self)
+        self._presenter.load_data()
+
+    # ── IDistributionView ──
+
+    def show_employees(self, employees: list) -> None:
+        """View-Interface: Mitarbeiter anzeigen."""
+        self._employees = employees
+        self._emp_model.set_data(employees)
+
+    def show_models(self, models: list) -> None:
+        """View-Interface: Provisionsmodelle anzeigen."""
+        self._models = models
+        self._render_models()
+
+    def show_loading(self, loading: bool) -> None:
+        """View-Interface: Ladezustand."""
+        overlay = getattr(self, '_loading_overlay', None)
+        if overlay:
+            overlay.setVisible(loading)
+
+    def show_error(self, message: str) -> None:
+        """View-Interface: Fehler anzeigen."""
+        logger.error(f"Verteilschluessel-Fehler: {message}")
 
     def _setup_ui(self):
         scroll = QScrollArea()
@@ -142,6 +180,11 @@ class VerteilschluesselPanel(QWidget):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
+
+        if self._presenter:
+            self._presenter.load_data()
+            return
+
         if self._worker and self._worker.isRunning():
             return
         self._worker = VerteilschluesselLoadWorker(self._api)
@@ -267,7 +310,7 @@ class VerteilschluesselPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             name = name_edit.text().strip()
             if name:
-                self._api.create_model({
+                self._backend.create_model({
                     'name': name,
                     'commission_rate': rate_spin.value(),
                     'tl_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
@@ -367,7 +410,7 @@ class VerteilschluesselPanel(QWidget):
                     'tl_override_basis': tl_basis_combo.currentData(),
                     'teamleiter_id': tl_combo.currentData(),
                 }
-                self._api.create_employee(data)
+                self._backend.create_employee(data)
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
                 self._load_data()
@@ -505,14 +548,14 @@ class VerteilschluesselPanel(QWidget):
                 'teamleiter_id': tl_combo.currentData(),
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
-            self._save_worker = SaveEmployeeWorker(self._api, emp.id, data)
+            self._save_worker = SaveEmployeeWorker(self._backend, emp.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
             self._save_worker.start()
 
     def _deactivate_employee(self, emp: Employee):
         try:
-            self._api.delete_employee(emp.id, hard=False)
+            self._backend.delete_employee(emp.id, hard=False)
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
             self._load_data()
@@ -521,7 +564,7 @@ class VerteilschluesselPanel(QWidget):
 
     def _activate_employee(self, emp: Employee):
         try:
-            success, _ = self._api.update_employee(emp.id, {'is_active': True})
+            success, _ = self._backend.update_employee(emp.id, {'is_active': True})
             if success and self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_ACTIVATED)
             self._load_data()
@@ -539,7 +582,7 @@ class VerteilschluesselPanel(QWidget):
         if answer != QMessageBox.Yes:
             return
         try:
-            self._api.delete_employee(emp.id, hard=True)
+            self._backend.delete_employee(emp.id, hard=True)
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
             self._load_data()
@@ -615,7 +658,7 @@ class VerteilschluesselPanel(QWidget):
                 'description': desc_edit.text().strip() or None,
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
-            self._save_worker = SaveModelWorker(self._api, model.id, data)
+            self._save_worker = SaveModelWorker(self._backend, model.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
             self._save_worker.start()
@@ -641,7 +684,7 @@ class VerteilschluesselPanel(QWidget):
             self._toast_manager.show_error(error_msg)
 
     def _deactivate_model(self, model: CommissionModel):
-        if self._api.delete_model(model.id):
+        if self._backend.delete_model(model.id):
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
             self._load_data()

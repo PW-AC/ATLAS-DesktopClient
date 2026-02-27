@@ -129,8 +129,14 @@ ART_BADGE_COLORS = {
     "ap":              {"bg": "#dbeafe", "text": "#1e40af"},
     "bp":              {"bg": "#e0e7ff", "text": "#3730a3"},
     "rueckbelastung":  {"bg": "#fee2e2", "text": "#991b1b"},
-    "nullmeldung":     {"bg": "#fef3c7", "text": "#92400e"},  # Gelb/Amber fuer 0€-Zeilen
+    "nullmeldung":     {"bg": "#fef3c7", "text": "#92400e"},
     "sonstige":        {"bg": "#f3f4f6", "text": "#374151"},
+}
+
+VU_BADGE_COLORS = {
+    "Allianz":   {"bg": "#dbeafe", "text": "#1e40af"},
+    "SwissLife": {"bg": "#dcfce7", "text": "#166534"},
+    "VB":        {"bg": "#fff7ed", "text": "#c2410c"},
 }
 
 # =============================================================================

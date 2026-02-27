@@ -80,7 +80,10 @@ class SmartScanAPI:
     
     def send(self, mode: str, document_ids: Optional[List[int]] = None,
              box_type: Optional[str] = None,
-             client_request_id: Optional[str] = None) -> Dict:
+             client_request_id: Optional[str] = None,
+             archive_after_send: Optional[bool] = None,
+             recolor_after_send: Optional[bool] = None,
+             recolor_color: Optional[str] = None) -> Dict:
         """
         Startet einen SmartScan-Versand-Job.
         
@@ -89,6 +92,9 @@ class SmartScanAPI:
             document_ids: Liste von Dokument-IDs (bei mode='selected')
             box_type: Box-Typ (bei mode='box')
             client_request_id: Optionale Client-Request-ID fuer Idempotenz
+            archive_after_send: Dokumente nach Versand archivieren (ueberschreibt Server-Setting)
+            recolor_after_send: Dokumente nach Versand umfaerben (ueberschreibt Server-Setting)
+            recolor_color: Zielfarbe fuer Umfaerbung (nur relevant wenn recolor_after_send=True)
             
         Returns:
             Dict mit job_id, status, total, processed, remaining
@@ -100,6 +106,12 @@ class SmartScanAPI:
             body['box_type'] = box_type
         if client_request_id is not None:
             body['client_request_id'] = client_request_id
+        if archive_after_send is not None:
+            body['archive_after_send'] = int(archive_after_send)
+        if recolor_after_send is not None:
+            body['recolor_after_send'] = int(recolor_after_send)
+        if recolor_color is not None:
+            body['recolor_color'] = recolor_color
         
         try:
             response = self.client.post('/smartscan/send', json_data=body, timeout=180)

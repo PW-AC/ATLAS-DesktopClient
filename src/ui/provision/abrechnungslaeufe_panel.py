@@ -17,7 +17,8 @@ from datetime import datetime
 import os
 import hashlib
 
-from api.provision import ProvisionAPI, ImportBatch, ImportResult
+from api.provision import ProvisionAPI
+from domain.provision.entities import ImportBatch, ImportResult
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
@@ -38,20 +39,54 @@ logger = logging.getLogger(__name__)
 
 
 class AbrechnungslaeufPanel(QWidget):
-    """Abrechnungslaeufe: Import mit GF-Sprache und Batch-Historie."""
+    """Abrechnungslaeufe: Import mit GF-Sprache und Batch-Historie.
+
+    Implementiert IImportView fuer den ImportPresenter.
+    """
 
     navigate_to_panel = Signal(int)
 
-    def __init__(self, api: ProvisionAPI):
+    def __init__(self, api: ProvisionAPI = None):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._batches_worker = None
         self._import_worker = None
         self._parse_worker = None
         self._toast_manager = None
         self._parsed_rows = []
         self._setup_ui()
-        QTimer.singleShot(100, self._load_batches)
+        if api:
+            QTimer.singleShot(100, self._load_batches)
+
+    def set_presenter(self, presenter) -> None:
+        """Verbindet dieses Panel mit dem ImportPresenter."""
+        self._presenter = presenter
+        presenter.set_view(self)
+        self._presenter.load_batches()
+
+    # ── IImportView ──
+
+    def show_batches(self, batches: list) -> None:
+        """View-Interface: Batch-Historie anzeigen."""
+        self._batches_model.set_data(batches)
+
+    def show_import_result(self, result: ImportResult) -> None:
+        """View-Interface: Import-Ergebnis anzeigen."""
+        self._on_import_done(result)
+
+    def show_parse_progress(self, message: str) -> None:
+        """View-Interface: Parse-Fortschritt anzeigen."""
+        if hasattr(self, '_log'):
+            self._log.append(message)
+
+    def show_loading(self, loading: bool) -> None:
+        """View-Interface: Ladezustand."""
+        pass
+
+    def show_error(self, message: str) -> None:
+        """View-Interface: Fehler anzeigen."""
+        logger.error(f"Import-Fehler: {message}")
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -170,6 +205,11 @@ class AbrechnungslaeufPanel(QWidget):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
+
+        if self._presenter:
+            self._presenter.load_batches()
+            return
+
         if self._batches_worker and self._batches_worker.isRunning():
             return
         self._batches_worker = VuBatchesLoadWorker(self._api)
@@ -240,14 +280,24 @@ class AbrechnungslaeufPanel(QWidget):
             return
         self._import_btn.setEnabled(False)
         self._progress.setVisible(True)
-        self._import_worker = VuImportWorker(
-            self._api, self._parsed_rows, os.path.basename(self._selected_path),
-            self._parsed_sheet, self._parsed_vu, self._parsed_hash,
-        )
-        self._import_worker.progress.connect(lambda msg: self._log.append(msg))
-        self._import_worker.finished.connect(self._on_import_done)
-        self._import_worker.error.connect(self._on_import_error)
-        self._import_worker.start()
+
+        if self._presenter:
+            self._presenter.start_import(
+                rows=self._parsed_rows,
+                filename=os.path.basename(self._selected_path),
+                sheet_name=self._parsed_sheet,
+                vu_name=self._parsed_vu,
+                file_hash=self._parsed_hash,
+            )
+        elif self._api:
+            self._import_worker = VuImportWorker(
+                self._api, self._parsed_rows, os.path.basename(self._selected_path),
+                self._parsed_sheet, self._parsed_vu, self._parsed_hash,
+            )
+            self._import_worker.progress.connect(lambda msg: self._log.append(msg))
+            self._import_worker.finished.connect(self._on_import_done)
+            self._import_worker.error.connect(self._on_import_error)
+            self._import_worker.start()
 
     def _on_import_done(self, result: Optional[ImportResult]):
         self._progress.setVisible(False)

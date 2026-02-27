@@ -14,9 +14,8 @@ from PySide6.QtCore import (
 )
 from typing import List, Dict, Optional
 
-from api.provision import (
-    ProvisionAPI, Commission, VermittlerMapping, Employee,
-)
+from api.provision import ProvisionAPI
+from domain.provision.entities import Commission, VermittlerMapping, Employee
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500,
     ERROR, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -36,18 +35,54 @@ logger = logging.getLogger(__name__)
 
 
 class ZuordnungPanel(QWidget):
-    """Zuordnung & Klaerfaelle: Offene Positionen und Vermittler-Mappings."""
+    """Zuordnung & Klaerfaelle: Offene Positionen und Vermittler-Mappings.
+
+    Implementiert IClearanceView fuer den ClearancePresenter.
+    """
 
     navigate_to_panel = Signal(int)
 
-    def __init__(self, api: ProvisionAPI):
+    def __init__(self, api: ProvisionAPI = None):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._worker = None
         self._toast_manager = None
         self._all_unmatched: list = []
         self._setup_ui()
-        QTimer.singleShot(100, self._load_data)
+
+    @property
+    def _backend(self):
+        """Presenter bevorzugen, API als Fallback."""
+        return self._presenter or self._api
+
+    def set_presenter(self, presenter) -> None:
+        """Verbindet dieses Panel mit dem ClearancePresenter."""
+        self._presenter = presenter
+        presenter.set_view(self)
+        self._presenter.load_clearance()
+
+    # ── IClearanceView ──
+
+    def show_commissions(self, commissions: list) -> None:
+        """View-Interface: Klaerfaelle anzeigen."""
+        self._all_unmatched = commissions
+        self._unmatched_model.set_data(commissions)
+        self._filter_clearance("alle")
+
+    def show_mappings(self, mappings: list, unmapped: list = None) -> None:
+        """View-Interface: Vermittler-Mappings anzeigen."""
+        self._mappings_model.set_data(mappings)
+
+    def show_loading(self, loading: bool) -> None:
+        """View-Interface: Ladezustand."""
+        overlay = getattr(self, '_loading_overlay', None)
+        if overlay:
+            overlay.setVisible(loading)
+
+    def show_error(self, message: str) -> None:
+        """View-Interface: Fehler anzeigen."""
+        logger.error(f"Klaerfaelle-Fehler: {message}")
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -146,6 +181,11 @@ class ZuordnungPanel(QWidget):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
+
+        if self._presenter:
+            self._presenter.load_clearance()
+            return
+
         if self._worker:
             if self._worker.isRunning():
                 return
@@ -154,7 +194,7 @@ class ZuordnungPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        self._worker = ClearanceLoadWorker(self._api)
+        self._worker = ClearanceLoadWorker(self._backend)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -197,7 +237,7 @@ class ZuordnungPanel(QWidget):
                                             if c.match_status in ('auto_matched', 'manual_matched') and not c.berater_id])
 
     def _trigger_auto_match(self):
-        stats = self._api.trigger_auto_match()
+        stats = self._backend.trigger_auto_match()
         if stats:
             matched = stats.get('matched', 0)
             still_open = stats.get('still_unmatched', 0)
@@ -218,7 +258,7 @@ class ZuordnungPanel(QWidget):
         form.addRow(texts.PROVISION_MAP_DLG_NAME, name_edit)
 
         berater_combo = QComboBox()
-        employees = self._api.get_employees()
+        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active:
                 berater_combo.addItem(emp.name, emp.id)
@@ -233,7 +273,7 @@ class ZuordnungPanel(QWidget):
             name = name_edit.text().strip()
             berater_id = berater_combo.currentData()
             if name and berater_id:
-                self._api.create_mapping(name, berater_id)
+                self._backend.create_mapping(name, berater_id)
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
                 self._load_data()
@@ -261,7 +301,7 @@ class ZuordnungPanel(QWidget):
         form.addRow(texts.PROVISION_MAP_DLG_NAME, name_lbl)
 
         berater_combo = QComboBox()
-        employees = self._api.get_employees()
+        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active:
                 berater_combo.addItem(emp.name, emp.id)
@@ -277,14 +317,14 @@ class ZuordnungPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             new_berater_id = berater_combo.currentData()
             if new_berater_id and new_berater_id != mapping.berater_id:
-                self._api.delete_mapping(mapping.id)
-                self._api.create_mapping(mapping.vermittler_name, new_berater_id)
+                self._backend.delete_mapping(mapping.id)
+                self._backend.create_mapping(mapping.vermittler_name, new_berater_id)
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
                 self._load_data()
 
     def _delete_mapping(self, mapping: VermittlerMapping):
-        if self._api.delete_mapping(mapping.id):
+        if self._backend.delete_mapping(mapping.id):
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
             self._load_data()
@@ -320,7 +360,7 @@ class ZuordnungPanel(QWidget):
 
     def _open_match_dialog(self, comm: Commission):
         """Oeffnet den MatchContractDialog fuer manuelle Vertragszuordnung."""
-        dlg = MatchContractDialog(self._api, comm, parent=self)
+        dlg = MatchContractDialog(self._backend, comm, parent=self)
         if dlg.exec() == QDialog.Accepted:
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_ASSIGN_SUCCESS)
@@ -352,7 +392,7 @@ class ZuordnungPanel(QWidget):
 
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
-        employees = self._api.get_employees()
+        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active and emp.role in ('consulter', 'teamleiter'):
                 berater_combo.addItem(emp.name, emp.id)
@@ -376,7 +416,7 @@ class ZuordnungPanel(QWidget):
                 if also_vu_cb and also_vu_cb.isChecked() and vu_name != primary_name:
                     also_name = vu_name
                 self._mapping_worker = MappingSyncWorker(
-                    self._api, primary_name, berater_id, also_name)
+                    self._backend, primary_name, berater_id, also_name)
                 self._mapping_worker.finished.connect(self._on_mapping_sync_done)
                 self._mapping_worker.error.connect(self._on_mapping_sync_error)
                 self._loading_overlay.setVisible(True)

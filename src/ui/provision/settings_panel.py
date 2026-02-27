@@ -177,9 +177,14 @@ class SettingsPanel(QWidget):
     def __init__(self, api: ProvisionAPI):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._toast_manager = None
         self._reset_worker = None
         self._setup_ui()
+
+    @property
+    def _backend(self):
+        return self._presenter or self._api
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -309,7 +314,7 @@ class SettingsPanel(QWidget):
         self._reset_btn.setEnabled(False)
         self._reset_btn.setText(texts.PROVISION_SETTINGS_RESET_RUNNING)
 
-        self._reset_worker = _ResetWorker(self._api)
+        self._reset_worker = _ResetWorker(self._backend)
         self._reset_worker.finished.connect(self._on_reset_finished)
         self._reset_worker.error.connect(self._on_reset_error)
         self._reset_worker.start()

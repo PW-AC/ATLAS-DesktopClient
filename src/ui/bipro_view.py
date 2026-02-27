@@ -2446,7 +2446,12 @@ class BiPROView(QWidget):
     # ── Acknowledge All Listed (Standard-View) ──
 
     def _acknowledge_all_listed(self):
-        """Quittiert alle in der Vorschau gelisteten Lieferungen."""
+        """Quittiert alle in der Vorschau gelisteten Lieferungen.
+
+        Strategie: Parallele Batch-Quittierung (ein Worker pro VU mit allen
+        Shipment-IDs). Falls einzelne IDs fehlschlagen, werden diese im
+        sequentiellen Fallback nochmals einzeln versucht.
+        """
         from i18n.de import (
             BIPRO_ACK_ALL_WARNING, BIPRO_ACK_SUCCESS,
             BIPRO_ACK_NO_SHIPMENTS, BIPRO_ACK_BUTTON,
@@ -2473,7 +2478,8 @@ class BiPROView(QWidget):
             return
 
         self._ack_btn.setEnabled(False)
-        self._ack_all_queue = []
+
+        vu_batches: list[tuple] = []
         for vu_name, shipments in self._preview_cache:
             if not shipments:
                 continue
@@ -2483,16 +2489,81 @@ class BiPROView(QWidget):
             creds = self._get_credentials_for_connection(conn)
             if not creds:
                 continue
-            for ship in shipments:
-                self._ack_all_queue.append((conn, creds, ship.shipment_id))
+            ship_ids = [ship.shipment_id for ship in shipments]
+            vu_batches.append((conn, creds, ship_ids))
 
-        if not self._ack_all_queue:
+        if not vu_batches:
             self._ack_btn.setEnabled(True)
             return
 
         self._ack_all_success = 0
-        self._ack_all_total = len(self._ack_all_queue)
+        self._ack_all_total = sum(len(ids) for _, _, ids in vu_batches)
         self._ack_all_vus = set()
+
+        self._acknowledge_all_parallel(vu_batches)
+
+    # ── Parallele Batch-Quittierung ──
+
+    def _acknowledge_all_parallel(self, vu_batches: list[tuple]):
+        """Startet pro VU einen Worker mit allen Shipment-IDs (parallel).
+
+        Jeder Worker holt nur einmal einen STS-Token und quittiert damit alle
+        IDs seiner VU. Fehlgeschlagene IDs werden fuer den sequentiellen
+        Fallback gesammelt.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        self._ack_parallel_pending = len(vu_batches)
+        self._ack_parallel_failed_queue: list[tuple] = []
+        self._ack_parallel_workers: list = []
+
+        for conn, creds, ship_ids in vu_batches:
+            worker = AcknowledgeShipmentWorker(
+                creds, ship_ids,
+                sts_url=conn.get_effective_sts_url(),
+                transfer_url=conn.get_effective_transfer_url(),
+                consumer_id=conn.consumer_id or "",
+            )
+            vu_name = conn.vu_name
+            worker.finished.connect(
+                lambda ok, fail, vn=vu_name, c=conn, cr=creds:
+                    self._on_ack_parallel_worker_done(vn, ok, fail, c, cr))
+            self._register_worker(worker)
+            self._ack_parallel_workers.append(worker)
+            logger.info("Batch-Quittierung: %s gestartet (%d IDs)", vu_name, len(ship_ids))
+            worker.start()
+
+    def _on_ack_parallel_worker_done(self, vu_name: str, ok_ids: list,
+                                      fail_ids: list, conn, creds):
+        """Callback wenn ein paralleler VU-Worker fertig ist."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if ok_ids:
+            self._ack_all_success += len(ok_ids)
+            self._ack_all_vus.add(vu_name)
+
+        if fail_ids:
+            logger.warning("Batch-Quittierung %s: %d fehlgeschlagen, Fallback geplant",
+                           vu_name, len(fail_ids))
+            for ship_id in fail_ids:
+                self._ack_parallel_failed_queue.append((conn, creds, ship_id))
+
+        self._ack_parallel_pending -= 1
+        if self._ack_parallel_pending <= 0:
+            if self._ack_parallel_failed_queue:
+                logger.info("Starte sequentiellen Fallback fuer %d fehlgeschlagene IDs",
+                            len(self._ack_parallel_failed_queue))
+                self._acknowledge_all_sequential(self._ack_parallel_failed_queue)
+            else:
+                self._on_ack_all_finished()
+
+    # ── Sequentieller Fallback ──
+
+    def _acknowledge_all_sequential(self, queue: list[tuple]):
+        """Sequentieller Fallback: verarbeitet fehlgeschlagene IDs einzeln."""
+        self._ack_all_queue = list(queue)
         self._process_next_ack_all()
 
     def _find_connection_by_name(self, vu_name: str):
@@ -2502,20 +2573,20 @@ class BiPROView(QWidget):
         return None
 
     def _process_next_ack_all(self):
-        """Verarbeitet die naechste Quittierung in der Queue."""
+        """Verarbeitet die naechste Quittierung in der Queue (sequentieller Fallback)."""
         if not self._ack_all_queue:
             self._on_ack_all_finished()
             return
 
         conn, creds, ship_id = self._ack_all_queue.pop(0)
         worker = AcknowledgeShipmentWorker(
-            creds, conn.vu_name, ship_id,
+            creds, [ship_id],
             sts_url=conn.get_effective_sts_url(),
             transfer_url=conn.get_effective_transfer_url(),
             consumer_id=conn.consumer_id or "",
         )
-        worker.finished.connect(lambda sid: self._on_ack_all_item_done(conn.vu_name, True))
-        worker.error.connect(lambda err: self._on_ack_all_item_done("", False))
+        worker.finished.connect(lambda ok, fail: self._on_ack_all_item_done(
+            conn.vu_name if not fail else "", len(fail) == 0))
         self._register_worker(worker)
         worker.start()
         self._acknowledge_worker = worker

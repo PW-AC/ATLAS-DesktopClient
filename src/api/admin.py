@@ -265,3 +265,32 @@ class AdminAPI:
             logger.error(f"Fehler beim Laden der Health-History: {e}")
             raise
         return []
+
+    # ================================================================
+    # Migrations-Verwaltung
+    # ================================================================
+
+    def get_migrations(self) -> Dict:
+        """Alle verfuegbaren Migrationsdateien aus setup/ auflisten."""
+        try:
+            response = self.client.get('/admin/migrations')
+            if response.get('success'):
+                return response['data']
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Migrationen: {e}")
+            raise
+        return {'migrations': [], 'total': 0, 'pending': 0, 'applied': 0, 'manual': 0}
+
+    def execute_migration(self, filename: str) -> Dict:
+        """Eine Migrationsdatei ausfuehren."""
+        try:
+            response = self.client.post('/admin/migrations/execute',
+                                        json_data={'filename': filename})
+            return {
+                'success': response.get('success', False),
+                'output': response.get('data', {}).get('output', ''),
+                'filename': filename,
+            }
+        except APIError as e:
+            logger.error(f"Fehler beim Ausfuehren der Migration {filename}: {e}")
+            raise

@@ -16,7 +16,8 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime, date
 import calendar
 
-from api.provision import ProvisionAPI, DashboardSummary
+from api.provision import ProvisionAPI
+from domain.provision.entities import DashboardSummary
 from ui.styles.tokens import (
     PRIMARY_0, PRIMARY_100, PRIMARY_500, PRIMARY_900,
     ACCENT_500, BG_PRIMARY, BG_SECONDARY, BG_TERTIARY,
@@ -38,17 +39,58 @@ logger = logging.getLogger(__name__)
 
 
 class DashboardPanel(QWidget):
-    """Entscheidungs-Cockpit: 4 KPI-Karten + Berater-Ranking."""
+    """Entscheidungs-Cockpit: 4 KPI-Karten + Berater-Ranking.
+
+    Implementiert IDashboardView fuer den DashboardPresenter.
+    """
 
     navigate_to_panel = Signal(int)
 
-    def __init__(self, api: ProvisionAPI):
+    def __init__(self, api: ProvisionAPI = None):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._worker = None
         self._toast_manager = None
         self._setup_ui()
-        self._load_data()
+        if api:
+            self._load_data()
+
+    def set_presenter(self, presenter) -> None:
+        """Verbindet dieses Panel mit dem DashboardPresenter."""
+        self._presenter = presenter
+        presenter.set_view(self)
+        von, bis = self._get_date_range()
+        self._presenter.load_dashboard(von=von, bis=bis)
+
+    # ── IDashboardView ──
+
+    def show_summary(self, summary: DashboardSummary) -> None:
+        """View-Interface: Dashboard-KPIs anzeigen."""
+        if not summary:
+            self._status_label.setText(texts.PROVISION_DASH_ERROR)
+            return
+        self._render_summary(summary)
+
+    def show_clearance_counts(self, counts: Dict) -> None:
+        """View-Interface: Klaerfall-Counts anzeigen."""
+        self._render_clearance(counts)
+        self._status_label.setText("")
+
+    def show_loading(self, loading: bool) -> None:
+        """View-Interface: Ladezustand anzeigen."""
+        if loading:
+            self._status_label.setText(texts.PROVISION_DASH_LOADING)
+
+    def show_error(self, message: str) -> None:
+        """View-Interface: Fehler anzeigen."""
+        self._status_label.setText(texts.PROVISION_DASH_ERROR)
+        logger.error(f"Dashboard-Fehler: {message}")
+
+    def show_berater_detail(self, berater_id: int, berater_name: str,
+                            row_data: dict, detail) -> None:
+        """View-Interface: Berater-Detail-Dialog oeffnen."""
+        self._show_berater_detail_dialog(berater_id, berater_name, row_data, detail)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -267,6 +309,11 @@ class DashboardPanel(QWidget):
         von, bis = self._get_date_range()
         logger.debug(f"Dashboard _load_data: von={von}, bis={bis}")
         self._status_label.setText(texts.PROVISION_DASH_LOADING)
+
+        if self._presenter:
+            self._presenter.load_dashboard(von=von, bis=bis)
+            return
+
         if self._worker:
             if self._worker.isRunning():
                 return
@@ -284,7 +331,11 @@ class DashboardPanel(QWidget):
         if not summary:
             self._status_label.setText(texts.PROVISION_DASH_ERROR)
             return
+        self._render_summary(summary)
+        self._render_clearance(clearance)
+        self._status_label.setText("")
 
+    def _render_summary(self, summary: DashboardSummary):
         # Karte 1: Gesamtprovision
         self._card_total.set_value(format_eur(summary.eingang_monat))
         self._lbl_ytd.setText(texts.PROVISION_DASH_YTD.format(amount=format_eur(summary.eingang_ytd)))
@@ -321,23 +372,6 @@ class DashboardPanel(QWidget):
             texts.PROVISION_DASH_MATCH_RATE_SUB.format(matched=matched_count, total=total_count)
         )
 
-        # Karte 3: Klaerfaelle (echte Server-Counts)
-        total_clearance = clearance.get('total', summary.unmatched_count)
-        self._card_clearance.set_value(texts.PROVISION_DASH_CLEARANCE_OPEN.format(count=total_clearance))
-
-        no_contract = clearance.get('no_contract', summary.unmatched_count)
-        no_berater = clearance.get('no_berater', 0)
-        no_model = clearance.get('no_model', 0)
-        self._lbl_clear_no_contract.setText(
-            texts.PROVISION_DASH_CLEARANCE_NO_CONTRACT.format(count=no_contract) if no_contract else ""
-        )
-        self._lbl_clear_no_berater.setText(
-            texts.PROVISION_DASH_CLEARANCE_NO_BERATER.format(count=no_berater) if no_berater else ""
-        )
-        self._lbl_clear_no_model.setText(
-            texts.PROVISION_DASH_CLEARANCE_NO_MODEL.format(count=no_model) if no_model else ""
-        )
-
         # Karte 4: Auszahlungen
         pay_ready = getattr(summary, 'payouts_ready', 0)
         pay_review = getattr(summary, 'payouts_review', 0)
@@ -349,7 +383,22 @@ class DashboardPanel(QWidget):
         # Berater-Ranking
         self._ranking_model.set_data(summary.per_berater)
 
-        self._status_label.setText("")
+    def _render_clearance(self, clearance: dict):
+        no_contract = clearance.get('no_contract', 0)
+        no_berater = clearance.get('no_berater', 0)
+        no_model = clearance.get('no_model', 0)
+        total_clearance = clearance.get('total', no_contract + no_berater + no_model)
+        self._card_clearance.set_value(
+            texts.PROVISION_DASH_CLEARANCE_OPEN.format(count=total_clearance))
+        self._lbl_clear_no_contract.setText(
+            texts.PROVISION_DASH_CLEARANCE_NO_CONTRACT.format(count=no_contract)
+            if no_contract else "")
+        self._lbl_clear_no_berater.setText(
+            texts.PROVISION_DASH_CLEARANCE_NO_BERATER.format(count=no_berater)
+            if no_berater else "")
+        self._lbl_clear_no_model.setText(
+            texts.PROVISION_DASH_CLEARANCE_NO_MODEL.format(count=no_model)
+            if no_model else "")
 
     def _on_data_error(self, msg: str):
         self._status_label.setText(texts.PROVISION_DASH_ERROR)
@@ -364,10 +413,15 @@ class DashboardPanel(QWidget):
         if not berater_id:
             return
 
-        if hasattr(self, '_detail_worker') and self._detail_worker and self._detail_worker.isRunning():
+        von, bis = self._get_date_range()
+
+        if self._presenter:
+            self._presenter.load_berater_detail(
+                berater_id, berater_name, dict(row), von=von, bis=bis)
             return
 
-        von, bis = self._get_date_range()
+        if hasattr(self, '_detail_worker') and self._detail_worker and self._detail_worker.isRunning():
+            return
         self._detail_worker = BeraterDetailWorker(
             self._api, berater_id, berater_name, dict(row), von=von, bis=bis
         )

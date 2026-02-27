@@ -1585,7 +1585,7 @@ class DocumentProcessor:
                 f"tokens={total_tokens}, stage={ai_stage}"
             )
         else:
-            from src.i18n.de import AI_DATA_SAVE_FAILED
+            from i18n.de import AI_DATA_SAVE_FAILED
             logger.warning(AI_DATA_SAVE_FAILED.format(doc_id=doc.id))
     
     # ================================================================

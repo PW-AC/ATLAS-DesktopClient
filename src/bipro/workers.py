@@ -1566,7 +1566,7 @@ class ParallelDownloadManager(QThread):
                 is_valid = True
                 validation_status = None
                 if ext.lower() == '.pdf':
-                    from src.config.processing_rules import PDFValidationStatus
+                    from config.processing_rules import PDFValidationStatus
                     is_valid, validation_status = self._validate_pdf(
                         filepath, 
                         expected_size=len(content_bytes)
@@ -1649,7 +1649,7 @@ class ParallelDownloadManager(QThread):
             - is_valid: True wenn PDF gueltig (evtl. nach Reparatur)
             - validation_status: Reason-Code fuer den Zustand
         """
-        from src.config.processing_rules import PDFValidationStatus
+        from config.processing_rules import PDFValidationStatus
         
         if not FITZ_AVAILABLE:
             # Wenn PyMuPDF nicht verfuegbar, nehme an dass PDF OK ist
@@ -1736,7 +1736,7 @@ class ParallelDownloadManager(QThread):
         Returns:
             Tuple (is_valid: bool, validation_status: PDFValidationStatus)
         """
-        from src.config.processing_rules import PDFValidationStatus
+        from config.processing_rules import PDFValidationStatus
         
         try:
             # PyMuPDF kann defekte PDFs oft reparieren beim Speichern

@@ -8,7 +8,7 @@ Ersetzt: commissions_panel.py + contracts_panel.py
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableView,
     QHeaderView, QSplitter, QFrame, QScrollArea, QMenu,
-    QComboBox, QLineEdit, QPushButton, QSizePolicy,
+    QComboBox, QLineEdit, QPushButton, QSizePolicy, QCheckBox,
     QDialog, QFormLayout, QDialogButtonBox, QDateEdit,
 )
 from PySide6.QtCore import (
@@ -19,7 +19,8 @@ from typing import List, Optional
 from datetime import datetime, date
 import calendar
 
-from api.provision import ProvisionAPI, Commission, Employee, ContractSearchResult
+from api.provision import ProvisionAPI
+from domain.provision.entities import Commission, Employee, ContractSearchResult, PaginationInfo
 from api.client import APIError
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
@@ -46,13 +47,17 @@ logger = logging.getLogger(__name__)
 
 
 class ProvisionspositionenPanel(QWidget):
-    """Provisionspositionen mit FilterChips, Pill-Badges und Detail-Panel."""
+    """Provisionspositionen mit FilterChips, Pill-Badges und Detail-Panel.
+
+    Implementiert IPositionsView fuer den PositionsPresenter.
+    """
 
     navigate_to_panel = Signal(int)
 
-    def __init__(self, api: ProvisionAPI):
+    def __init__(self, api: ProvisionAPI = None):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._worker = None
         self._all_data: List[Commission] = []
         self._filtered_data: List[Commission] = []
@@ -60,7 +65,47 @@ class ProvisionspositionenPanel(QWidget):
         self._current_detail_comm: Optional[Commission] = None
         self._employees_cache: List[Employee] = []
         self._setup_ui()
-        QTimer.singleShot(100, self._load_data)
+        if api:
+            QTimer.singleShot(100, self._load_data)
+
+    @property
+    def _backend(self):
+        return self._presenter or self._api
+
+    def set_presenter(self, presenter) -> None:
+        """Verbindet dieses Panel mit dem PositionsPresenter."""
+        self._presenter = presenter
+        presenter.set_view(self)
+        self._load_data()
+
+    # ── IPositionsView ──
+
+    def show_commissions(self, commissions: List[Commission],
+                         pagination: Optional[PaginationInfo] = None) -> None:
+        """View-Interface: Provisionen anzeigen."""
+        self._loading_overlay.setVisible(False)
+        self._all_data = commissions
+        self._update_chips()
+        self._apply_filter()
+        self._resize_columns()
+
+    def show_loading(self, loading: bool) -> None:
+        """View-Interface: Ladezustand."""
+        overlay = getattr(self, '_loading_overlay', None)
+        if overlay:
+            overlay.setVisible(loading)
+
+    def show_error(self, message: str) -> None:
+        """View-Interface: Fehler anzeigen."""
+        logger.error(f"Positionen-Fehler: {message}")
+
+    def show_detail(self, commission: Commission) -> None:
+        """View-Interface: Detail-Panel aktualisieren."""
+        self._show_detail(commission)
+
+    def update_filter_counts(self, total: int, filtered: int) -> None:
+        """View-Interface: Filterzaehler aktualisieren."""
+        pass
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -138,6 +183,14 @@ class ProvisionspositionenPanel(QWidget):
         self._chips.filter_changed.connect(self._apply_filter)
         filter_row.addWidget(self._chips)
 
+        self._relevance_cb = QCheckBox(texts.PROVISION_RELEVANCE_TOGGLE)
+        self._relevance_cb.setChecked(True)
+        self._relevance_cb.setToolTip(texts.PROVISION_RELEVANCE_TOGGLE_TIP)
+        self._relevance_cb.setStyleSheet(
+            f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
+        self._relevance_cb.stateChanged.connect(self._on_relevance_changed)
+        filter_row.addWidget(self._relevance_cb)
+
         self._search = QLineEdit()
         self._search.setPlaceholderText(texts.PROVISION_SEARCH)
         self._search.setFixedWidth(220)
@@ -168,9 +221,9 @@ class ProvisionspositionenPanel(QWidget):
         self._table.setSelectionMode(QTableView.SingleSelection)
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(52)
-        self._table.horizontalHeader().setDefaultSectionSize(52)
+        self._table.horizontalHeader().setDefaultSectionSize(100)
         self._table.horizontalHeader().setStretchLastSection(False)
-        self._table.horizontalHeader().setMinimumSectionSize(50)
+        self._table.horizontalHeader().setMinimumSectionSize(40)
         self._table.setStyleSheet(get_provision_table_style())
         self._table.setMinimumHeight(400)
         self._table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -380,10 +433,31 @@ class ProvisionspositionenPanel(QWidget):
     def _on_date_filter_changed(self, *args):
         self._load_data()
 
+    def _on_relevance_changed(self, state):
+        """Relevanz-Filter umgeschaltet: Daten neu laden."""
+        if self._presenter:
+            self._presenter.only_relevant = self._relevance_cb.isChecked()
+            self._presenter.refresh()
+        else:
+            self._load_data()
+
     def _load_data(self):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
+
+        von, bis = self._get_date_range()
+        logger.debug(f"Positionen _load_data: von={von}, bis={bis}")
+
+        if self._presenter:
+            kwargs = dict(limit=5000)
+            if von:
+                kwargs['von'] = von
+            if bis:
+                kwargs['bis'] = bis
+            self._presenter.load_positions(**kwargs)
+            return
+
         if self._worker:
             if self._worker.isRunning():
                 return
@@ -392,14 +466,12 @@ class ProvisionspositionenPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        von, bis = self._get_date_range()
-        logger.debug(f"Positionen _load_data: von={von}, bis={bis}")
         kwargs = dict(limit=5000)
         if von:
             kwargs['von'] = von
         if bis:
             kwargs['bis'] = bis
-        self._worker = PositionsLoadWorker(self._api, **kwargs)
+        self._worker = PositionsLoadWorker(self._backend, **kwargs)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -473,15 +545,30 @@ class ProvisionspositionenPanel(QWidget):
 
     def _resize_columns(self):
         header = self._table.horizontalHeader()
+        col_widths = {
+            PositionsModel.COL_DATUM: 85,
+            PositionsModel.COL_VU: 80,
+            PositionsModel.COL_VSNR: 120,
+            PositionsModel.COL_BETRAG: 90,
+            PositionsModel.COL_BUCHUNGSART: 70,
+            PositionsModel.COL_XEMPUS_BERATER: 120,
+            PositionsModel.COL_BERATER: 110,
+            PositionsModel.COL_STATUS: 110,
+            PositionsModel.COL_BERATER_ANTEIL: 80,
+            PositionsModel.COL_SOURCE: 60,
+            PositionsModel.COL_MENU: 36,
+        }
+        stretch_col = PositionsModel.COL_KUNDE
         for i in range(self._model.columnCount()):
-            if i == PositionsModel.COL_MENU:
-                header.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 48)
-            elif i == PositionsModel.COL_STATUS:
-                header.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 170)
-            else:
+            if i == stretch_col:
                 header.setSectionResizeMode(i, QHeaderView.Stretch)
+            elif i == PositionsModel.COL_MENU:
+                header.setSectionResizeMode(i, QHeaderView.Fixed)
+                self._table.setColumnWidth(i, 36)
+            elif i in col_widths:
+                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+            else:
+                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
     def _on_selection_changed(self, selected, deselected):
         indexes = self._table.selectionModel().selectedRows()
@@ -504,7 +591,7 @@ class ProvisionspositionenPanel(QWidget):
         self._det_vu.setText(comm.versicherer or comm.vu_name or "")
         self._det_vsnr.setText(comm.vsnr or "")
         self._det_betrag.setText(format_eur(comm.betrag))
-        self._det_art.setText(ART_LABELS.get(comm.art, comm.art))
+        self._det_art.setText(comm.buchungsart_raw or ART_LABELS.get(comm.art, comm.art))
         d = comm.auszahlungsdatum or ""
         if len(d) >= 10:
             try:
@@ -539,7 +626,7 @@ class ProvisionspositionenPanel(QWidget):
     def _load_audit(self, comm: Commission):
         if hasattr(self, '_audit_worker') and self._audit_worker and self._audit_worker.isRunning():
             return
-        self._audit_worker = AuditLoadWorker(self._api, comm.id)
+        self._audit_worker = AuditLoadWorker(self._backend, comm.id)
         self._audit_worker.finished.connect(self._on_audit_loaded)
         self._audit_worker.error.connect(lambda msg: self._activity_feed.set_items([]))
         self._audit_worker.start()
@@ -571,7 +658,7 @@ class ProvisionspositionenPanel(QWidget):
     def _ignore_commission(self, comm: Commission):
         if hasattr(self, '_ignore_worker') and self._ignore_worker and self._ignore_worker.isRunning():
             return
-        self._ignore_worker = IgnoreWorker(self._api, comm.id)
+        self._ignore_worker = IgnoreWorker(self._backend, comm.id)
         self._ignore_worker.finished.connect(self._on_ignore_finished)
         self._ignore_worker.error.connect(lambda msg: logger.warning(f"Ignore fehlgeschlagen: {msg}"))
         self._ignore_worker.start()
@@ -592,7 +679,7 @@ class ProvisionspositionenPanel(QWidget):
 
     def _manual_match(self, comm: Commission):
         # MatchContractDialog importiert ueber dialogs.py (top-level)
-        dlg = MatchContractDialog(self._api, comm, parent=self)
+        dlg = MatchContractDialog(self._backend, comm, parent=self)
         if dlg.exec() == QDialog.Accepted:
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_ASSIGN_SUCCESS)
@@ -625,8 +712,7 @@ class ProvisionspositionenPanel(QWidget):
 
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
-        if not self._employees_cache:
-            self._employees_cache = self._api.get_employees()
+        self._employees_cache = self._backend.get_employees()
         for emp in self._employees_cache:
             if emp.is_active and emp.role in ('consulter', 'teamleiter'):
                 berater_combo.addItem(emp.name, emp.id)
@@ -645,7 +731,7 @@ class ProvisionspositionenPanel(QWidget):
     def _start_mapping_worker(self, name: str, berater_id: int):
         if hasattr(self, '_mapping_worker') and self._mapping_worker and self._mapping_worker.isRunning():
             return
-        self._mapping_worker = MappingCreateWorker(self._api, name, berater_id)
+        self._mapping_worker = MappingCreateWorker(self._backend, name, berater_id)
         self._mapping_worker.finished.connect(self._on_mapping_finished)
         self._mapping_worker.error.connect(lambda msg: logger.warning(f"Mapping fehlgeschlagen: {msg}"))
         self._mapping_worker.start()
