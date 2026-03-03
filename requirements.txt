@@ -38,6 +38,9 @@ pyzipper>=0.3.6,<1.0.0
 # Erfordert Tesseract OCR Engine: https://github.com/UB-Mannheim/tesseract/wiki
 pytesseract>=0.3.10,<1.0.0
 
+# Bildverarbeitung fuer lokale OCR (pytesseract benoetigt PIL/Pillow)
+Pillow>=10.0.0,<12.0.0
+
 # Sichere lokale Speicherung (JWT-Token, Zertifikate) — SV-005
 keyring>=24.0.0,<26.0.0
 

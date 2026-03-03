@@ -60,6 +60,10 @@ a = Analysis(
         'PySide6.QtWidgets',
         'PySide6.QtPdf',
         'PySide6.QtPdfWidgets',
+        'PySide6.QtPrintSupport',
+
+        # ---- PySide6 Internals ----
+        'shiboken6',
 
         # ---- HTTP / Netzwerk ----
         'requests',
@@ -77,6 +81,42 @@ a = Analysis(
         'openpyxl.workbook',
         'openpyxl.reader.excel',
         'openpyxl.writer.excel',
+
+        # ---- PDF-Generierung (reportlab) ----
+        'reportlab',
+        'reportlab.lib',
+        'reportlab.lib.colors',
+        'reportlab.lib.pagesizes',
+        'reportlab.lib.styles',
+        'reportlab.lib.units',
+        'reportlab.lib.enums',
+        'reportlab.pdfbase',
+        'reportlab.pdfbase.pdfmetrics',
+        'reportlab.pdfbase.ttfonts',
+        'reportlab.pdfbase._fontdata',
+        'reportlab.platypus',
+        'reportlab.platypus.doctemplate',
+        'reportlab.platypus.tables',
+        'reportlab.platypus.paragraph',
+        'reportlab.platypus.flowables',
+        'reportlab.platypus.frames',
+
+        # ---- Word-Generierung (python-docx) ----
+        'docx',
+        'docx.document',
+        'docx.shared',
+        'docx.enum',
+        'docx.enum.text',
+        'docx.enum.table',
+        'docx.oxml',
+        'docx.oxml.ns',
+        'docx.table',
+        'docx.text',
+        'docx.text.paragraph',
+        'docx.section',
+        'lxml',
+        'lxml.etree',
+        'lxml._elementpath',
 
         # ---- E-Mail / MSG ----
         'extract_msg',
@@ -112,6 +152,11 @@ a = Analysis(
         # ---- JKS-Zertifikate ----
         'jks',
 
+        # ---- Lokale OCR (optional, benoetigt Tesseract Engine) ----
+        'pytesseract',
+        'PIL',
+        'PIL.Image',
+
         # ---- Logging ----
         'logging.handlers',
     ],
@@ -123,7 +168,6 @@ a = Analysis(
         'numpy',
         'scipy',
         'pandas',
-        'PIL',
         'tkinter',
         'unittest',
         'test',
