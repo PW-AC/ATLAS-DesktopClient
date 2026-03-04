@@ -39,7 +39,7 @@ Desktop-App (PySide6)             Hetzner Cloud (CCX13, Nuernberg)
 ```
 
 **Server-Details:** Siehe `ATLAS_private - Doku - Backend/hetzner-migration/INFRASTRUKTUR_DATEN.md`
-**Live-Configs:** Siehe `ATLAS_private - Doku - Backend/hetzner-migration/server-mirror/`
+**Server-Abbild:** Siehe `ATLAS_private - Doku - Backend/ATLAS - Hetzner Server - ABBILD - NICHT LIVE/`
 
 ---
 
@@ -146,10 +146,13 @@ ATLAS_private - Doku - Backend/     (Git Submodule, privat)
     api/                            33 PHP-Endpoints
     api/lib/                        Shared Libraries (DB, JWT, Crypto, Permissions, PHPMailer)
     setup/                          DB-Migrationen (34 Skripte, 005-041)
+  ATLAS - Hetzner Server - ABBILD - NICHT LIVE/
+    README.md                       Sync-Anleitung und Ordnerstruktur
+    Abbild/                         Lokale Kopie des Servers (etc/, var/www/, opt/)
   hetzner-migration/                Server-Migration Strato → Hetzner (abgeschlossen 03.03.2026)
     00_MIGRATIONSPLAN.md            Gesamtueberblick + Fortschritt
     INFRASTRUKTUR_DATEN.md          Live-Infrastruktur-Werte (IPs, Credentials, Pfade)
-    server-mirror/                  1:1-Spiegelung aller Server-Configs + Runtime-Snapshots
+    server-mirror/                  (Legacy, ersetzt durch ABBILD)
     configs/                        Vorbereitete Config-Templates
     scripts/                        Setup- und Sync-Scripts
   AGENTS.md                         Vollstaendige Agent-Instruktionen (Single Source of Truth)
