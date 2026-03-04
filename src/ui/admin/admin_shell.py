@@ -151,25 +151,23 @@ class AdminView(QWidget):
         sb_layout.setContentsMargins(0, 8, 0, 20)
         sb_layout.setSpacing(2)
         
-        # Zurueck-Button
-        back_btn = QPushButton(texts.ADMIN_BACK_TO_APP)
+        back_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
         back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.setMinimumHeight(44)
         back_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
-                border: 1px solid {PRIMARY_500};
-                border-radius: {RADIUS_MD};
-                padding: 8px 16px;
-                margin: 0 16px 4px 16px;
-                color: {PRIMARY_500};
+                border: none;
+                border-bottom: 1px solid rgba(136, 169, 195, 0.15);
+                padding: 10px 16px;
+                text-align: left;
                 font-family: {FONT_BODY};
                 font-size: {FONT_SIZE_BODY};
-                text-align: center;
+                color: {ACCENT_500};
+                font-weight: 600;
             }}
             QPushButton:hover {{
                 background-color: {SIDEBAR_HOVER};
-                border-color: {SIDEBAR_TEXT};
-                color: {SIDEBAR_TEXT};
             }}
         """)
         back_btn.clicked.connect(self.back_requested.emit)

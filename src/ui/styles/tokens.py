@@ -139,10 +139,31 @@ ART_BADGE_COLORS = {
 # TYPOGRAFIE - ACENCIA Fonts (OFFIZIELL)
 # =============================================================================
 
-# Font-Familien (mit Fallbacks)
-FONT_HEADLINE = '"Tenor Sans", "Segoe UI", -apple-system, sans-serif'
-FONT_BODY = '"Open Sans", "Segoe UI", -apple-system, sans-serif'
+# Font-Presets (umschaltbar ueber Einstellungen)
+FONT_PRESETS = {
+    "modern": {
+        "headline": '"Libre Baskerville", "Tenor Sans", "Segoe UI", serif',
+        "body": '"Zen Antique", "Open Sans", "Segoe UI", serif',
+    },
+    "classic": {
+        "headline": '"Tenor Sans", "Segoe UI", -apple-system, sans-serif',
+        "body": '"Open Sans", "Segoe UI", -apple-system, sans-serif',
+    },
+}
+
+# Font-Familien (mit Fallbacks) - Standard: classic
+FONT_HEADLINE = FONT_PRESETS["classic"]["headline"]
+FONT_BODY = FONT_PRESETS["classic"]["body"]
 FONT_MONO = '"Cascadia Code", "Consolas", monospace'
+
+
+def apply_font_preset(preset_id: str):
+    """Setzt FONT_HEADLINE und FONT_BODY gemaess dem gewaehlten Preset."""
+    global FONT_HEADLINE, FONT_BODY
+    preset = FONT_PRESETS.get(preset_id, FONT_PRESETS["classic"])
+    FONT_HEADLINE = preset["headline"]
+    FONT_BODY = preset["body"]
+
 
 # Font-Groessen (pt statt px: verhindert QFont::setPointSize(-1) Warnungen)
 # Qt-Stylesheets mit px setzen pixelSize, pointSize() liefert dann -1.

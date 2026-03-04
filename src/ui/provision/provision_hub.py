@@ -153,7 +153,7 @@ class ProvisionHub(QWidget):
         sb_layout.setContentsMargins(0, 8, 0, 8)
         sb_layout.setSpacing(0)
 
-        back_btn = QPushButton(f"  \u2190  {texts.PROVISION_HUB_BACK}")
+        back_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
         back_btn.setCursor(Qt.PointingHandCursor)
         back_btn.setMinimumHeight(44)
         back_btn.setStyleSheet(f"""

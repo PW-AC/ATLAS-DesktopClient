@@ -13,7 +13,7 @@ import logging
 import ctypes
 from logging.handlers import RotatingFileHandler
 
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox
 from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler, QThread, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 
@@ -107,8 +107,8 @@ if _src_dir not in sys.path:
 from PySide6.QtCore import QObject, Signal as QtSignal
 
 from ui.login_dialog import LoginDialog
-from ui.main_hub import MainHub
-from ui.styles.tokens import get_application_stylesheet, FONT_BODY
+from ui.app_router import AppRouter
+from ui.styles.tokens import get_application_stylesheet
 from i18n import de as texts
 
 
@@ -122,7 +122,7 @@ class ForcedLogoutHandler(QObject):
     """
     logout_requested = QtSignal(str)
     
-    def __init__(self, window: MainHub, auth_api):
+    def __init__(self, window: QMainWindow, auth_api):
         super().__init__()
         self._window = window
         self._auth_api = auth_api
@@ -178,26 +178,26 @@ class _UpdateCheckWorker(QThread):
 
 
 def load_embedded_fonts():
-    """Lädt eingebettete Schriftarten aus dem assets/fonts/ Ordner."""
+    """Laedt eingebettete Schriftarten aus dem assets/fonts/ Ordner (inkl. Unterordner)."""
     fonts_dir = os.path.join(_src_dir, "ui", "assets", "fonts")
     loaded_fonts = []
-    
+
     if not os.path.exists(fonts_dir):
         logger.debug(f"Fonts-Ordner nicht gefunden: {fonts_dir}")
         return loaded_fonts
-    
-    # Alle TTF/OTF Dateien im fonts-Ordner laden
-    for filename in os.listdir(fonts_dir):
-        if filename.lower().endswith(('.ttf', '.otf')):
-            font_path = os.path.join(fonts_dir, filename)
-            font_id = QFontDatabase.addApplicationFont(font_path)
-            if font_id != -1:
-                families = QFontDatabase.applicationFontFamilies(font_id)
-                loaded_fonts.extend(families)
-                logger.info(f"Schriftart geladen: {filename} -> {', '.join(families)}")
-            else:
-                logger.warning(f"Schriftart konnte nicht geladen werden: {filename}")
-    
+
+    for dirpath, _dirnames, filenames in os.walk(fonts_dir):
+        for filename in filenames:
+            if filename.lower().endswith(('.ttf', '.otf')):
+                font_path = os.path.join(dirpath, filename)
+                font_id = QFontDatabase.addApplicationFont(font_path)
+                if font_id != -1:
+                    families = QFontDatabase.applicationFontFamilies(font_id)
+                    loaded_fonts.extend(families)
+                    logger.info(f"Schriftart geladen: {filename} -> {', '.join(families)}")
+                else:
+                    logger.warning(f"Schriftart konnte nicht geladen werden: {filename}")
+
     return loaded_fonts
 
 
@@ -290,16 +290,25 @@ def main():
     loaded_fonts = load_embedded_fonts()
     if loaded_fonts:
         logger.info(f"Eingebettete Schriftarten: {', '.join(set(loaded_fonts))}")
-    
-    # Standard-Font setzen (Open Sans mit Fallback)
-    if QFontDatabase.hasFamily("Open Sans"):
-        default_font = QFont("Open Sans", 10)
-        logger.info("Verwende Open Sans")
+
+    # Font-Preset aus lokalen Einstellungen laden
+    from PySide6.QtCore import QSettings
+    import ui.styles.tokens as _tok
+    _local = QSettings("ACENCIA GmbH", "ACENCIA ATLAS")
+    _font_preset = _local.value("appearance/font_preset", "classic")
+    _tok.apply_font_preset(_font_preset)
+    logger.info(f"Font-Preset: {_font_preset}")
+
+    # Standard-Font setzen (basierend auf aktuellem Body-Preset)
+    _body_font_name = _tok.FONT_BODY.split(",")[0].strip().strip('"')
+    if QFontDatabase.hasFamily(_body_font_name):
+        default_font = QFont(_body_font_name, 10)
+        logger.info(f"Verwende {_body_font_name}")
     else:
         default_font = QFont("Segoe UI", 10)
-        logger.info("Open Sans nicht verfuegbar, verwende Segoe UI")
+        logger.info(f"{_body_font_name} nicht verfuegbar, Fallback auf Segoe UI")
     app.setFont(default_font)
-    
+
     # ACENCIA Corporate Design Stylesheet
     app.setStyleSheet(get_application_stylesheet())
     
@@ -368,9 +377,9 @@ def main():
             )
             
             def _on_access_granted():
-                logger.info("Zugang wiederhergestellt - MainHub wird geoeffnet")
+                logger.info("Zugang wiederhergestellt - AppRouter wird geoeffnet")
                 maintenance_win.close()
-                hub = MainHub(api_client=api_client, auth_api=auth_api)
+                hub = AppRouter(api_client=api_client, auth_api=auth_api)
                 QApplication.instance()._main_hub = hub
                 hub.show()
                 _setup_post_login(hub)
@@ -379,8 +388,8 @@ def main():
             maintenance_win.show()
             sys.exit(app.exec())
         
-        # Neues Hub-Hauptfenster erstellen und anzeigen
-        window = MainHub(api_client=api_client, auth_api=auth_api)
+        # Neues Router-Hauptfenster erstellen und anzeigen
+        window = AppRouter(api_client=api_client, auth_api=auth_api)
         window.show()
         
         _setup_post_login(window)

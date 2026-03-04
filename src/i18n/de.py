@@ -35,6 +35,31 @@ NAV_VU_VERBINDUNGEN = "VU-Verbindungen"
 NAV_EINSTELLUNGEN = "Einstellungen"
 NAV_ABMELDEN = "Abmelden"
 
+# === Dashboard / Startseite ===
+DASHBOARD_GREETING_MORNING = "Guten Morgen"
+DASHBOARD_GREETING_DAY = "Guten Tag"
+DASHBOARD_GREETING_EVENING = "Guten Abend"
+DASHBOARD_MESSAGES_HEADER = "System-Mitteilungen"
+DASHBOARD_MESSAGES_EMPTY = "Keine Mitteilungen vorhanden."
+DASHBOARD_MESSAGES_LOADING = "Mitteilungen werden geladen\u2026"
+DASHBOARD_MODULES_HEADER = "Module"
+DASHBOARD_TILE_CORE = "Core"
+DASHBOARD_TILE_CORE_DESC = "Der Datenkern."
+DASHBOARD_TILE_ADMIN = "Verwaltung"
+DASHBOARD_TILE_ADMIN_DESC = "System, Benutzer & Einstellungen"
+DASHBOARD_TILE_LEDGER = "Ledger"
+DASHBOARD_TILE_LEDGER_DESC = "Finanzbuchhaltung und Belegmanagement"
+DASHBOARD_BACK = "Startseite"
+
+# === Einstellungen (Overlay) ===
+SETTINGS_TAB_APPEARANCE = "Darstellung"
+SETTINGS_FONT_SECTION = "Schriftart"
+SETTINGS_FONT_MODERN = "Modern"
+SETTINGS_FONT_MODERN_FONTS = "Libre Baskerville & Zen Antique"
+SETTINGS_FONT_CLASSIC = "Klassisch"
+SETTINGS_FONT_CLASSIC_FONTS = "Tenor Sans & Open Sans"
+SETTINGS_RESTART_HINT = "Änderungen werden beim nächsten Start der App wirksam."
+
 # === Einstellungen ===
 SETTINGS_TITLE = "Einstellungen"
 SETTINGS_CERTIFICATES = "Zertifikate"

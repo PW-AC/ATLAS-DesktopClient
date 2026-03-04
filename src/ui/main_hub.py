@@ -367,7 +367,18 @@ class MainHub(QMainWindow):
     - Stacked Widget für die verschiedenen Bereiche
     - Globales Drag & Drop zum Upload in die Eingangsbox
     """
-    
+
+    back_to_dashboard_requested = Signal()
+
+    def navigate_to_admin(self):
+        """Oeffentliche Methode: Admin-Ansicht oeffnen (vom AppRouter aufrufbar)."""
+        self._show_admin()
+
+    def reset_to_default_view(self):
+        """Setzt MainHub auf Standard-Ansicht zurueck (Sidebar sichtbar, Mitteilungszentrale)."""
+        self._sidebar.show()
+        self._show_message_center()
+
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
         super().__init__()
         
@@ -461,9 +472,31 @@ class MainHub(QMainWindow):
         """)
         
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(0, 20, 0, 20)
+        sidebar_layout.setContentsMargins(0, 0, 0, 20)
         sidebar_layout.setSpacing(4)
-        
+
+        home_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
+        home_btn.setCursor(Qt.PointingHandCursor)
+        home_btn.setMinimumHeight(44)
+        home_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                border-bottom: 1px solid rgba(136, 169, 195, 0.15);
+                padding: 10px 16px;
+                text-align: left;
+                font-family: {FONT_BODY};
+                font-size: {FONT_SIZE_BODY};
+                color: {ACCENT_500};
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {SIDEBAR_HOVER};
+            }}
+        """)
+        home_btn.clicked.connect(self.back_to_dashboard_requested.emit)
+        sidebar_layout.addWidget(home_btn)
+
         # Logo/Titel Container
         logo_container = QWidget()
         logo_layout = QVBoxLayout(logo_container)
@@ -567,65 +600,26 @@ class MainHub(QMainWindow):
         self.btn_gdv.clicked.connect(self._show_gdv)
         sidebar_layout.addWidget(self.btn_gdv)
         
-        # Provisionsmanagement Button (nur mit provision_access Recht)
+        # Provision-Flag (Sidebar-Eintrag entfernt -- Ledger wird ueber Dashboard gestartet)
         user_prov = self.auth_api.current_user
         if user_prov and user_prov.has_permission('provision_access'):
             self.btn_provision = NavButton("💰", texts.PROVISION_NAV_TITLE)
-            self.btn_provision.setToolTip(texts.PROVISION_NAV_TOOLTIP)
             self.btn_provision.clicked.connect(self._show_provision)
-            sidebar_layout.addWidget(self.btn_provision)
         else:
             self.btn_provision = None
         
         # Spacer
         sidebar_layout.addStretch()
         
-        # === Admin-Bereich (nur fuer Admins) ===
+        # Admin-Flag (Sidebar-Eintrag entfernt -- Admin wird ueber Dashboard gestartet)
         self._admin_nav_widgets = []
         user = self.auth_api.current_user
         if user and user.is_admin:
-            admin_label = QLabel(texts.NAV_ADMIN)
-            admin_label.setStyleSheet(f"""
-                color: {PRIMARY_500};
-                font-size: {FONT_SIZE_CAPTION};
-                padding: 16px 20px 8px 20px;
-                letter-spacing: 1px;
-            """)
-            sidebar_layout.addWidget(admin_label)
-            self._admin_nav_widgets.append(admin_label)
-            
             self.btn_admin = NavButton("👥", texts.NAV_ADMIN_VIEW)
             self.btn_admin.clicked.connect(self._show_admin)
-            sidebar_layout.addWidget(self.btn_admin)
-            self._admin_nav_widgets.append(self.btn_admin)
         else:
             self.btn_admin = None
         
-        # Abmelden Button (auf dunklem Hintergrund)
-        logout_container = QWidget()
-        logout_layout = QVBoxLayout(logout_container)
-        logout_layout.setContentsMargins(16, 16, 16, 0)
-        
-        logout_btn = QPushButton("Abmelden")
-        logout_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: 1px solid {PRIMARY_500};
-                border-radius: {RADIUS_MD};
-                padding: 10px 16px;
-                color: {PRIMARY_500};
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_BODY};
-            }}
-            QPushButton:hover {{
-                background-color: rgba(136, 169, 195, 0.15);
-                border-color: {SIDEBAR_TEXT};
-                color: {SIDEBAR_TEXT};
-            }}
-        """)
-        logout_btn.clicked.connect(self._on_logout)
-        logout_layout.addWidget(logout_btn)
-        sidebar_layout.addWidget(logout_container)
         
         main_layout.addWidget(sidebar)
         
@@ -903,14 +897,12 @@ class MainHub(QMainWindow):
         self._show_message_center()
     
     def _leave_admin(self):
-        """Verlässt den Admin-Bereich und zeigt die Hauptsidebar wieder an."""
+        """Verlässt den Admin-Bereich und kehrt zum Dashboard zurueck."""
         self._sidebar.show()
-        # SmartScan-Status neu laden (Admin koennte ihn geaendert haben)
         if self._archive_view and hasattr(self._archive_view, '_load_smartscan_status'):
             self._archive_view._load_smartscan_status()
             self._archive_view.sidebar._smartscan_enabled = self._archive_view._smartscan_enabled
-        # Zurueck zum Dokumentenarchiv (Standardbereich)
-        self._show_archive()
+        self.back_to_dashboard_requested.emit()
     
     # ================================================================
     # Permission Guards

@@ -437,9 +437,7 @@ class MessageCenterView(QWidget):
         self._bipro_events_api = bipro_events_api
     
     def refresh(self):
-        """Laedt Mitteilungen, Releases und BiPRO-Events neu."""
-        self._load_messages()
-        self._load_releases()
+        """Laedt BiPRO-Events neu (System-Mitteilungen, Releases, Chats -> Dashboard)."""
         self._load_bipro_events()
     
     def _setup_ui(self):
@@ -459,7 +457,7 @@ class MessageCenterView(QWidget):
         """)
         main_layout.addWidget(header)
         
-        # === Scroll Area fuer Kacheln ===
+        # === Scroll Area ===
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -470,26 +468,13 @@ class MessageCenterView(QWidget):
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(16)
         
-        # --- Obere Reihe: System-Mitteilungen + BiPRO-Events ---
-        top_row = QHBoxLayout()
-        top_row.setSpacing(16)
-        self._messages_card = self._create_messages_card()
-        top_row.addWidget(self._messages_card, 1)
-        self._bipro_events_card = self._create_bipro_events_card()
-        top_row.addWidget(self._bipro_events_card, 1)
-        self._content_layout.addLayout(top_row)
+        # Nur BiPRO-Handlungsaufforderungen (System-Mitteilungen, Releases, Chats -> Dashboard)
+        self._messages_card = None
+        self._release_card = None
+        self._chats_card = None
 
-        # --- Untere Reihe: Release + Nachrichten ---
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(16)
-        
-        self._release_card = self._create_release_card()
-        bottom_row.addWidget(self._release_card, 1)
-        
-        self._chats_card = self._create_chats_card()
-        bottom_row.addWidget(self._chats_card, 1)
-        
-        self._content_layout.addLayout(bottom_row)
+        self._bipro_events_card = self._create_bipro_events_card()
+        self._content_layout.addWidget(self._bipro_events_card)
         self._content_layout.addStretch()
         
         scroll.setWidget(scroll_content)
@@ -774,7 +759,9 @@ class MessageCenterView(QWidget):
         return card
     
     def update_unread_count(self, unread_chats: int):
-        """Aktualisiert die Unread-Anzeige in der Chat-Kachel."""
+        """Aktualisiert die Unread-Anzeige in der Chat-Kachel (falls vorhanden)."""
+        if not hasattr(self, '_chat_info_label') or self._chat_info_label is None:
+            return
         if unread_chats > 0:
             self._chat_info_label.setText(
                 texts.MSG_CENTER_UNREAD_CHATS.format(count=unread_chats)
@@ -1031,9 +1018,9 @@ class MessageCenterView(QWidget):
     @Slot(list)
     def _on_messages_loaded(self, messages: list):
         self._messages = messages
-        self._populate_messages()
+        if self._messages_card:
+            self._populate_messages()
         
-        # Ungelesene als gelesen markieren
         unread_ids = [m['id'] for m in messages if not m.get('is_read', True)]
         if unread_ids and self._messages_api:
             try:
@@ -1059,7 +1046,8 @@ class MessageCenterView(QWidget):
     @Slot(list)
     def _on_releases_loaded(self, releases: list):
         self._releases = releases
-        self._populate_releases()
+        if self._release_card:
+            self._populate_releases()
 
     def _load_bipro_events(self):
         if not self._bipro_events_api:

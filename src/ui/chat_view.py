@@ -376,23 +376,25 @@ class ChatView(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
         
-        # Zurueck-Button
-        back_btn = QPushButton(f"  ←  {texts.CHAT_BACK}")
+        back_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
+        back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.setMinimumHeight(44)
         back_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
-                color: {TEXT_INVERSE};
                 border: none;
-                border-bottom: 1px solid {PRIMARY_500};
-                padding: 12px 16px;
+                border-bottom: 1px solid rgba(136, 169, 195, 0.15);
+                padding: 10px 16px;
                 text-align: left;
+                font-family: {FONT_BODY};
                 font-size: {FONT_SIZE_BODY};
+                color: {ACCENT_500};
+                font-weight: 600;
             }}
             QPushButton:hover {{
                 background-color: {SIDEBAR_HOVER};
             }}
         """)
-        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         back_btn.clicked.connect(self.back_requested.emit)
         left_layout.addWidget(back_btn)
         
