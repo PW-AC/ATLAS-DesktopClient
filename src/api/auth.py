@@ -15,32 +15,63 @@ from .client import APIClient, APIError
 
 logger = logging.getLogger(__name__)
 
-PROVISION_PERMISSIONS = frozenset({'provision_access', 'provision_manage'})
+@dataclass
+class UserModule:
+    """Modul-Freischaltung eines Benutzers."""
+    module_key: str
+    group_key: str
+    name: str
+    is_enabled: bool
+    access_level: str  # 'user' | 'admin'
+
+
+@dataclass
+class UserRole:
+    """Rollenzuweisung eines Benutzers."""
+    role_id: int
+    role_key: str
+    module_key: str
 
 
 @dataclass
 class User:
-    """Angemeldeter Benutzer mit Kontotyp und Rechten."""
+    """Angemeldeter Benutzer mit Kontotyp, Modulen, Rollen und Rechten."""
     id: int
     username: str
     email: Optional[str] = None
     account_type: str = 'user'
     update_channel: str = 'stable'
     permissions: List[str] = field(default_factory=list)
+    modules: List[UserModule] = field(default_factory=list)
+    roles: List[UserRole] = field(default_factory=list)
     is_locked: bool = False
     last_login_at: Optional[str] = None
 
     @property
     def is_admin(self) -> bool:
-        """Ist der Benutzer ein Administrator?"""
-        return self.account_type == 'admin'
+        return self.account_type in ('admin', 'super_admin')
+
+    @property
+    def is_super_admin(self) -> bool:
+        return self.account_type == 'super_admin'
+
+    def has_module(self, module_key: str) -> bool:
+        if self.is_super_admin:
+            return True
+        return any(m.module_key == module_key and m.is_enabled for m in self.modules)
+
+    def is_module_admin(self, module_key: str) -> bool:
+        if self.is_super_admin:
+            return True
+        return any(
+            m.module_key == module_key and m.is_enabled and m.access_level == 'admin'
+            for m in self.modules
+        )
 
     def has_permission(self, perm: str) -> bool:
-        """Prueft ob der Benutzer ein bestimmtes Recht hat.
-        Admins haben alle Standard-Rechte. Provision-Rechte muessen explizit vergeben werden."""
-        if perm in PROVISION_PERMISSIONS:
-            return perm in self.permissions
-        return self.is_admin or perm in self.permissions
+        if self.is_super_admin:
+            return True
+        return perm in self.permissions
 
 
 @dataclass  
@@ -50,6 +81,44 @@ class AuthState:
     user: Optional[User] = None
     token: Optional[str] = None
     expires_in: int = 0
+
+
+def _build_user(data: Dict) -> User:
+    """Erstellt ein User-Objekt aus API-Response-Daten."""
+    modules = []
+    for m in data.get('modules', []):
+        try:
+            modules.append(UserModule(
+                module_key=m.get('module_key', ''),
+                group_key=m.get('group_key', ''),
+                name=m.get('name', ''),
+                is_enabled=bool(m.get('is_enabled', False)),
+                access_level=m.get('access_level', 'user')
+            ))
+        except Exception:
+            continue
+    roles = []
+    for r in data.get('roles', []):
+        try:
+            roles.append(UserRole(
+                role_id=int(r.get('role_id', 0)),
+                role_key=r.get('role_key', ''),
+                module_key=r.get('module_key', '')
+            ))
+        except Exception:
+            continue
+    return User(
+        id=data.get('id', data.get('user_id', 0)),
+        username=data.get('username', ''),
+        email=data.get('email'),
+        account_type=data.get('account_type', 'user'),
+        update_channel=data.get('update_channel', 'stable'),
+        permissions=data.get('permissions', []),
+        modules=modules,
+        roles=roles,
+        is_locked=bool(data.get('is_locked', False)),
+        last_login_at=data.get('last_login_at')
+    )
 
 
 class AuthAPI:
@@ -106,15 +175,7 @@ class AuthAPI:
                 # Token im Client setzen
                 self.client.set_token(token)
                 
-                # User-Objekt erstellen (mit Kontotyp und Rechten)
-                self._current_user = User(
-                    id=user_data['id'],
-                    username=user_data['username'],
-                    email=user_data.get('email'),
-                    account_type=user_data.get('account_type', 'user'),
-                    update_channel=user_data.get('update_channel', 'stable'),
-                    permissions=user_data.get('permissions', [])
-                )
+                self._current_user = _build_user(user_data)
 
                 # Token speichern falls gewünscht
                 if remember:
@@ -216,15 +277,8 @@ class AuthAPI:
         
         verify_result = self._verify_token_with_permissions()
         if verify_result:
-            # Token ist gueltig - behalten
-            self._current_user = User(
-                id=verify_result.get('user_id', user_data['id']),
-                username=verify_result.get('username', user_data['username']),
-                email=user_data.get('email'),
-                account_type=verify_result.get('account_type', user_data.get('account_type', 'user')),
-                update_channel=verify_result.get('update_channel', user_data.get('update_channel', 'stable')),
-                permissions=verify_result.get('permissions', user_data.get('permissions', []))
-            )
+            merged = {**user_data, **verify_result}
+            self._current_user = _build_user(merged)
             logger.info(f"Auto-Login erfolgreich: {self._current_user.username}")
             return AuthState(
                 is_authenticated=True,
@@ -232,7 +286,6 @@ class AuthAPI:
                 token=token
             )
         else:
-            # Token ungueltig - auf alten Zustand zurueckrollen
             if old_token:
                 self.client.set_token(old_token)
             else:
@@ -240,7 +293,7 @@ class AuthAPI:
             self._delete_saved_token()
             logger.info("Auto-Login fehlgeschlagen: Token abgelaufen")
             return AuthState(is_authenticated=False)
-    
+
     def re_authenticate(self) -> bool:
         """
         Versucht automatische Re-Authentifizierung.
@@ -278,15 +331,8 @@ class AuthAPI:
         
         verify_result = self._verify_token_with_permissions()
         if verify_result:
-            # Token ist gueltig - behalten
-            self._current_user = User(
-                id=verify_result.get('user_id', user_data['id']),
-                username=verify_result.get('username', user_data['username']),
-                email=user_data.get('email'),
-                account_type=verify_result.get('account_type', user_data.get('account_type', 'user')),
-                update_channel=verify_result.get('update_channel', user_data.get('update_channel', 'stable')),
-                permissions=verify_result.get('permissions', user_data.get('permissions', []))
-            )
+            merged = {**user_data, **verify_result}
+            self._current_user = _build_user(merged)
             logger.info(f"Re-Authentifizierung erfolgreich: {self._current_user.username}")
             return True
         
@@ -313,14 +359,47 @@ class AuthAPI:
             if response.get('valid', False):
                 return {
                     'user_id': response.get('user_id'),
+                    'id': response.get('user_id'),
                     'username': response.get('username'),
                     'account_type': response.get('account_type', 'user'),
                     'update_channel': response.get('update_channel', 'stable'),
-                    'permissions': response.get('permissions', [])
+                    'permissions': response.get('permissions', []),
+                    'modules': response.get('modules', []),
+                    'roles': response.get('roles', [])
                 }
         except APIError:
             pass
         return None
+
+    @staticmethod
+    def _parse_modules(raw: list) -> List['UserModule']:
+        result = []
+        for m in raw:
+            try:
+                result.append(UserModule(
+                    module_key=m.get('module_key', ''),
+                    group_key=m.get('group_key', ''),
+                    name=m.get('name', ''),
+                    is_enabled=bool(m.get('is_enabled', False)),
+                    access_level=m.get('access_level', 'user')
+                ))
+            except Exception:
+                continue
+        return result
+
+    @staticmethod
+    def _parse_roles(raw: list) -> List['UserRole']:
+        result = []
+        for r in raw:
+            try:
+                result.append(UserRole(
+                    role_id=int(r.get('role_id', 0)),
+                    role_key=r.get('role_key', ''),
+                    module_key=r.get('module_key', '')
+                ))
+            except Exception:
+                continue
+        return result
 
     def _save_token(self, token: str, user_data: Dict) -> None:
         """

@@ -66,7 +66,14 @@ def is_dev_mode() -> bool:
 APP_VERSION = _read_app_version()
 
 def setup_logging():
-    """Konfiguriert Logging mit Console + File Output."""
+    """Konfiguriert Logging mit Console + File Output.
+
+    Der Console-Handler wird mit einem CategoryFilter versehen,
+    der Kategorien per Config oder ATLAS_LOG_SILENT stumm schalten kann.
+    Der File-Handler loggt immer ALLES ungefiltert.
+    """
+    from config.log_config import get_console_filter, get_status_summary
+
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
     log_file = os.path.join(log_dir, "bipro_gdv.log")
     
@@ -75,17 +82,17 @@ def setup_logging():
     
     formatter = logging.Formatter(LOG_FORMAT)
     
-    # Console Handler (wie bisher)
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(get_console_filter())
     root_logger.addHandler(console_handler)
     
-    # File Handler mit Rotation (5 MB, 3 Backups)
+    # File Handler mit Rotation (5 MB, 3 Backups) -- KEIN CategoryFilter
     try:
         os.makedirs(log_dir, exist_ok=True)
         file_handler = RotatingFileHandler(
             log_file, 
-            maxBytes=5 * 1024 * 1024,  # 5 MB
+            maxBytes=5 * 1024 * 1024,
             backupCount=3, 
             encoding='utf-8'
         )
@@ -94,6 +101,8 @@ def setup_logging():
         root_logger.info(f"File-Logging aktiviert: {log_file}")
     except (OSError, PermissionError) as e:
         root_logger.warning(f"File-Logging nicht moeglich, nur Console: {e}")
+
+    root_logger.info(f"Log-Kategorien: {get_status_summary()}")
 
 setup_logging()
 

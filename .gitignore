@@ -129,8 +129,9 @@ neuer API KEY/
 .env
 .env.*
 
-# Smoke-Test Reports (enthalten Systeminfos)
+# Test-Reports (enthalten Systeminfos)
 smoke_test_report*.json
+provision_test_report*.json
 
 # PyInstaller Build-Artefakte
 build/
@@ -141,9 +142,20 @@ Projekt Ziel/
 # Design-Mockups (nur Referenzbilder, gehoeren nicht in Versionskontrolle)
 Visuelle Überarbeitung - Orientierung fuer GF - PROVI bereich/
 
+# Linter-Cache
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Agent-Skill-generierte Analyse-Ordner (bei Bedarf manuell committen)
+Kontext/
+Bugs/
+Sicherheit/
+
 # =============================================================================
 # Wichtig: NICHT ignorieren
 # =============================================================================
 
 # requirements.txt - NICHT ignorieren (wird fuer Installation benoetigt)
 # ATLAS_private - Doku - Backend/ ist ein Git-Submodule (privates Repo)
+# docs/ - NICHT ignorieren (Projektdokumentation)

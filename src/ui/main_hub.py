@@ -26,6 +26,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QThread
 from PySide6.QtGui import QFont, QIcon, QPixmap, QDragEnterEvent, QDropEvent
 
 logger = logging.getLogger(__name__)
+hb_logger = logging.getLogger('heartbeat.core')
 
 from api.client import APIClient
 from api.auth import AuthAPI
@@ -61,33 +62,6 @@ class UpdateCheckWorker(QThread):
                 self.update_available.emit(info)
         except Exception:
             pass  # Periodischer Check darf nie crashen
-
-
-class NotificationPollWorker(QThread):
-    """Pollt Notification-Summary im Hintergrund (nicht-blockierend)."""
-    finished = Signal(dict)
-    
-    def __init__(self, messages_api, last_message_ts: str = None,
-                 bipro_events_api=None):
-        super().__init__()
-        self._api = messages_api
-        self._last_message_ts = last_message_ts
-        self._bipro_events_api = bipro_events_api
-    
-    def run(self):
-        try:
-            summary = self._api.get_notifications_summary(
-                last_message_ts=self._last_message_ts
-            )
-            if self._bipro_events_api:
-                try:
-                    ev_summary = self._bipro_events_api.get_summary()
-                    summary['unread_bipro_events'] = ev_summary.get('unread_count', 0)
-                except Exception:
-                    summary['unread_bipro_events'] = 0
-            self.finished.emit(summary)
-        except Exception:
-            self.finished.emit({})
 
 
 class NavButton(QPushButton):
@@ -423,31 +397,23 @@ class MainHub(QMainWindow):
             self._update_timer.timeout.connect(self._check_for_updates)
             self._update_timer.start(30 * 60 * 1000)  # 30 Minuten
         
-        # Notification-Poller (dynamisches Intervall je nach aktiver Ansicht)
-        self._POLL_INTERVAL_NORMAL = 30_000   # 30s - Standard (BiPRO, Archiv, GDV, Admin)
-        self._POLL_INTERVAL_CENTER = 10_000   # 10s - Mitteilungszentrale aktiv
-        self._current_poll_interval = self._POLL_INTERVAL_CENTER  # Start = Zentrale
-        
-        self._notification_poller_timer = QTimer(self)
-        self._notification_poller_timer.timeout.connect(self._poll_notifications)
-        self._last_message_ts = None
+        # Notification-State (wird vom GlobalHeartbeat via AppRouter befuellt)
         self._prev_unread_chats = 0
         self._prev_unread_system = 0
         self._prev_unread_bipro_events = 0
-        self._messages_api = None  # Wird nach Login gesetzt
-        self._bipro_events_api = None  # Wird nach Login gesetzt
-        self._notification_poll_worker = None  # Worker-Referenz
-        self._notification_poller_timer.start(self._POLL_INTERVAL_CENTER)
-        # Sofort einmal pollen
-        QTimer.singleShot(2000, self._poll_notifications)
         
-        # System-Status (Live-Zugangs-Check, wird bei jedem Notification-Poll mitgeprueft)
+        # Modul-Heartbeat (15s, gesteuert durch AppRouter)
+        self._module_heartbeat_timer = QTimer(self)
+        self._module_heartbeat_timer.timeout.connect(self._on_module_heartbeat_tick)
+        self._MODULE_HEARTBEAT_INTERVAL = 15_000
+        
+        # System-Status (Live-Zugangs-Check, wird vom GlobalHeartbeat gesteuert)
         from ui.maintenance_overlay import MaintenanceOverlay
         self._maintenance_overlay = MaintenanceOverlay(self.api_client, self.auth_api.current_user, self)
         self._system_status_worker = None
         self._maintenance_pending = False
         
-        # Standardmaeßig Mitteilungszentrale anzeigen (nach Poller-Init!)
+        # Standardmaeßig Mitteilungszentrale anzeigen
         self._show_message_center()
     
     def _setup_ui(self):
@@ -600,15 +566,21 @@ class MainHub(QMainWindow):
         self.btn_gdv.clicked.connect(self._show_gdv)
         sidebar_layout.addWidget(self.btn_gdv)
         
-        # Provision-Flag (Sidebar-Eintrag entfernt -- Ledger wird ueber Dashboard gestartet)
+        user_core = self.auth_api.current_user
+        if user_core and user_core.is_module_admin('core'):
+            self.btn_core_admin = NavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN)
+            self.btn_core_admin.clicked.connect(self._show_core_module_admin)
+            sidebar_layout.addWidget(self.btn_core_admin)
+        else:
+            self.btn_core_admin = None
+
         user_prov = self.auth_api.current_user
-        if user_prov and user_prov.has_permission('provision_access'):
-            self.btn_provision = NavButton("💰", texts.PROVISION_NAV_TITLE)
+        if user_prov and user_prov.has_module('provision'):
+            self.btn_provision = NavButton("\U0001F4B0", texts.PROVISION_NAV_TITLE)
             self.btn_provision.clicked.connect(self._show_provision)
         else:
             self.btn_provision = None
-        
-        # Spacer
+
         sidebar_layout.addStretch()
         
         # Admin-Flag (Sidebar-Eintrag entfernt -- Admin wird ueber Dashboard gestartet)
@@ -721,8 +693,7 @@ class MainHub(QMainWindow):
         
         self._message_center_view.refresh()
         self.content_stack.setCurrentIndex(0)
-        self._set_polling_interval(self._POLL_INTERVAL_CENTER)
-        
+
         # Sofort Badge aktualisieren (System-Meldungen wurden gerade gelesen)
         QTimer.singleShot(1500, self._refresh_badge_after_read)
     
@@ -748,8 +719,7 @@ class MainHub(QMainWindow):
             self.content_stack.insertWidget(1, self._bipro_view)
         
         self.content_stack.setCurrentIndex(1)
-        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
-    
+
     def _show_archive(self):
         """Zeigt das Dokumentenarchiv mit Box-System."""
         self._update_nav_buttons(self.btn_archive)
@@ -768,8 +738,7 @@ class MainHub(QMainWindow):
             self.content_stack.insertWidget(2, self._archive_view)
         
         self.content_stack.setCurrentIndex(2)
-        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
-    
+
     def _show_gdv(self):
         """Zeigt den GDV-Editor."""
         self._update_nav_buttons(self.btn_gdv)
@@ -786,8 +755,7 @@ class MainHub(QMainWindow):
             self.content_stack.insertWidget(3, self._gdv_view)
         
         self.content_stack.setCurrentIndex(3)
-        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
-    
+
     def _show_settings(self):
         """Öffnet den Einstellungen-Dialog."""
         from ui.settings_dialog import SettingsDialog
@@ -832,7 +800,6 @@ class MainHub(QMainWindow):
         
         self._sidebar.hide()
         self.content_stack.setCurrentIndex(idx)
-        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
     
     def _leave_provision(self):
         """Verlaesst das Provisionsmanagement."""
@@ -860,7 +827,6 @@ class MainHub(QMainWindow):
         
         self._sidebar.hide()
         self.content_stack.setCurrentIndex(idx)
-        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
     
     def _show_chat(self):
         """Zeigt die Chat-Vollbild-Ansicht. Sidebar wird versteckt (wie Admin)."""
@@ -881,19 +847,13 @@ class MainHub(QMainWindow):
         self._sidebar.hide()
         chat_idx = self._get_chat_index()
         self.content_stack.setCurrentIndex(chat_idx)
-        # Notification-Poller pausieren - ChatRefreshWorker uebernimmt
-        self._set_polling_interval(0)
-        # Chat-View Auto-Refresh starten (3s Nachrichten-Polling)
         self._chat_view.start_auto_refresh()
     
     def _leave_chat(self):
         """Verlaesst den Chat und zeigt die Mitteilungszentrale."""
-        # Chat Auto-Refresh stoppen
         if self._chat_view:
             self._chat_view.stop_auto_refresh()
         self._sidebar.show()
-        # Notification-Poller sofort wieder starten + Badge aktualisieren
-        self._poll_notifications()
         self._show_message_center()
     
     def _leave_admin(self):
@@ -903,6 +863,86 @@ class MainHub(QMainWindow):
             self._archive_view._load_smartscan_status()
             self._archive_view.sidebar._smartscan_enabled = self._archive_view._smartscan_enabled
         self.back_to_dashboard_requested.emit()
+
+    def _show_core_module_admin(self):
+        """Oeffnet die Core-Modul-Verwaltung (Vollbild)."""
+        if not hasattr(self, '_core_module_admin_view') or self._core_module_admin_view is None:
+            from ui.module_admin import ModuleAdminShell
+            config_panels = self._get_core_config_panels()
+            self._core_module_admin_view = ModuleAdminShell(
+                module_key='core', module_name='Core',
+                api_client=self.api_client, auth_api=self.auth_api,
+                config_panels=config_panels,
+            )
+            self._core_module_admin_view._toast_manager = self._toast_manager
+            self._core_module_admin_view.back_requested.connect(self._leave_core_module_admin)
+            self.content_stack.addWidget(self._core_module_admin_view)
+
+        self._sidebar.hide()
+        idx = self.content_stack.indexOf(self._core_module_admin_view)
+        self.content_stack.setCurrentIndex(idx)
+        self._core_module_admin_view.load_data()
+
+    def _leave_core_module_admin(self):
+        self._sidebar.show()
+        self._show_message_center()
+
+    def _get_core_config_panels(self):
+        """Config-Panel-Factories fuer das Core-Modul."""
+        from api.processing_settings import ProcessingSettingsAPI
+        from api.ai_providers import AIProvidersAPI
+        from api.model_pricing import ModelPricingAPI
+
+        psa = ProcessingSettingsAPI(self.api_client)
+        apa = AIProvidersAPI(self.api_client)
+        mpa = ModelPricingAPI(self.api_client)
+
+        from api.smartscan import SmartScanAPI, EmailAccountsAPI as EmailAccAPI
+        ssa = SmartScanAPI(self.api_client)
+        eaa = EmailAccAPI(self.api_client)
+
+        def _ai_class(ac, tm):
+            from ui.admin.panels.ai_classification import AiClassificationPanel
+            return AiClassificationPanel(api_client=ac, toast_manager=tm, processing_settings_api=psa, ai_providers_api=apa)
+
+        def _ai_prov(ac, tm):
+            from ui.admin.panels.ai_providers import AiProvidersPanel
+            return AiProvidersPanel(api_client=ac, toast_manager=tm, ai_providers_api=apa)
+
+        def _model_price(ac, tm):
+            from ui.admin.panels.model_pricing import ModelPricingPanel
+            return ModelPricingPanel(api_client=ac, toast_manager=tm, model_pricing_api=mpa)
+
+        def _doc_rules(ac, tm):
+            from ui.admin.panels.document_rules import DocumentRulesPanel
+            return DocumentRulesPanel(api_client=ac, toast_manager=tm)
+
+        def _email_acc(ac, tm):
+            from ui.admin.panels.email_accounts import EmailAccountsPanel
+            return EmailAccountsPanel(api_client=ac, toast_manager=tm, email_accounts_api=eaa)
+
+        def _ss_settings(ac, tm):
+            from ui.admin.panels.smartscan_settings import SmartScanSettingsPanel
+            return SmartScanSettingsPanel(api_client=ac, toast_manager=tm, smartscan_api=ssa, email_accounts_api=eaa)
+
+        def _ss_history(ac, tm):
+            from ui.admin.panels.smartscan_history import SmartScanHistoryPanel
+            return SmartScanHistoryPanel(api_client=ac, toast_manager=tm, smartscan_api=ssa)
+
+        def _email_inbox(ac, tm):
+            from ui.admin.panels.email_inbox import EmailInboxPanel
+            return EmailInboxPanel(api_client=ac, toast_manager=tm, email_accounts_api=eaa)
+
+        return [
+            ("KI-Klassifikation", _ai_class),
+            ("KI-Provider", _ai_prov),
+            ("Modell-Preise", _model_price),
+            ("Dokumenten-Regeln", _doc_rules),
+            ("E-Mail-Konten", _email_acc),
+            ("Smart!Scan Einstellungen", _ss_settings),
+            ("Smart!Scan Historie", _ss_history),
+            ("E-Mail Posteingang", _email_inbox),
+        ]
     
     # ================================================================
     # Permission Guards
@@ -1013,81 +1053,59 @@ class MainHub(QMainWindow):
             self.close()
     
     # ================================================================
-    # Notification Polling (dynamisches Intervall)
+    # Module Heartbeat (gesteuert durch AppRouter)
     # ================================================================
-    
-    def _set_polling_interval(self, interval_ms: int):
-        """Setzt das Polling-Intervall dynamisch.
-        
-        Wird bei jedem View-Wechsel aufgerufen:
-        - 30s normal (BiPRO, Archiv, GDV, Admin)
-        - 10s Mitteilungszentrale
-        - 0 (pausiert) Chat-Ansicht (ChatRefreshWorker uebernimmt)
-        """
-        if interval_ms == 0:
-            # Pausieren (z.B. wenn ChatView eigenen Refresh hat)
-            self._notification_poller_timer.stop()
-            self._current_poll_interval = 0
+
+    def start_module_heartbeat(self):
+        """Startet den Modul-Heartbeat (15s). Wird vom AppRouter aufgerufen."""
+        if self._module_heartbeat_timer.isActive():
             return
-        
-        was_stopped = self._current_poll_interval == 0
-        if interval_ms != self._current_poll_interval:
-            self._current_poll_interval = interval_ms
-            self._notification_poller_timer.setInterval(interval_ms)
-            if was_stopped:
-                self._notification_poller_timer.start(interval_ms)
-            # Sofort pollen beim Wechsel auf schnelleres Intervall
-            if interval_ms < self._POLL_INTERVAL_NORMAL:
-                self._poll_notifications()
-    
-    def _poll_notifications(self):
-        """Polling: Startet Worker fuer nicht-blockierenden API-Call."""
-        if not self._messages_api:
-            try:
-                from api.messages import MessagesAPI
-                self._messages_api = MessagesAPI(self.api_client)
-            except Exception:
-                return
-        
-        if not self.api_client.is_authenticated():
-            return
-        
-        # Nicht starten wenn bereits ein Poll laeuft
-        if self._notification_poll_worker and self._notification_poll_worker.isRunning():
-            return
-        
-        self._notification_poll_worker = NotificationPollWorker(
-            self._messages_api, self._last_message_ts,
-            bipro_events_api=self._bipro_events_api
-        )
-        self._notification_poll_worker.finished.connect(self._on_notification_poll_finished)
-        self._notification_poll_worker.start()
-    
-    def _on_notification_poll_finished(self, summary: dict):
-        """Callback wenn Notification-Poll abgeschlossen (Main-Thread)."""
+        self._module_heartbeat_timer.start(self._MODULE_HEARTBEAT_INTERVAL)
+        if self._archive_view and hasattr(self._archive_view, '_cache'):
+            cache = self._archive_view._cache
+            if cache and hasattr(cache, 'start_auto_refresh'):
+                cache.start_auto_refresh()
+        hb_logger.info(f"[CORE] START (Intervall={self._MODULE_HEARTBEAT_INTERVAL}ms)")
+
+    def stop_module_heartbeat(self):
+        """Stoppt den Modul-Heartbeat. Wird vom AppRouter aufgerufen."""
+        self._module_heartbeat_timer.stop()
+        if self._chat_view and hasattr(self._chat_view, 'stop_auto_refresh'):
+            self._chat_view.stop_auto_refresh()
+        if self._archive_view and hasattr(self._archive_view, '_cache'):
+            cache = self._archive_view._cache
+            if cache and hasattr(cache, 'stop_auto_refresh'):
+                cache.stop_auto_refresh()
+        hb_logger.info("[CORE] STOP")
+
+    def _on_module_heartbeat_tick(self):
+        """Periodischer Refresh aller geladenen Core-Views (15s)."""
+        hb_logger.info("[CORE] TICK")
+
+    # ================================================================
+    # GlobalHeartbeat Callbacks (via AppRouter)
+    # ================================================================
+
+    def on_notifications_updated(self, summary: dict):
+        """Empfaengt Notification-Summary vom GlobalHeartbeat."""
         if not summary:
             return
-        
+
         unread_chats = summary.get('unread_chats', 0)
         unread_system = summary.get('unread_system_messages', 0)
         unread_bipro = summary.get('unread_bipro_events', 0)
-        
-        # Badge aktualisieren
+
         total_unread = unread_chats + unread_system + unread_bipro
         self._update_notification_badge(total_unread)
-        
-        # MessageCenterView aktualisieren
+
         if self._message_center_view:
             self._message_center_view.update_unread_count(unread_chats)
-        
-        # Toast bei neuer Chat-Nachricht
+
         latest = summary.get('latest_chat_message')
         if latest and unread_chats > self._prev_unread_chats:
             sender = latest.get('sender_name', '')
-            preview = latest.get('preview', '')
             conv_id = latest.get('conversation_id', 0)
-            
-            # Kein Toast wenn User gerade in demselben Chat ist
+
             if not (self._chat_view and self._chat_view._current_conv_id == conv_id
                     and self._sidebar.isHidden()):
                 self._toast_manager.show_info(
@@ -1095,32 +1113,53 @@ class MainHub(QMainWindow):
                     action_text=texts.MSG_CENTER_OPEN_CHAT,
                     action_callback=lambda cid=conv_id: self._open_specific_chat(cid)
                 )
-            
-            # Timestamp merken fuer Deduplizierung
-            if latest.get('created_at'):
-                self._last_message_ts = latest['created_at']
-        
+
         self._prev_unread_chats = unread_chats
         self._prev_unread_system = unread_system
         self._prev_unread_bipro_events = unread_bipro
-        
-        self._check_system_status()
-    
+
+    def on_system_status_changed(self, status: str, message: str):
+        """Empfaengt System-Status vom GlobalHeartbeat."""
+        from api.system_status import has_access
+        from main import is_dev_mode
+
+        user = self.auth_api.current_user
+        if not user:
+            return
+
+        accessible = has_access(status, user.is_admin, is_dev_mode())
+
+        if not accessible and not self._maintenance_overlay.isVisible():
+            blocking = self._get_all_blocking_operations()
+            if blocking and not self._maintenance_pending:
+                self._maintenance_pending = True
+                self._pending_maintenance_msg = message
+                if hasattr(self, '_toast_manager') and self._toast_manager:
+                    self._toast_manager.show_warning(texts.MAINTENANCE_PENDING_OPS, duration_ms=8000)
+                QTimer.singleShot(15_000, self._retry_maintenance_after_ops)
+            elif not blocking:
+                self._maintenance_pending = False
+                self._maintenance_overlay.show_overlay(message)
+        elif accessible and self._maintenance_overlay.isVisible():
+            self._maintenance_overlay.hide_overlay()
+            self._maintenance_pending = False
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_success(texts.MAINTENANCE_ACCESS_RESTORED)
+
     def _update_notification_badge(self, count: int):
         """Aktualisiert den Badge auf dem Mitteilungszentrale-Button."""
         if count > 0:
             self._notification_badge.setText(str(min(count, 99)))
             self._notification_badge.show()
-            # Position neu berechnen
             btn_w = self.btn_center.width()
             self._notification_badge.move(max(btn_w - 36, 120), 6)
         else:
             self._notification_badge.hide()
-    
+
     def _refresh_badge_after_read(self):
-        """Badge sofort aktualisieren nachdem Nachrichten gelesen wurden."""
-        self._poll_notifications()
-    
+        """Badge wird beim naechsten GlobalHeartbeat-Tick automatisch aktualisiert."""
+        pass
+
     def _open_specific_chat(self, conversation_id: int):
         """Oeffnet einen bestimmten Chat (z.B. von Toast-Klick)."""
         self._show_chat()
@@ -1525,52 +1564,8 @@ class MainHub(QMainWindow):
         logger.info(f"Drag & Drop Undo: {deleted}/{len(doc_ids)} Dokument(e) entfernt")
 
     # ------------------------------------------------------------------
-    # System-Status (Live-Zugangs-Pruefung)
+    # System-Status (Legacy-Compat fuer Maintenance-Overlay)
     # ------------------------------------------------------------------
-
-    def _check_system_status(self):
-        """Periodischer System-Status-Check (Fail-Closed)."""
-        if self._system_status_worker and self._system_status_worker.isRunning():
-            return
-        from ui.maintenance_overlay import SystemStatusCheckWorker
-        self._system_status_worker = SystemStatusCheckWorker(self.api_client, self)
-        self._system_status_worker.status_received.connect(self._on_system_status_received)
-        self._system_status_worker.check_failed.connect(self._on_system_status_check_failed)
-        self._system_status_worker.start()
-
-    def _on_system_status_check_failed(self):
-        """Fail-Closed: Bei Fehler bleibt der aktuelle Zustand erhalten."""
-        logger.warning("System-Status-Check fehlgeschlagen - aktueller Zustand bleibt bestehen")
-
-    def _on_system_status_received(self, status: str, message: str):
-        """Ergebnis des System-Status-Checks verarbeiten."""
-        from api.system_status import has_access
-        from main import is_dev_mode
-
-        user = self.auth_api.current_user
-        if not user:
-            return
-
-        accessible = has_access(status, user.is_admin, is_dev_mode())
-
-        if not accessible and not self._maintenance_overlay.isVisible():
-            blocking = self._get_all_blocking_operations()
-            if blocking and not self._maintenance_pending:
-                self._maintenance_pending = True
-                self._pending_maintenance_msg = message
-                from i18n import de as texts
-                if hasattr(self, '_toast_manager') and self._toast_manager:
-                    self._toast_manager.show_warning(texts.MAINTENANCE_PENDING_OPS, duration_ms=8000)
-                QTimer.singleShot(15_000, self._retry_maintenance_after_ops)
-            elif not blocking:
-                self._maintenance_pending = False
-                self._maintenance_overlay.show_overlay(message)
-        elif accessible and self._maintenance_overlay.isVisible():
-            self._maintenance_overlay.hide_overlay()
-            self._maintenance_pending = False
-            from i18n import de as texts
-            if hasattr(self, '_toast_manager') and self._toast_manager:
-                self._toast_manager.show_success(texts.MAINTENANCE_ACCESS_RESTORED)
 
     def _retry_maintenance_after_ops(self):
         """Erneuter Versuch Overlay einzublenden nachdem blockierende Ops abgewartet wurden."""
@@ -1647,6 +1642,8 @@ class MainHub(QMainWindow):
         # Timer stoppen
         if hasattr(self, '_update_timer'):
             self._update_timer.stop()
+        if hasattr(self, '_module_heartbeat_timer'):
+            self._module_heartbeat_timer.stop()
         
         # Update-Worker aufraumen
         if self._update_check_worker and self._update_check_worker.isRunning():

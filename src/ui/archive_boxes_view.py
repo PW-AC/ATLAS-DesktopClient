@@ -136,7 +136,7 @@ class ArchiveBoxesView(QWidget):
         )
         
         self._documents: List[Document] = []
-        self._current_box = ''  # '' = Alle
+        self._current_box = 'eingang'  # Initial: Eingangsbox statt Gesamt
         self._stats = BoxStats()
         
         # Worker-Referenzen (wichtig fuer Thread-Sicherheit!)
@@ -171,6 +171,7 @@ class ArchiveBoxesView(QWidget):
         # Flag ob erste Ladung erfolgt ist
         self._initial_load_done = False
         self._missing_ai_data_checked = False
+        
         
         # Fingerprint der aktuellen Dokumente (verhindert unnoetige Tabellen-Rebuilds)
         self._documents_fingerprint: str = ""
@@ -227,8 +228,8 @@ class ArchiveBoxesView(QWidget):
         # Durchschnittliche Verarbeitungskosten laden (fuer Kostenvoranschlag)
         self._load_avg_cost_stats()
         
-        # Auto-Refresh starten (alle 30 Sekunden)
-        self._cache.start_auto_refresh(20)
+        # Auto-Refresh wird NICHT mehr hier gestartet.
+        # Steuerung ueber MainHub.start_module_heartbeat() / stop_module_heartbeat().
     
     @property
     def presenter(self):
@@ -487,7 +488,7 @@ class ArchiveBoxesView(QWidget):
         header_layout = QHBoxLayout()
         
         # Titel (wird dynamisch aktualisiert)
-        self.title_label = QLabel("Gesamt Archiv")
+        self.title_label = QLabel(BOX_DISPLAY_NAMES.get('eingang', 'Eingangs Box'))
         self.title_label.setStyleSheet(f"""
             font-family: {FONT_HEADLINE};
             font-size: {FONT_SIZE_H2};

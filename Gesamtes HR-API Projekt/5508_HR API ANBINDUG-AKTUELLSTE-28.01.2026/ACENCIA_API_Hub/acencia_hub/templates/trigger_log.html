@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+
+{% block title %}Trigger-Protokoll - ACENCIA{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1 class="page-title">Trigger-Ausführungsprotokoll</h1>
+        <p class="page-subtitle">Alle Trigger-Ausführungen mit Details und Wiederholungsfunktion</p>
+    </div>
+
+    <div class="breadcrumb">
+        <a href="{{ url_for('triggers_overview') }}">Trigger-Verwaltung</a> &raquo; Protokoll
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Filter</h3>
+        </div>
+        <div class="card-body">
+            <div class="filter-row">
+                <div class="form-group">
+                    <label for="filter-employer">Arbeitgeber</label>
+                    <select id="filter-employer">
+                        <option value="">Alle</option>
+                        {% for emp in employers %}
+                        <option value="{{ emp.id }}">{{ emp.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-trigger">Trigger</label>
+                    <select id="filter-trigger">
+                        <option value="">Alle</option>
+                        {% for t in triggers %}
+                        <option value="{{ t.id }}">{{ t.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-status">Status</label>
+                    <select id="filter-status">
+                        <option value="">Alle</option>
+                        <option value="success">Erfolgreich</option>
+                        <option value="error">Fehler</option>
+                        <option value="skipped">Übersprungen</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-from">Von</label>
+                    <input type="date" id="filter-from">
+                </div>
+                <div class="form-group">
+                    <label for="filter-to">Bis</label>
+                    <input type="date" id="filter-to">
+                </div>
+                <div class="form-group" style="align-self: flex-end;">
+                    <button type="button" class="button button-primary" onclick="loadLog()">Filtern</button>
+                    <button type="button" class="button button-secondary" onclick="resetFilters()">Zurücksetzen</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Ausführungen</h3>
+            <span id="log-count" class="log-count"></span>
+        </div>
+        <div class="table-container">
+            <table class="table" id="log-table">
+                <thead>
+                    <tr>
+                        <th>Zeitpunkt</th>
+                        <th>Trigger</th>
+                        <th>Event</th>
+                        <th>Arbeitgeber</th>
+                        <th>Betroffene MA</th>
+                        <th>Aktion</th>
+                        <th>Status</th>
+                        <th>Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody id="log-body">
+                    <tr>
+                        <td colspan="8" class="loading">Lade Daten...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination" id="pagination"></div>
+    </div>
+</div>
+
+<!-- Detail Modal -->
+<div id="detail-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Ausführungsdetails</h3>
+            <button type="button" class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+    </div>
+</div>
+
+<style>
+.breadcrumb {
+    margin-bottom: var(--spacing-lg);
+    color: var(--color-text-muted);
+}
+
+.breadcrumb a {
+    color: var(--color-primary);
+}
+
+.filter-row {
+    display: flex;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+
+.filter-row .form-group {
+    flex: 1;
+    min-width: 150px;
+}
+
+.log-count {
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+}
+
+.loading {
+    text-align: center;
+    padding: var(--spacing-xl);
+    color: var(--color-text-muted);
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.status-success {
+    background: rgba(39, 174, 96, 0.2);
+    color: #27ae60;
+}
+
+.status-error {
+    background: rgba(231, 76, 60, 0.2);
+    color: #e74c3c;
+}
+
+.status-skipped {
+    background: rgba(149, 165, 166, 0.2);
+    color: #95a5a6;
+}
+
+.employee-count {
+    display: inline-block;
+    background: var(--color-bg-secondary);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+}
+
+.pagination button {
+    padding: 8px 16px;
+}
+
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: var(--color-bg);
+    border-radius: var(--border-radius);
+    max-width: 800px;
+    max-height: 80vh;
+    width: 90%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.modal-header h3 {
+    margin: 0;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--color-text-muted);
+}
+
+.modal-body {
+    padding: var(--spacing-md);
+    overflow-y: auto;
+}
+
+.detail-section {
+    margin-bottom: var(--spacing-md);
+}
+
+.detail-section h4 {
+    margin-bottom: var(--spacing-sm);
+    color: var(--color-text-muted);
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: var(--spacing-sm);
+}
+
+.detail-label {
+    font-weight: 600;
+    color: var(--color-text-muted);
+}
+
+.employee-list {
+    margin: 0;
+    padding-left: var(--spacing-md);
+}
+
+.employee-list li {
+    margin-bottom: var(--spacing-sm);
+}
+
+.change-item {
+    background: var(--color-bg-secondary);
+    padding: var(--spacing-sm);
+    border-radius: var(--border-radius);
+    margin-top: var(--spacing-xs);
+    font-size: 0.9rem;
+}
+
+.error-message {
+    background: rgba(231, 76, 60, 0.1);
+    border: 1px solid var(--color-danger);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+    color: var(--color-danger);
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentOffset = 0;
+const limit = 50;
+
+function loadLog() {
+    const params = new URLSearchParams();
+    
+    const employerId = document.getElementById('filter-employer').value;
+    const triggerId = document.getElementById('filter-trigger').value;
+    const status = document.getElementById('filter-status').value;
+    const fromDate = document.getElementById('filter-from').value;
+    const toDate = document.getElementById('filter-to').value;
+    
+    if (employerId) params.append('employer_id', employerId);
+    if (triggerId) params.append('trigger_id', triggerId);
+    if (status) params.append('status', status);
+    if (fromDate) params.append('from', fromDate);
+    if (toDate) params.append('to', toDate + 'T23:59:59');
+    params.append('limit', limit);
+    params.append('offset', currentOffset);
+    
+    const tbody = document.getElementById('log-body');
+    tbody.innerHTML = '<tr><td colspan="8" class="loading">Lade Daten...</td></tr>';
+    
+    fetch('/api/trigger-log?' + params.toString())
+        .then(response => response.json())
+        .then(data => {
+            renderLog(data);
+        })
+        .catch(error => {
+            tbody.innerHTML = '<tr><td colspan="8" class="loading">Fehler beim Laden der Daten.</td></tr>';
+            console.error('Error:', error);
+        });
+}
+
+function renderLog(data) {
+    const tbody = document.getElementById('log-body');
+    const countEl = document.getElementById('log-count');
+    
+    countEl.textContent = `${data.total} Einträge`;
+    
+    if (data.executions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">Keine Einträge gefunden.</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = data.executions.map(exec => {
+        const date = new Date(exec.executed_at);
+        const dateStr = date.toLocaleDateString('de-DE') + ' ' + date.toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'});
+        
+        const eventLabels = {
+            'employee_changed': 'Geändert',
+            'employee_added': 'Neu',
+            'employee_removed': 'Entfernt'
+        };
+        
+        const statusClass = {
+            'success': 'status-success',
+            'error': 'status-error',
+            'skipped': 'status-skipped'
+        };
+        
+        const statusLabels = {
+            'success': 'Erfolgreich',
+            'error': 'Fehler',
+            'skipped': 'Übersprungen'
+        };
+        
+        return `
+            <tr>
+                <td>${dateStr}</td>
+                <td>${exec.trigger_name}</td>
+                <td>${eventLabels[exec.event] || exec.event}</td>
+                <td>${exec.employer_name}</td>
+                <td><span class="employee-count">${exec.affected_employees?.length || 0}</span></td>
+                <td>${exec.action_type === 'email' ? 'E-Mail' : 'API'}</td>
+                <td><span class="status-badge ${statusClass[exec.status] || ''}">${statusLabels[exec.status] || exec.status}</span></td>
+                <td>
+                    <button class="button button-sm button-secondary" onclick="showDetails('${exec.id}')">Details</button>
+                    ${exec.can_retry ? `<button class="button button-sm button-warning" onclick="retryExecution('${exec.id}')">Wiederholen</button>` : ''}
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    // Render pagination
+    const pagination = document.getElementById('pagination');
+    const totalPages = Math.ceil(data.total / limit);
+    const currentPage = Math.floor(currentOffset / limit) + 1;
+    
+    let paginationHtml = '';
+    if (currentPage > 1) {
+        paginationHtml += `<button class="button button-secondary" onclick="goToPage(${currentPage - 1})">Zurück</button>`;
+    }
+    paginationHtml += `<span>Seite ${currentPage} von ${totalPages}</span>`;
+    if (currentPage < totalPages) {
+        paginationHtml += `<button class="button button-secondary" onclick="goToPage(${currentPage + 1})">Weiter</button>`;
+    }
+    pagination.innerHTML = paginationHtml;
+}
+
+function goToPage(page) {
+    currentOffset = (page - 1) * limit;
+    loadLog();
+}
+
+function resetFilters() {
+    document.getElementById('filter-employer').value = '';
+    document.getElementById('filter-trigger').value = '';
+    document.getElementById('filter-status').value = '';
+    document.getElementById('filter-from').value = '';
+    document.getElementById('filter-to').value = '';
+    currentOffset = 0;
+    loadLog();
+}
+
+function showDetails(executionId) {
+    fetch('/api/trigger-log?limit=1000')
+        .then(response => response.json())
+        .then(data => {
+            const exec = data.executions.find(e => e.id === executionId);
+            if (!exec) {
+                alert('Eintrag nicht gefunden');
+                return;
+            }
+            
+            const date = new Date(exec.executed_at);
+            const dateStr = date.toLocaleDateString('de-DE') + ' ' + date.toLocaleTimeString('de-DE');
+            
+            let employeesHtml = '';
+            if (exec.affected_employees && exec.affected_employees.length > 0) {
+                employeesHtml = '<ul class="employee-list">' + exec.affected_employees.map(emp => {
+                    let changesHtml = '';
+                    if (emp.changes && emp.changes.length > 0) {
+                        changesHtml = emp.changes.map(c => 
+                            `<div class="change-item"><strong>${c.field}:</strong> "${c.old || '-'}" → "${c.new || '-'}"</div>`
+                        ).join('');
+                    }
+                    return `<li><strong>${emp.firstName || ''} ${emp.lastName || ''}</strong> (${emp.personId})${changesHtml}</li>`;
+                }).join('') + '</ul>';
+            } else {
+                employeesHtml = '<p>Keine Mitarbeiter-Details verfügbar.</p>';
+            }
+            
+            let errorHtml = '';
+            if (exec.error_message) {
+                errorHtml = `
+                    <div class="detail-section">
+                        <h4>Fehlermeldung</h4>
+                        <div class="error-message">${exec.error_message}</div>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('modal-body').innerHTML = `
+                <div class="detail-section">
+                    <h4>Allgemein</h4>
+                    <div class="detail-grid">
+                        <span class="detail-label">ID:</span><span>${exec.id}</span>
+                        <span class="detail-label">Zeitpunkt:</span><span>${dateStr}</span>
+                        <span class="detail-label">Trigger:</span><span>${exec.trigger_name}</span>
+                        <span class="detail-label">Event:</span><span>${exec.event}</span>
+                        <span class="detail-label">Arbeitgeber:</span><span>${exec.employer_name}</span>
+                        <span class="detail-label">Ausgeführt von:</span><span>${exec.executed_by || 'system'}</span>
+                        <span class="detail-label">Status:</span><span>${exec.status}</span>
+                    </div>
+                </div>
+                
+                <div class="detail-section">
+                    <h4>Betroffene Mitarbeiter (${exec.affected_employees?.length || 0})</h4>
+                    ${employeesHtml}
+                </div>
+                
+                <div class="detail-section">
+                    <h4>Aktion: ${exec.action_type}</h4>
+                    <pre style="background: var(--color-bg-secondary); padding: var(--spacing-sm); border-radius: var(--border-radius); overflow-x: auto;">${JSON.stringify(exec.action_details, null, 2)}</pre>
+                </div>
+                
+                ${errorHtml}
+                
+                ${exec.retry_of ? `<p><small>Wiederholung von: ${exec.retry_of}</small></p>` : ''}
+            `;
+            
+            document.getElementById('detail-modal').style.display = 'flex';
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Fehler beim Laden der Details.');
+        });
+}
+
+function closeModal() {
+    document.getElementById('detail-modal').style.display = 'none';
+}
+
+function retryExecution(executionId) {
+    if (!confirm('Trigger-Ausführung wiederholen?')) return;
+    
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+    
+    fetch(`/api/trigger-log/${executionId}/retry`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken || ''
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('Trigger wurde erneut ausgeführt.');
+            loadLog();
+        } else {
+            alert('Fehler: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Fehler bei der Anfrage.');
+    });
+}
+
+// Close modal on outside click
+document.getElementById('detail-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+});
+
+// Load on page load
+document.addEventListener('DOMContentLoaded', loadLog);
+</script>
+{% endblock %}

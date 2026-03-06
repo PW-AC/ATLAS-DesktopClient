@@ -303,8 +303,9 @@ class BoxSidebar(QWidget):
         self._avg_cost_per_doc: float = 0.0
         layout.addWidget(self._cost_estimate_frame)
         
-        # Gesamt Archiv als Standard auswaehlen
-        self.gesamt_item.setSelected(True)
+        # Eingangsbox als Standard auswaehlen (statt Gesamt)
+        # Verarbeitung wird erst per update_stats aufgeklappt wenn Eingang Dokumente hat
+        self.eingang_item.setSelected(True)
     
     def _set_item_color(self, item: QTreeWidgetItem, box_type: str):
         """Setzt die Farbe eines Items basierend auf dem Box-Typ."""

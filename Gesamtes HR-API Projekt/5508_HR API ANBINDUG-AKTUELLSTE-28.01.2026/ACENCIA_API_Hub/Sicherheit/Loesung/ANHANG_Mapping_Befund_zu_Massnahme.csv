@@ -1,0 +1,27 @@
+Befund-ID;Schweregrad;Maßnahme;Baustein;Dateien;Sprint;Status
+SV-001;KRITISCH;Secret Key aus Umgebungsvariable laden;-;app.py;1;GEPLANT
+SV-002;KRITISCH;Credential-Verschlüsselung implementieren;Baustein 1;app.py, requirements.txt;3;GEPLANT
+SV-003;KRITISCH;HTTPS via Reverse Proxy;-;nginx.conf, run.py;4;GEPLANT
+SV-004;KRITISCH;CSRF-Schutz via Flask-WTF;Baustein 4;app.py, alle Templates, requirements.txt;4;GEPLANT
+SV-005;KRITISCH;Debug-Modus über Umgebungsvariable;-;app.py:2718;1;GEPLANT
+SV-006;HOCH;Rate-Limiting via Flask-Limiter;Baustein 3;app.py, requirements.txt;2;GEPLANT
+SV-007;HOCH;PAT-Verschlüsselung;Baustein 1;app.py (save_secrets, load_secrets);3;GEPLANT
+SV-008;HOCH;Security Headers Middleware;Baustein 2;app.py;1;GEPLANT
+SV-009;HOCH;Arbeitgeber-Zugriffskontrolle;Baustein 5;app.py, users.json Schema;5;GEPLANT
+SV-010;HOCH;RotatingFileHandler;Baustein 7;app.py:33;1;GEPLANT
+SV-011;HOCH;pytest Test-Framework;-;tests/, requirements.txt;6;GEPLANT
+SV-012;MITTEL;Passwort-Validierung;Baustein 6;app.py;2;GEPLANT
+SV-013;MITTEL;Session-Timeout Konfiguration;Baustein 8;app.py;2;GEPLANT
+SV-014;MITTEL;PII-Anonymisierung in Logs;-;app.py (custom_log);5;GEPLANT
+SV-015;MITTEL;Input-Validierung erweitern;-;app.py (add_employer Route);6;GEPLANT
+SV-016;MITTEL;Audit-Logger;Baustein 9;app.py;5;GEPLANT
+SV-017;MITTEL;Update-Signaturprüfung;-;updater.py;7;GEPLANT
+SV-018;MITTEL;SESSION_COOKIE_SECURE;-;app.py;2;GEPLANT
+SV-019;MITTEL;SRI-Hashes für Google Fonts;-;base.html;4;GEPLANT
+SV-020;NIEDRIG;Account-Lockout;-;app.py, users.json Schema;2;GEPLANT
+SV-021;NIEDRIG;Failed Login Logging;-;app.py (login Route);1;GEPLANT
+SV-022;NIEDRIG;Code-Refactoring in Module;-;routes.py, providers.py, utils.py;7;GEPLANT
+SV-023;NIEDRIG;Data Retention Cleanup;-;app.py (cleanup_old_data);7;GEPLANT
+SV-024;INFO;GitHub Actions CI/CD;-;.github/workflows/ci.yml;7;GEPLANT
+SV-025;INFO;Health-Check Endpoints;Baustein 10;app.py;7;GEPLANT
+SV-026;INFO;pip-tools Lockfile;-;requirements.in, pip-compile;7;GEPLANT

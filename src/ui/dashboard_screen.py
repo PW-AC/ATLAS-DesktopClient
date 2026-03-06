@@ -170,7 +170,7 @@ class _SettingsOverlay(QWidget):
     """Modales Einstellungs-Overlay mit Backdrop und Fade-Animation."""
 
     close_requested = Signal()
-    save_requested = Signal(str)
+    save_requested = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -182,7 +182,7 @@ class _SettingsOverlay(QWidget):
         outer.setAlignment(Qt.AlignCenter)
 
         self._panel = QFrame()
-        self._panel.setFixedSize(560, 480)
+        self._panel.setFixedSize(560, 680)
         self._panel.setStyleSheet(f"""
             QFrame {{
                 background-color: {PRIMARY_0};
@@ -318,6 +318,49 @@ class _SettingsOverlay(QWidget):
         self._update_font_card_styles()
         self._font_group.buttonClicked.connect(self._on_font_preset_changed)
 
+        a_layout.addSpacing(8)
+
+        import i18n as _i18n_mod
+        lang_header = QLabel(texts.SETTINGS_LANGUAGE_SECTION)
+        lang_header.setStyleSheet(
+            f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H3}; "
+            f"font-weight: {FONT_WEIGHT_BOLD}; color: {PRIMARY_900}; border: none;"
+        )
+        a_layout.addWidget(lang_header)
+
+        current_lang = _i18n_mod.get_language()
+        self._lang_group = QButtonGroup(self)
+        self._lang_cards: dict[str, tuple[QFrame, QRadioButton]] = {}
+
+        for lang_code, lang_name in _i18n_mod.AVAILABLE_LANGUAGES.items():
+            lcard = _ClickableFrame()
+            lcard.setCursor(Qt.PointingHandCursor)
+            lc_lay = QHBoxLayout(lcard)
+            lc_lay.setContentsMargins(16, 10, 16, 10)
+            lc_lay.setSpacing(12)
+
+            lradio = QRadioButton()
+            lradio.setChecked(lang_code == current_lang)
+            lradio.setProperty("lang_code", lang_code)
+            lradio.setStyleSheet("QRadioButton { border: none; }")
+            lcard.clicked.connect(lambda r=lradio: r.setChecked(True))
+            lc_lay.addWidget(lradio)
+
+            lname = QLabel(lang_name)
+            lname.setStyleSheet(
+                f"font-family: {_tokens.FONT_BODY}; font-weight: {FONT_WEIGHT_BOLD}; "
+                f"color: {PRIMARY_900}; border: none;"
+            )
+            lname.setAttribute(Qt.WA_TransparentForMouseEvents)
+            lc_lay.addWidget(lname, 1)
+
+            self._lang_group.addButton(lradio)
+            self._lang_cards[lang_code] = (lcard, lradio)
+            a_layout.addWidget(lcard)
+
+        self._update_lang_card_styles()
+        self._lang_group.buttonClicked.connect(self._on_lang_changed)
+
         a_layout.addStretch()
 
         save_btn = QPushButton(texts.SAVE)
@@ -354,10 +397,15 @@ class _SettingsOverlay(QWidget):
     def _on_font_preset_changed(self, _button):
         self._update_font_card_styles()
 
+    def _on_lang_changed(self, _button):
+        self._update_lang_card_styles()
+
     def _on_save(self):
-        checked = self._font_group.checkedButton()
-        if checked:
-            self.save_requested.emit(checked.property("preset_id"))
+        font_btn = self._font_group.checkedButton()
+        lang_btn = self._lang_group.checkedButton()
+        font_preset = font_btn.property("preset_id") if font_btn else "classic"
+        lang_code = lang_btn.property("lang_code") if lang_btn else "de"
+        self.save_requested.emit(font_preset, lang_code)
 
     def reset_to_current(self):
         """Setzt die Radio-Buttons auf den aktuell gespeicherten Wert."""
@@ -368,8 +416,33 @@ class _SettingsOverlay(QWidget):
             radio.setChecked(_pid == current)
         self._update_font_card_styles()
 
+        import i18n as _i18n_mod
+        current_lang = _i18n_mod.get_language()
+        for _lid, (card, radio) in self._lang_cards.items():
+            radio.setChecked(_lid == current_lang)
+        self._update_lang_card_styles()
+
     def _update_font_card_styles(self):
         for pid, (card, radio) in self._font_cards.items():
+            if radio.isChecked():
+                card.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {PRIMARY_0};
+                        border: 2px solid {ACCENT_500};
+                        border-radius: {RADIUS_LG};
+                    }}
+                """)
+            else:
+                card.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {PRIMARY_0};
+                        border: 1px solid {BORDER_DEFAULT};
+                        border-radius: {RADIUS_LG};
+                    }}
+                """)
+
+    def _update_lang_card_styles(self):
+        for lid, (card, radio) in self._lang_cards.items():
             if radio.isChecked():
                 card.setStyleSheet(f"""
                     QFrame {{
@@ -526,6 +599,24 @@ class DashboardScreen(QWidget):
         settings_btn.clicked.connect(self._open_settings)
         right_area.addWidget(settings_btn, alignment=Qt.AlignVCenter)
 
+        self._admin_header_btn = QPushButton(f"\U0001F6E0  {texts.DASHBOARD_TILE_ADMIN}")
+        self._admin_header_btn.setCursor(Qt.PointingHandCursor)
+        self._admin_header_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {ACCENT_500};
+                border-radius: {RADIUS_LG};
+                font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY};
+                color: {ACCENT_500}; padding: 8px 24px; font-weight: 600;
+            }}
+            QPushButton:hover {{
+                color: {PRIMARY_0}; background: {ACCENT_500};
+            }}
+        """)
+        self._admin_header_btn.clicked.connect(lambda: self.module_requested.emit("admin"))
+        self._admin_header_btn.setVisible(False)
+        right_area.addWidget(self._admin_header_btn, alignment=Qt.AlignVCenter)
+
         logout_btn = QPushButton(texts.NAV_ABMELDEN)
         logout_btn.setCursor(Qt.PointingHandCursor)
         logout_btn.setStyleSheet(f"""
@@ -630,10 +721,24 @@ class DashboardScreen(QWidget):
         tiles_row.setSpacing(16)
         tiles_row.setAlignment(Qt.AlignLeft)
 
-        # -- Core-Gruppe (Core + optionaler Admin-Subtile) --
+        _ma_btn_style = f"""
+            QPushButton {{
+                background-color: {PRIMARY_0};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: {RADIUS_MD};
+                padding: 5px 14px;
+                text-align: left;
+                font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
+                color: {PRIMARY_500};
+            }}
+            QPushButton:hover {{
+                border-color: {ACCENT_500}; color: {ACCENT_500};
+            }}
+        """
+
+        # -- Core --
         core_group = QVBoxLayout()
         core_group.setSpacing(6)
-
         tile_core = _ModuleTile(
             texts.DASHBOARD_TILE_CORE, texts.DASHBOARD_TILE_CORE_DESC, PRIMARY_900,
         )
@@ -641,36 +746,58 @@ class DashboardScreen(QWidget):
         core_group.addWidget(tile_core)
         self._tiles["core"] = tile_core
 
-        admin_btn = QPushButton(f"  \U0001F6E0  {texts.DASHBOARD_TILE_ADMIN}")
-        admin_btn.setCursor(Qt.PointingHandCursor)
-        admin_btn.setFixedWidth(200)
-        admin_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {PRIMARY_0};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: {RADIUS_MD};
-                padding: 6px 16px;
-                text-align: left;
-                font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
-                color: {PRIMARY_500};
-            }}
-            QPushButton:hover {{
-                border-color: {PRIMARY_900}; color: {PRIMARY_900};
-            }}
-        """)
-        admin_btn.clicked.connect(lambda: self.module_requested.emit("admin"))
-        core_group.addWidget(admin_btn)
-        self._tiles["admin"] = admin_btn
+        self._core_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
+        self._core_admin_btn.setCursor(Qt.PointingHandCursor)
+        self._core_admin_btn.setFixedWidth(200)
+        self._core_admin_btn.setStyleSheet(_ma_btn_style)
+        self._core_admin_btn.clicked.connect(lambda: self.module_requested.emit("core_admin"))
+        self._core_admin_btn.setVisible(False)
+        core_group.addWidget(self._core_admin_btn)
+        self._tiles["core_admin"] = self._core_admin_btn
 
         tiles_row.addLayout(core_group)
 
         # -- Ledger --
+        ledger_group = QVBoxLayout()
+        ledger_group.setSpacing(6)
         tile_ledger = _ModuleTile(
             texts.DASHBOARD_TILE_LEDGER, texts.DASHBOARD_TILE_LEDGER_DESC, ACCENT_500,
         )
         tile_ledger.clicked.connect(lambda: self.module_requested.emit("ledger"))
-        tiles_row.addWidget(tile_ledger, alignment=Qt.AlignTop)
+        ledger_group.addWidget(tile_ledger)
         self._tiles["ledger"] = tile_ledger
+
+        self._ledger_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
+        self._ledger_admin_btn.setCursor(Qt.PointingHandCursor)
+        self._ledger_admin_btn.setFixedWidth(200)
+        self._ledger_admin_btn.setStyleSheet(_ma_btn_style)
+        self._ledger_admin_btn.clicked.connect(lambda: self.module_requested.emit("ledger_admin"))
+        self._ledger_admin_btn.setVisible(False)
+        ledger_group.addWidget(self._ledger_admin_btn)
+        self._tiles["ledger_admin"] = self._ledger_admin_btn
+
+        tiles_row.addLayout(ledger_group)
+
+        # -- Workforce --
+        wf_group = QVBoxLayout()
+        wf_group.setSpacing(6)
+        tile_workforce = _ModuleTile(
+            texts.WF_DASHBOARD_TILE, texts.WF_DASHBOARD_TILE_DESC, _tokens.SUCCESS,
+        )
+        tile_workforce.clicked.connect(lambda: self.module_requested.emit("workforce"))
+        wf_group.addWidget(tile_workforce)
+        self._tiles["workforce"] = tile_workforce
+
+        self._wf_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
+        self._wf_admin_btn.setCursor(Qt.PointingHandCursor)
+        self._wf_admin_btn.setFixedWidth(200)
+        self._wf_admin_btn.setStyleSheet(_ma_btn_style)
+        self._wf_admin_btn.clicked.connect(lambda: self.module_requested.emit("workforce_admin"))
+        self._wf_admin_btn.setVisible(False)
+        wf_group.addWidget(self._wf_admin_btn)
+        self._tiles["workforce_admin"] = self._wf_admin_btn
+
+        tiles_row.addLayout(wf_group)
 
         b_layout.addLayout(tiles_row)
         b_layout.addSpacing(4)
@@ -714,15 +841,17 @@ class DashboardScreen(QWidget):
             callback=lambda: self._content.setGraphicsEffect(None)
         )
 
-    def _on_settings_saved(self, preset_id: str):
+    def _on_settings_saved(self, preset_id: str, lang_code: str):
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QFont, QFontDatabase
         import ui.styles.tokens as _tok
+        import i18n as _i18n_mod
 
         QSettings("ACENCIA GmbH", "ACENCIA ATLAS").setValue(
             "appearance/font_preset", preset_id
         )
         _tok.apply_font_preset(preset_id)
+        _i18n_mod.set_language(lang_code)
 
         app = QApplication.instance()
         app.setStyleSheet(_tok.get_application_stylesheet())
@@ -781,11 +910,14 @@ class DashboardScreen(QWidget):
     def set_modules(self, visible_modules: list[str]):
         for module_id, tile in self._tiles.items():
             tile.setVisible(module_id in visible_modules)
+        if hasattr(self, '_admin_header_btn'):
+            self._admin_header_btn.setVisible('admin' in visible_modules)
 
     def load_messages(self, api_client):
         """Startet asynchrones Laden der System-Mitteilungen."""
         if self._messages_worker and self._messages_worker.isRunning():
             return
+        self._api_client = api_client
         try:
             from api.messages import MessagesAPI
             messages_api = MessagesAPI(api_client)
@@ -796,9 +928,57 @@ class DashboardScreen(QWidget):
             logger.exception("Mitteilungen konnten nicht geladen werden")
             self._msg_placeholder.setText(texts.DASHBOARD_MESSAGES_EMPTY)
 
+    def on_notifications_updated(self, summary: dict):
+        """Empfaengt Notification-Summary vom GlobalHeartbeat.
+
+        Aktualisiert die System-Mitteilungen auf dem Dashboard neu,
+        wenn sich die Anzahl ungelesener System-Nachrichten aendert.
+        """
+        unread_system = summary.get('unread_system_messages', 0)
+        prev = getattr(self, '_prev_unread_system', -1)
+        if unread_system != prev:
+            self._prev_unread_system = unread_system
+            if hasattr(self, '_api_client') and self._api_client:
+                self._reload_messages()
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    def _reload_messages(self):
+        """Laedt System-Mitteilungen erneut (z.B. bei Heartbeat-Update)."""
+        if not hasattr(self, '_api_client') or not self._api_client:
+            return
+        if self._messages_worker and self._messages_worker.isRunning():
+            return
+        try:
+            from api.messages import MessagesAPI
+            messages_api = MessagesAPI(self._api_client)
+            self._messages_worker = _LoadMessagesWorker(messages_api, parent=self)
+            self._messages_worker.finished.connect(self._on_messages_reloaded)
+            self._messages_worker.start()
+        except Exception:
+            logger.debug("Mitteilungen-Reload fehlgeschlagen")
+
+    def _on_messages_reloaded(self, messages: list):
+        """Callback fuer Heartbeat-getriebenes Nachladen der Mitteilungen."""
+        layout = self._msg_card.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not messages:
+            self._msg_placeholder.setText(texts.DASHBOARD_MESSAGES_EMPTY)
+            self._msg_placeholder.show()
+            return
+
+        self._msg_placeholder.hide()
+        for msg in messages:
+            card = self._build_message_card(msg)
+            layout.addWidget(card)
+        layout.addStretch()
 
     def _on_messages_loaded(self, messages: list):
         layout = self._msg_card.layout()

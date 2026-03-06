@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% block title %}SMTP-Konfiguration - ACENCIA{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1 class="page-title">SMTP-Konfiguration</h1>
+        <p class="page-subtitle">E-Mail-Server für Trigger-Benachrichtigungen einrichten</p>
+    </div>
+
+    <div class="breadcrumb">
+        <a href="{{ url_for('triggers_overview') }}">Trigger-Verwaltung</a> &raquo; SMTP-Konfiguration
+    </div>
+
+    <div class="settings-grid">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">SMTP-Server Einstellungen</h3>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('smtp_settings') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    
+                    <div class="form-row">
+                        <div class="form-group form-group-wide">
+                            <label for="smtp_host">SMTP-Server</label>
+                            <input type="text" id="smtp_host" name="smtp_host" 
+                                   value="{{ smtp_config.host or '' }}" 
+                                   placeholder="smtp.example.com">
+                            <small>z.B. smtp.gmail.com, smtp.office365.com</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp_port">Port</label>
+                            <input type="number" id="smtp_port" name="smtp_port" 
+                                   value="{{ smtp_config.port or 587 }}" 
+                                   placeholder="587">
+                            <small>587 (TLS) oder 465 (SSL)</small>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="smtp_username">Benutzername</label>
+                            <input type="text" id="smtp_username" name="smtp_username" 
+                                   value="{{ smtp_config.username or '' }}" 
+                                   placeholder="user@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp_password">Passwort</label>
+                            <input type="password" id="smtp_password" name="smtp_password" 
+                                   placeholder="{% if smtp_config.password %}********{% else %}Passwort eingeben{% endif %}">
+                            <small>Leer lassen, um bestehendes Passwort zu behalten</small>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="smtp_from_email">Absender-Adresse</label>
+                        <input type="email" id="smtp_from_email" name="smtp_from_email" 
+                               value="{{ smtp_config.from_email or '' }}" 
+                               placeholder="noreply@example.com">
+                        <small>Von dieser Adresse werden E-Mails gesendet</small>
+                    </div>
+                    
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="smtp_use_tls" name="smtp_use_tls" 
+                               {% if smtp_config.use_tls is not defined or smtp_config.use_tls %}checked{% endif %}>
+                        <label for="smtp_use_tls">TLS-Verschlüsselung verwenden (empfohlen)</label>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="button button-primary">Speichern</button>
+                        <a href="{{ url_for('triggers_overview') }}" class="button button-secondary">Abbrechen</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Verbindung testen</h3>
+            </div>
+            <div class="card-body">
+                <p>Senden Sie eine Test-E-Mail, um die SMTP-Konfiguration zu überprüfen.</p>
+                
+                <div class="form-group">
+                    <label for="test_email">Test-Empfänger</label>
+                    <input type="email" id="test_email" placeholder="ihre@email.de">
+                </div>
+                
+                <button type="button" id="test-smtp-btn" class="button button-secondary" 
+                        {% if not smtp_config.host %}disabled{% endif %}>
+                    Test-E-Mail senden
+                </button>
+                
+                <div id="test-result" class="test-result" style="display: none;"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Hinweise zur Konfiguration</h3>
+            </div>
+            <div class="card-body">
+                <h4>Gmail</h4>
+                <ul>
+                    <li>Server: smtp.gmail.com</li>
+                    <li>Port: 587</li>
+                    <li>Aktivieren Sie "App-Passwörter" in Ihren Google-Kontoeinstellungen</li>
+                </ul>
+                
+                <h4>Microsoft 365</h4>
+                <ul>
+                    <li>Server: smtp.office365.com</li>
+                    <li>Port: 587</li>
+                    <li>Verwenden Sie Ihre vollständige E-Mail-Adresse als Benutzername</li>
+                </ul>
+                
+                <h4>Sicherheit</h4>
+                <p>Passwörter werden verschlüsselt in der Konfigurationsdatei gespeichert.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.breadcrumb {
+    margin-bottom: var(--spacing-lg);
+    color: var(--color-text-muted);
+}
+
+.breadcrumb a {
+    color: var(--color-primary);
+}
+
+.settings-grid {
+    display: grid;
+    gap: var(--spacing-lg);
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: var(--spacing-md);
+}
+
+.form-group-wide {
+    grid-column: span 1;
+}
+
+.form-group small {
+    display: block;
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+    margin-top: 4px;
+}
+
+.form-actions {
+    display: flex;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-lg);
+    padding-top: var(--spacing-lg);
+    border-top: 1px solid var(--color-border);
+}
+
+.test-result {
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+}
+
+.test-result.success {
+    background: rgba(39, 174, 96, 0.1);
+    border: 1px solid var(--color-success);
+    color: var(--color-success);
+}
+
+.test-result.error {
+    background: rgba(231, 76, 60, 0.1);
+    border: 1px solid var(--color-danger);
+    color: var(--color-danger);
+}
+
+.card-body h4 {
+    margin-top: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+    color: var(--color-text);
+}
+
+.card-body ul {
+    margin-left: var(--spacing-md);
+    color: var(--color-text-muted);
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('test-smtp-btn').addEventListener('click', function() {
+    const testEmail = document.getElementById('test_email').value.trim();
+    const resultDiv = document.getElementById('test-result');
+    const btn = this;
+    
+    if (!testEmail) {
+        resultDiv.textContent = 'Bitte geben Sie eine E-Mail-Adresse ein.';
+        resultDiv.className = 'test-result error';
+        resultDiv.style.display = 'block';
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.textContent = 'Sende...';
+    resultDiv.style.display = 'none';
+    
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+    
+    fetch("{{ url_for('smtp_test') }}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken || ''
+        },
+        body: JSON.stringify({ test_email: testEmail })
+    })
+    .then(response => response.json())
+    .then(data => {
+        resultDiv.textContent = data.message;
+        resultDiv.className = 'test-result ' + data.status;
+        resultDiv.style.display = 'block';
+    })
+    .catch(error => {
+        resultDiv.textContent = 'Fehler bei der Anfrage: ' + error;
+        resultDiv.className = 'test-result error';
+        resultDiv.style.display = 'block';
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.textContent = 'Test-E-Mail senden';
+    });
+});
+</script>
+{% endblock %}

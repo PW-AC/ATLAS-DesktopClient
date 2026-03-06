@@ -87,12 +87,11 @@ class UserManagementPanel(QWidget):
 
         layout.addLayout(toolbar)
 
-        # Tabelle
         self._users_table = QTableWidget()
         self._users_table.setColumnCount(7)
         self._users_table.setHorizontalHeaderLabels([
             texts.ADMIN_COL_USERNAME, texts.ADMIN_COL_EMAIL, texts.ADMIN_COL_TYPE,
-            texts.ADMIN_COL_STATUS, texts.ADMIN_COL_PERMISSIONS,
+            texts.ADMIN_COL_STATUS, texts.USER_MODULES_HEADER,
             texts.ADMIN_COL_LAST_ACTIVITY, texts.ADMIN_COL_CREATED
         ])
         self._users_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -154,10 +153,16 @@ class UserManagementPanel(QWidget):
             # E-Mail
             self._users_table.setItem(row, 1, QTableWidgetItem(user.get('email', '')))
 
-            # Kontotyp
-            type_text = texts.ADMIN_TYPE_ADMIN if user.get('account_type') == 'admin' else texts.ADMIN_TYPE_USER
-            type_item = QTableWidgetItem(type_text)
-            if user.get('account_type') == 'admin':
+            at = user.get('account_type', 'user')
+            type_labels = {
+                'super_admin': texts.ACCOUNT_TYPE_SUPER_ADMIN,
+                'admin': texts.ACCOUNT_TYPE_ADMIN,
+                'user': texts.ACCOUNT_TYPE_USER,
+            }
+            type_item = QTableWidgetItem(type_labels.get(at, at))
+            if at == 'super_admin':
+                type_item.setForeground(QColor('#e74c3c'))
+            elif at == 'admin':
                 type_item.setForeground(QColor(ACCENT_500))
             self._users_table.setItem(row, 2, type_item)
 
@@ -175,13 +180,21 @@ class UserManagementPanel(QWidget):
             status_item.setForeground(QColor(color))
             self._users_table.setItem(row, 3, status_item)
 
-            # Permissions
-            perms = user.get('permissions', [])
-            perm_names = [texts.PERMISSION_NAMES.get(p, p) for p in perms]
-            perm_text = ', '.join(perm_names) if perm_names else '-'
-            if user.get('account_type') == 'admin':
-                perm_text = texts.ADMIN_DIALOG_PERMISSIONS_HINT
-            self._users_table.setItem(row, 4, QTableWidgetItem(perm_text))
+            modules = user.get('modules', [])
+            enabled_modules = [m for m in modules if m.get('is_enabled')]
+            if user.get('account_type') == 'super_admin':
+                mod_text = texts.ACCOUNT_TYPE_SUPER_ADMIN
+            elif enabled_modules:
+                mod_parts = []
+                for m in enabled_modules:
+                    label = m.get('name', m.get('module_key', ''))
+                    if m.get('access_level') == 'admin':
+                        label += ' (Admin)'
+                    mod_parts.append(label)
+                mod_text = ', '.join(mod_parts)
+            else:
+                mod_text = texts.USER_MODULES_NONE
+            self._users_table.setItem(row, 4, QTableWidgetItem(mod_text))
 
             # Letzte Aktivitaet
             last_activity = user.get('last_activity') or user.get('last_login_at') or '-'
@@ -206,13 +219,8 @@ class UserManagementPanel(QWidget):
             return None
         return self._users_data[row]
 
-    def _can_manage_provision(self) -> bool:
-        user = self._auth_api.current_user
-        return bool(user and user.has_permission('provision_manage'))
-
     def _on_new_user(self):
-        dialog = UserEditDialog(self, is_new=True,
-                                can_manage_provision=self._can_manage_provision())
+        dialog = UserEditDialog(self, is_new=True, auth_api=self._auth_api)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
             try:
@@ -221,8 +229,16 @@ class UserManagementPanel(QWidget):
                     password=data['password'],
                     email=data['email'],
                     account_type=data['account_type'],
-                    permissions=data['permissions']
+                    permissions=data.get('permissions', [])
                 )
+                if data.get('modules'):
+                    from api.admin_modules import AdminModulesAPI
+                    mod_api = AdminModulesAPI(self._api_client)
+                    user_resp = self._admin_api.get_users()
+                    new_users = user_resp.get('data', {}).get('users', []) if isinstance(user_resp, dict) else []
+                    new_user = next((u for u in new_users if u.get('username') == data['username']), None)
+                    if new_user:
+                        mod_api.update_user_modules(new_user['id'], data['modules'])
                 self._toast_manager.show_success(texts.ADMIN_USERS_CREATED.format(username=data['username']))
                 self._load_users()
             except APIError as e:
@@ -232,27 +248,24 @@ class UserManagementPanel(QWidget):
         user = self._get_selected_user()
         if not user:
             return
-        dialog = UserEditDialog(self, user_data=user, is_new=False,
-                                can_manage_provision=self._can_manage_provision())
+        dialog = UserEditDialog(self, user_data=user, is_new=False, auth_api=self._auth_api)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
             username = user['username']
-            worker = AdminWriteWorker(
-                self._admin_api.update_user,
-                user_id=user['id'],
-                email=data['email'],
-                account_type=data['account_type'],
-                permissions=data['permissions']
-            )
-            worker.finished.connect(lambda _: (
-                self._toast_manager.show_success(texts.ADMIN_USERS_UPDATED.format(username=username)),
+            try:
+                self._admin_api.update_user(
+                    user_id=user['id'],
+                    email=data['email'],
+                    account_type=data['account_type'],
+                )
+                if data.get('modules') is not None:
+                    from api.admin_modules import AdminModulesAPI
+                    mod_api = AdminModulesAPI(self._api_client)
+                    mod_api.update_user_modules(user['id'], data['modules'])
+                self._toast_manager.show_success(texts.ADMIN_USERS_UPDATED.format(username=username))
                 self._load_users()
-            ))
-            worker.error.connect(lambda e: self._toast_manager.show_error(str(e)))
-            worker.finished.connect(lambda: self._active_workers.remove(worker) if worker in self._active_workers else None)
-            worker.error.connect(lambda: self._active_workers.remove(worker) if worker in self._active_workers else None)
-            self._active_workers.append(worker)
-            worker.start()
+            except APIError as e:
+                self._toast_manager.show_error(str(e))
 
     def _on_change_password(self):
         user = self._get_selected_user()

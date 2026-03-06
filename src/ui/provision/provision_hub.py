@@ -5,11 +5,14 @@ UX-Redesign v3.2: 10 Panels in 2 Sektionen (DATEN / VERWALTUNG),
 Workflow-orientierte Reihenfolge, klare Benennung.
 """
 
+import json
+import hashlib
+
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QPushButton,
     QStackedWidget, QLabel, QSizePolicy,
 )
-from PySide6.QtCore import Signal, Qt, QTimer
+from PySide6.QtCore import Signal, Qt, QTimer, QObject, QRunnable, QThreadPool
 
 from api.client import APIClient
 from api.auth import AuthAPI
@@ -35,6 +38,34 @@ from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
+hb_logger = logging.getLogger('heartbeat.ledger')
+
+
+class _ProvFingerprintSignals(QObject):
+    result = Signal(str)
+
+
+class _ProvDataFingerprintWorker(QRunnable):
+    """Holt im Hintergrund einen Fingerprint der Provisions-Daten."""
+
+    def __init__(self, provision_api):
+        super().__init__()
+        self.signals = _ProvFingerprintSignals()
+        self._api = provision_api
+        self.setAutoDelete(True)
+
+    def run(self):
+        try:
+            batches = self._api.get_import_batches()
+            raw = json.dumps(
+                [{'id': b.id, 'status': b.status, 'row_count': b.row_count}
+                 for b in batches] if batches else [],
+                sort_keys=True, default=str,
+            )
+            fp = hashlib.md5(raw.encode()).hexdigest()
+            self.signals.result.emit(fp)
+        except Exception:
+            self.signals.result.emit("")
 
 
 class ProvisionNavButton(QPushButton):
@@ -101,6 +132,8 @@ class ProvisionHub(QWidget):
     PANEL_POSITIONS = PANEL_VU
     _TOTAL_PANELS = 10
 
+    _MODULE_HEARTBEAT_INTERVAL = 15_000
+
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
         super().__init__()
         self._api_client = api_client
@@ -109,9 +142,16 @@ class ProvisionHub(QWidget):
         self._toast_manager = None
         self._nav_buttons = []
         self._panels_loaded = set()
+        self._initial_loaded = False
+        self._last_data_fingerprint = ""
+        self._fingerprint_check_running = False
+        self._thread_pool = QThreadPool.globalInstance()
 
         self._freeze_detector = FreezeDetector(self)
         self._refresh_guard = False
+
+        self._module_heartbeat_timer = QTimer(self)
+        self._module_heartbeat_timer.timeout.connect(self._on_module_heartbeat_tick)
 
         self._repository = ProvisionRepository(api_client)
         self._presenters = {
@@ -126,8 +166,8 @@ class ProvisionHub(QWidget):
         }
 
         user = self._auth_api.current_user
-        if not user or not user.has_permission('provision_access'):
-            logger.warning("ProvisionHub ohne provision_access geladen — Zugriff verweigert")
+        if not user or not user.has_module('provision'):
+            logger.warning("ProvisionHub ohne Modul-Freischaltung geladen")
             return
 
         self._setup_ui()
@@ -223,6 +263,17 @@ class ProvisionHub(QWidget):
 
         add_nav("\u26A0\uFE0F", texts.PROVISION_PANEL_SETTINGS, texts.PROVISION_PANEL_SETTINGS_DESC, self.PANEL_SETTINGS)
 
+        user_pm = self._auth_api.current_user
+        if user_pm and user_pm.is_module_admin('provision'):
+            sep_admin = QFrame()
+            sep_admin.setFixedHeight(1)
+            sep_admin.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
+            sb_layout.addWidget(sep_admin)
+
+            admin_btn = ProvisionNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
+            admin_btn.clicked.connect(self._show_provision_module_admin)
+            sb_layout.addWidget(admin_btn)
+
         sb_layout.addStretch()
 
         refresh_btn = QPushButton(f"  \u21BB  {texts.PROVISION_HUB_REFRESH}")
@@ -245,7 +296,7 @@ class ProvisionHub(QWidget):
                 background-color: {SIDEBAR_HOVER};
             }}
         """)
-        refresh_btn.clicked.connect(self._refresh_all)
+        refresh_btn.clicked.connect(lambda: self._refresh_all(show_toast=True))
         sb_layout.addWidget(refresh_btn)
 
         root.addWidget(sidebar)
@@ -355,7 +406,7 @@ class ProvisionHub(QWidget):
                 except Exception as e:
                     logger.debug(f"Refresh Panel {index} nach data_changed: {e}")
 
-    def _refresh_all(self):
+    def _refresh_all(self, show_toast: bool = True):
         """Alle geladenen Panels neu laden (mit Guard gegen Rapid-Fire)."""
         if self._refresh_guard:
             return
@@ -370,11 +421,60 @@ class ProvisionHub(QWidget):
                     panel.refresh()
                 except Exception as e:
                     logger.debug(f"Refresh Panel {index}: {e}")
-        if self._toast_manager:
+        if show_toast and self._toast_manager:
             self._toast_manager.show_success(texts.PROVISION_HUB_REFRESH_DONE)
 
     def _release_refresh_guard(self):
         self._refresh_guard = False
+
+    # ------------------------------------------------------------------
+    # Module Heartbeat (gesteuert durch AppRouter)
+    # ------------------------------------------------------------------
+
+    def start_module_heartbeat(self):
+        """Startet Initial-Load und periodischen Heartbeat (15s)."""
+        if not self._initial_loaded:
+            self._initial_load_all_panels()
+            self._initial_loaded = True
+        if not self._module_heartbeat_timer.isActive():
+            self._module_heartbeat_timer.start(self._MODULE_HEARTBEAT_INTERVAL)
+            hb_logger.info(f"[LEDGER] START (Intervall={self._MODULE_HEARTBEAT_INTERVAL}ms)")
+
+    def stop_module_heartbeat(self):
+        """Stoppt den periodischen Heartbeat."""
+        self._module_heartbeat_timer.stop()
+        hb_logger.info("[LEDGER] STOP")
+
+    def _initial_load_all_panels(self):
+        """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
+        for i in range(self._TOTAL_PANELS):
+            self._ensure_panel_loaded(i)
+            panel = self._content_stack.widget(i)
+            if panel and hasattr(panel, 'refresh'):
+                try:
+                    panel.refresh()
+                except Exception as e:
+                    logger.debug(f"Initial refresh Panel {i}: {e}")
+        self._navigate_to(self.PANEL_OVERVIEW)
+
+    def _on_module_heartbeat_tick(self):
+        """Prueft im Hintergrund ob sich Daten geaendert haben."""
+        hb_logger.info("[LEDGER] TICK")
+        if self._fingerprint_check_running:
+            return
+        self._fingerprint_check_running = True
+        worker = _ProvDataFingerprintWorker(self._provision_api)
+        worker.signals.result.connect(self._on_fingerprint_result)
+        self._thread_pool.start(worker)
+
+    def _on_fingerprint_result(self, fingerprint: str):
+        self._fingerprint_check_running = False
+        if not fingerprint:
+            return
+        if fingerprint != self._last_data_fingerprint:
+            self._last_data_fingerprint = fingerprint
+            ProvisionCache.instance().invalidate_all()
+            self._refresh_all(show_toast=False)
 
     def get_blocking_operations(self) -> list:
         """Laufende Operationen die das Schliessen blockieren."""
@@ -399,6 +499,24 @@ class ProvisionHub(QWidget):
                     ops.append(texts.PROVISION_BLOCKING_WORKER)
                     break
         return ops
+
+    def _show_provision_module_admin(self):
+        """Oeffnet die Provision-Modul-Verwaltung."""
+        if not hasattr(self, '_module_admin_view') or self._module_admin_view is None:
+            from ui.module_admin import ModuleAdminShell
+            self._module_admin_view = ModuleAdminShell(
+                module_key='provision', module_name='Provision',
+                api_client=self._api_client, auth_api=self._auth_api,
+            )
+            self._module_admin_view._toast_manager = getattr(self, '_toast_manager', None)
+            self._module_admin_view.back_requested.connect(self._leave_provision_module_admin)
+            self._content_stack.addWidget(self._module_admin_view)
+        idx = self._content_stack.indexOf(self._module_admin_view)
+        self._content_stack.setCurrentIndex(idx)
+        self._module_admin_view.load_data()
+
+    def _leave_provision_module_admin(self):
+        self._navigate_to(self.PANEL_OVERVIEW)
 
     def cleanup(self) -> None:
         """Alle laufenden Worker sicher beenden."""

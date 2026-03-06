@@ -1,0 +1,27 @@
+ID;Kategorie;Schweregrad;Ort;Kurzbeschreibung;Evidenz;Status
+SV-001;Secrets Management;KRITISCH;app.py:1481;Hardcodierter Flask Secret Key;app.secret_key = 'a-very-secret-key-for-the-app';OFFEN
+SV-002;Secrets Management;KRITISCH;app.py:1923-1924;API-Credentials im Klartext;employers.json speichert access_key/secret_key;OFFEN
+SV-003;Transport Security;KRITISCH;run.py:57-64;Kein HTTPS;Server bindet auf HTTP ohne TLS;OFFEN
+SV-004;Web Security;KRITISCH;Alle POST-Formulare;Kein CSRF-Schutz;Keine CSRF-Token in Templates;OFFEN
+SV-005;Configuration;KRITISCH;app.py:2718;Debug-Modus aktivierbar;app.run(debug=True);OFFEN
+SV-006;Authentication;HOCH;app.py:1569-1603;Keine Brute-Force-Protection;Kein Rate-Limiting bei Login;OFFEN
+SV-007;Secrets Management;HOCH;app.py:1676-1677;GitHub PAT im Klartext;secrets.json speichert PAT unverschlüsselt;OFFEN
+SV-008;Web Security;HOCH;app.py (fehlend);Keine Security Headers;CSP, X-Frame-Options etc. fehlen;OFFEN
+SV-009;Authorization;HOCH;/employer/* Routen;Fehlende Zugriffskontrolle auf Arbeitgeber;Jeder User kann alle Arbeitgeber sehen;OFFEN
+SV-010;Operations;HOCH;app.py:33;Keine Log-Rotation;FileHandler ohne Rotation konfiguriert;OFFEN
+SV-011;Quality Assurance;HOCH;Projekt-Root;Keine automatisierten Tests;Kein tests/ Ordner oder Test-Dateien;OFFEN
+SV-012;Authentication;MITTEL;app.py:1647;Keine Passwort-Policy;Keine Mindestlänge oder Komplexität;OFFEN
+SV-013;Session Management;MITTEL;app.py (fehlend);Kein Session-Timeout;Sessions laufen nie ab;OFFEN
+SV-014;Privacy/DSGVO;MITTEL;app.py:1997;PII in Logs;Mitarbeiternamen im Klartext geloggt;OFFEN
+SV-015;Input Validation;MITTEL;app.py:1918-1932;Keine Input-Validierung bei Arbeitgeber-Erstellung;provider_key und name nicht validiert;OFFEN
+SV-016;Auditing;MITTEL;app.py:1637-1667;Kein Audit-Trail für Admin-Aktionen;Benutzer-Erstellung nicht geloggt;OFFEN
+SV-017;Supply Chain;MITTEL;updater.py:92-142;Auto-Update ohne Signaturprüfung;ZIP wird nicht verifiziert;OFFEN
+SV-018;Session Management;MITTEL;Flask-Konfiguration;Secure Cookie-Flag fehlt;Cookie ohne Secure-Attribut;OFFEN
+SV-019;Supply Chain;MITTEL;base.html:9-11;Keine SRI-Hashes für externe Ressourcen;Google Fonts ohne Integrity-Check;OFFEN
+SV-020;Authentication;NIEDRIG;app.py:1569-1603;Fehlende Account-Lockout-Policy;Keine Sperre nach Fehlversuchen;OFFEN
+SV-021;Logging;NIEDRIG;app.py:1599-1601;Fehlgeschlagene Logins nicht geloggt;Nur Flash-Nachricht, kein Log;OFFEN
+SV-022;Code Quality;NIEDRIG;app.py;Monolithische Codebasis;~2719 Zeilen in einer Datei;OFFEN
+SV-023;Data Retention;NIEDRIG;app.py:1143-1148;Unbegrenzte Datenspeicherung;Keine automatische Löschung von Snapshots;OFFEN
+SV-024;DevOps;INFO;Projekt-Root;Kein CI/CD-Pipeline;Keine automatisierte Pipeline;OFFEN
+SV-025;Operations;INFO;app.py (fehlend);Keine Health-Check-Endpoints;Kein /health oder /ready Endpoint;OFFEN
+SV-026;Supply Chain;INFO;Projekt-Root;Keine Lockfile für Dependencies;Nur requirements.txt ohne Hash;OFFEN

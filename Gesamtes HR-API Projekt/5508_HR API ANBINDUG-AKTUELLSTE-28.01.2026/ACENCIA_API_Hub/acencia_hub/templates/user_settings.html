@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Meine Einstellungen - ACENCIA{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1 class="page-title">Meine Einstellungen</h1>
+        <p class="page-subtitle">Verwalten Sie hier Ihre persönlichen Kontoeinstellungen.</p>
+    </div>
+
+    <div class="settings-grid">
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">Passwort ändern</h3></div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('user_settings') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <input type="hidden" name="action" value="change_password">
+                    <div class="form-group">
+                        <label for="current_password">Aktuelles Passwort</label>
+                        <input type="password" id="current_password" name="current_password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="new_password">Neues Passwort</label>
+                        <input type="password" id="new_password" name="new_password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm_password">Neues Passwort bestätigen</label>
+                        <input type="password" id="confirm_password" name="confirm_password" required>
+                    </div>
+                    <button type="submit" class="button button-primary">Passwort speichern</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">Darstellung</h3></div>
+            <div class="card-body">
+                <div class="form-group theme-toggle-setting">
+                    <label for="theme-switch-setting">Dark Mode</label>
+                    <div class="theme-toggle">
+                        <input type="checkbox" id="theme-switch-setting" class="theme-switch-checkbox">
+                        <label for="theme-switch-setting" class="theme-switch-label"></label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

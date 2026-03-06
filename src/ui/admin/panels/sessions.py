@@ -30,11 +30,12 @@ class SessionsPanel(QWidget):
     """Session-Verwaltung: Einsicht, Kill einzeln/alle, Auto-Refresh."""
 
     def __init__(self, api_client: APIClient, toast_manager,
-                 admin_api: AdminAPI, **kwargs):
+                 admin_api: AdminAPI, auth_api=None, **kwargs):
         super().__init__()
         self._api_client = api_client
         self._toast_manager = toast_manager
         self._admin_api = admin_api
+        self._auth_api = auth_api
         self._sessions_data = []
         self._active_workers = []
         self._create_ui()
@@ -182,9 +183,25 @@ class SessionsPanel(QWidget):
             return None
         return self._sessions_data[row]
 
+    def _can_kill_session(self, session: Dict) -> bool:
+        """Prueft ob der aktuelle User diese Session beenden darf (Hierarchie)."""
+        if not self._auth_api:
+            return True
+        actor = self._auth_api.current_user
+        if not actor:
+            return True
+        target_type = session.get('account_type', 'user')
+        from api.auth import User
+        actor_level = {'user': 1, 'admin': 2, 'super_admin': 3}.get(actor.account_type, 1)
+        target_level = {'user': 1, 'admin': 2, 'super_admin': 3}.get(target_type, 1)
+        return actor_level > target_level
+
     def _on_kill_session(self):
         session = self._get_selected_session()
         if not session:
+            return
+        if not self._can_kill_session(session):
+            self._toast_manager.show_error(texts.HIERARCHY_CANNOT_KILL_SESSION)
             return
         reply = QMessageBox.question(self, texts.WARNING, texts.ADMIN_SESSIONS_KILL_CONFIRM,
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -199,6 +216,9 @@ class SessionsPanel(QWidget):
     def _on_kill_all_sessions(self):
         session = self._get_selected_session()
         if not session:
+            return
+        if not self._can_kill_session(session):
+            self._toast_manager.show_error(texts.HIERARCHY_CANNOT_KILL_SESSION)
             return
         username = session.get('username', '')
         user_id = session.get('user_id')

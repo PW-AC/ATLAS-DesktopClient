@@ -6,7 +6,7 @@ Vollbild-Layout mit eigener Sidebar-Navigation (16 Bereiche):
 VERWALTUNG:
 0. Nutzerverwaltung (CRUD)
 1. Sessions (Einsicht + Kill)
-2. Passwoerter (PDF/ZIP Passwort-Verwaltung)
+2. Passwoerter (PDF/ZIP Passwort-Verwaltung) #####- musss in die Core Admin verwaltung
 
 MONITORING:
 3. Aktivitaetslog (Filter + Pagination)
@@ -48,8 +48,6 @@ from api.client import APIClient
 from api.auth import AuthAPI
 from api.admin import AdminAPI
 from api.releases import ReleasesAPI
-from api.processing_settings import ProcessingSettingsAPI
-from api.ai_providers import AIProvidersAPI
 from api.model_pricing import ModelPricingAPI
 from i18n import de as texts
 
@@ -64,7 +62,7 @@ from ui.styles.tokens import (
 
 logger = logging.getLogger(__name__)
 
-NUM_PANELS = 17
+NUM_PANELS = 10
 
 
 class AdminNavButton(QPushButton):
@@ -116,12 +114,6 @@ class AdminView(QWidget):
         self._admin_api = AdminAPI(api_client)
         self._releases_api = ReleasesAPI(api_client)
         
-        from api.smartscan import SmartScanAPI, EmailAccountsAPI as EmailAccAPI
-        self._smartscan_api = SmartScanAPI(api_client)
-        self._email_accounts_api = EmailAccAPI(api_client)
-        
-        self._processing_settings_api = ProcessingSettingsAPI(api_client)
-        self._ai_providers_api = AIProvidersAPI(api_client)
         self._model_pricing_api = ModelPricingAPI(api_client)
         
         self._panels: List[Optional[QWidget]] = [None] * NUM_PANELS
@@ -217,35 +209,28 @@ class AdminView(QWidget):
         self._btn_users     = add_nav("›", texts.ADMIN_TAB_USERS, 0)
         self._btn_sessions  = add_nav("›", texts.ADMIN_TAB_SESSIONS, 1)
         self._btn_passwords = add_nav("›", texts.ADMIN_TAB_PASSWORDS, 2)
-        
+
         # === MONITORING ===
         add_section(texts.ADMIN_SECTION_MONITORING)
         self._btn_activity = add_nav("›", texts.ADMIN_TAB_ACTIVITY, 3)
         self._btn_costs    = add_nav("›", texts.ADMIN_TAB_COSTS, 4)
         self._btn_releases = add_nav("›", texts.ADMIN_TAB_RELEASES, 5)
-        
-        # === VERARBEITUNG ===
-        add_section(texts.ADMIN_SECTION_PROCESSING)
-        self._btn_ai_classification = add_nav("›", texts.ADMIN_TAB_AI_CLASSIFICATION, 6)
-        self._btn_ai_providers      = add_nav("›", texts.ADMIN_TAB_AI_PROVIDERS, 7)
-        self._btn_model_pricing     = add_nav("›", texts.ADMIN_TAB_MODEL_PRICING, 8)
-        self._btn_document_rules    = add_nav("›", texts.ADMIN_TAB_DOCUMENT_RULES, 9)
-        
-        # === E-MAIL ===
-        add_section(texts.ADMIN_SECTION_EMAIL)
-        self._btn_email_accounts     = add_nav("›", texts.ADMIN_TAB_EMAIL_ACCOUNTS, 10)
-        self._btn_smartscan_settings = add_nav("›", texts.ADMIN_TAB_SMARTSCAN_SETTINGS, 11)
-        self._btn_smartscan_history  = add_nav("›", texts.ADMIN_TAB_SMARTSCAN_HISTORY, 12)
-        self._btn_email_inbox        = add_nav("›", texts.ADMIN_TAB_EMAIL_INBOX, 13)
-        
+
         # === KOMMUNIKATION ===
         add_section("KOMMUNIKATION")
-        self._btn_messages           = add_nav("›", texts.ADMIN_MSG_TAB, 14)
-        
+        self._btn_messages = add_nav("›", texts.ADMIN_MSG_TAB, 6)
+
         # === SYSTEM ===
         add_section(texts.ADMIN_SECTION_SYSTEM)
-        self._btn_server_health      = add_nav("›", texts.ADMIN_TAB_SERVER_HEALTH, 15)
-        self._btn_migrations         = add_nav("›", texts.ADMIN_TAB_MIGRATIONS, 16)
+        self._btn_server_health = add_nav("›", texts.ADMIN_TAB_SERVER_HEALTH, 7)
+        self._btn_migrations    = add_nav("›", texts.ADMIN_TAB_MIGRATIONS, 8)
+
+        user = self._auth_api.current_user if self._auth_api else None
+        if user and user.is_super_admin:
+            add_section(texts.SRVMGMT_SECTION)
+            self._btn_server_mgmt = add_nav("›", texts.SRVMGMT_TITLE, 9)
+        else:
+            self._btn_server_mgmt = None
         
         sb_layout.addStretch()
         root.addWidget(admin_sidebar)
@@ -290,10 +275,10 @@ class AdminView(QWidget):
         self._content_stack.insertWidget(index, panel)
     
     def _create_panel(self, index: int) -> Optional[QWidget]:
-        """Erstellt das Panel fuer den gegebenen Index."""
+        """Erstellt das Panel fuer den gegebenen Index (9 Panels)."""
         tm = getattr(self, '_toast_manager', None)
         ac = self._api_client
-        
+
         if index == 0:
             from ui.admin.panels.user_management import UserManagementPanel
             return UserManagementPanel(
@@ -303,7 +288,8 @@ class AdminView(QWidget):
         elif index == 1:
             from ui.admin.panels.sessions import SessionsPanel
             return SessionsPanel(
-                api_client=ac, toast_manager=tm, admin_api=self._admin_api
+                api_client=ac, toast_manager=tm, admin_api=self._admin_api,
+                auth_api=self._auth_api
             )
         elif index == 2:
             from ui.admin.panels.passwords import PasswordsPanel
@@ -326,66 +312,22 @@ class AdminView(QWidget):
                 releases_api=self._releases_api
             )
         elif index == 6:
-            from ui.admin.panels.ai_classification import AiClassificationPanel
-            return AiClassificationPanel(
-                api_client=ac, toast_manager=tm,
-                processing_settings_api=self._processing_settings_api,
-                ai_providers_api=self._ai_providers_api
-            )
-        elif index == 7:
-            from ui.admin.panels.ai_providers import AiProvidersPanel
-            return AiProvidersPanel(
-                api_client=ac, toast_manager=tm,
-                ai_providers_api=self._ai_providers_api
-            )
-        elif index == 8:
-            from ui.admin.panels.model_pricing import ModelPricingPanel
-            return ModelPricingPanel(
-                api_client=ac, toast_manager=tm,
-                model_pricing_api=self._model_pricing_api
-            )
-        elif index == 9:
-            from ui.admin.panels.document_rules import DocumentRulesPanel
-            return DocumentRulesPanel(api_client=ac, toast_manager=tm)
-        elif index == 10:
-            from ui.admin.panels.email_accounts import EmailAccountsPanel
-            return EmailAccountsPanel(
-                api_client=ac, toast_manager=tm,
-                email_accounts_api=self._email_accounts_api
-            )
-        elif index == 11:
-            from ui.admin.panels.smartscan_settings import SmartScanSettingsPanel
-            return SmartScanSettingsPanel(
-                api_client=ac, toast_manager=tm,
-                smartscan_api=self._smartscan_api,
-                email_accounts_api=self._email_accounts_api
-            )
-        elif index == 12:
-            from ui.admin.panels.smartscan_history import SmartScanHistoryPanel
-            return SmartScanHistoryPanel(
-                api_client=ac, toast_manager=tm,
-                smartscan_api=self._smartscan_api
-            )
-        elif index == 13:
-            from ui.admin.panels.email_inbox import EmailInboxPanel
-            return EmailInboxPanel(
-                api_client=ac, toast_manager=tm,
-                email_accounts_api=self._email_accounts_api
-            )
-        elif index == 14:
             from ui.admin.panels.messages import MessagesPanel
             return MessagesPanel(api_client=ac, toast_manager=tm)
-        elif index == 15:
+        elif index == 7:
             from ui.admin.panels.server_health import ServerHealthPanel
             return ServerHealthPanel(
                 api_client=ac, toast_manager=tm, admin_api=self._admin_api
             )
-        elif index == 16:
+        elif index == 8:
             from ui.admin.panels.migrations import MigrationsPanel
             return MigrationsPanel(
                 api_client=ac, toast_manager=tm, admin_api=self._admin_api
             )
-        
+        elif index == 9:
+            from ui.admin.panels.server_mgmt_panel import ServerMgmtPanel
+            return ServerMgmtPanel(api_client=ac, toast_manager=tm)
+
         return None
     
     def _on_panel_changed(self, index: int):

@@ -53,6 +53,12 @@ reportlab>=4.0,<5.0
 # Word-Dokument-Generierung (Abrechnungs-Export)
 python-docx>=1.0,<2.0
 
+# Mustache-Templates fuer Workforce Trigger-System
+chevron>=0.14.0,<1.0.0
+
+# Charts und Diagramme (Workforce Statistiken)
+matplotlib>=3.8.0,<4.0.0
+
 # Fuer Packaging
 pyinstaller>=6.0.0,<7.0.0
 

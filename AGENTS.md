@@ -1,7 +1,7 @@
 # AGENTS.md
 # ACENCIA ATLAS -- Desktop Client + Web-Admin-Panel
 
-> **Version**: siehe `VERSION`-Datei (aktuell 2.3.1) | **Stand**: 04.03.2026
+> **Version**: siehe `VERSION`-Datei (aktuell 2.3.1) | **Stand**: 05.03.2026
 > Detaillierte Dokumentation liegt im privaten Submodule `ATLAS_private - Doku - Backend/`.
 
 **Agent's Responsibility:** Dieses Dokument ist die Single Source of Truth fuer Agent-Zusammenarbeit an diesem Projekt. Bei jedem neuen Feature, Bugfix oder Refactor **muss** dieses Dokument aktualisiert werden.
@@ -14,7 +14,7 @@
 |------|------|
 | **Name** | ACENCIA ATLAS ("Der Datenkern.") |
 | **Typ** | Python-Desktop-App (PySide6/Qt) + PHP-REST-API + MySQL + Web-Admin-Panel (Vanilla JS) |
-| **Zweck** | BiPRO-Datenabruf, Dokumentenarchiv, GDV-Editor, Provisionsmanagement, Server-Administration |
+| **Zweck** | BiPRO-Datenabruf, Dokumentenarchiv, GDV-Editor, Provisionsmanagement, Workforce (HR), Server-Administration |
 | **Nutzer** | Versicherungsvermittler-Team (2-5 Personen) |
 | **Entry Point Desktop** | `python run.py` |
 | **Entry Point Admin-Panel** | `https://acencia.info/admin-panel/` |
@@ -89,15 +89,17 @@ Der Ordner `ATLAS_private - Doku - Backend/ATLAS - Hetzner Server - ABBILD - NIC
 ```
 Desktop-App (PySide6)             Web-Admin-Panel                  Hetzner Cloud (CCX13, Nuernberg)
 ├── UI Layer                      ├── index.html (SPA)             ├── Nginx (HTTPS, HTTP/2, Rate-Limiting)
-│   ├── main_hub.py               ├── css/ (5 Dateien)             ├── PHP 8.3 FPM + REST API (~47 Dateien)
+│   ├── main_hub.py               ├── css/ (5 Dateien)             ├── PHP 8.3 FPM + REST API (~48 Dateien)
 │   ├── provision/ (10 Panels)    │   └── tokens.css (ACENCIA CI)  │   ├── auth.php (JWT, is_super_admin)
+│   ├── workforce/ (7 Panels)                                      │   ├── hr.php (Workforce, 30 Endpoints)
 │   ├── admin/ (17 Panels)        ├── js/ (41 Dateien)             │   ├── documents.php (Archiv)
-│   └── message_center_view.py    │   ├── api.js (API Client)      │   ├── server_management.php (13 Endpoints)
-├── Presenters (MVP)              │   ├── auth.js (JWT + Timeout)   │   ├── ai_providers.php (Provider CRUD)
-├── Use Cases                     │   ├── router.js (Hash-SPA)     │   ├── model_pricing.php (Preise CRUD)
-├── Domain (Entities, Rules)      │   ├── components/ (6 Module)   │   ├── processing_settings.php (KI-Config)
-├── Infrastructure (Adapters)     │   └── panels/ (27 Panels)      │   └── ... (~47 Dateien)
-├── API Clients (~29 Module)      └── i18n/de.js (~430 Keys)       ├── MySQL 8.0 Self-Hosted (~63 Tabellen)
+│   ├── module_admin/ (Shell+3)   │   ├── api.js (API Client)      │   ├── admin_modules.php (Module+Rollen)
+│   └── message_center_view.py    │   ├── auth.js (JWT + Timeout)   │   ├── server_management.php (13 Endpoints)
+├── Presenters (MVP)              │   ├── router.js (Hash-SPA)     │   ├── ai_providers.php (Provider CRUD)
+├── Use Cases                     │   ├── components/ (6 Module)   │   ├── model_pricing.php (Preise CRUD)
+├── Domain (Entities, Rules)      │   └── panels/ (27 Panels)      │   ├── processing_settings.php (KI-Config)
+├── Infrastructure (Adapters)     └── i18n/de.js (~430 Keys)       │   └── ... (~48 Dateien)
+├── API Clients (~30 Module)                                       ├── MySQL 8.0 Self-Hosted (~68 Tabellen)
 ├── BiPRO SOAP Client                                              ├── Volume 100 GB (/mnt/atlas-volume)
 └── Services (~16 Module)                                          │   ├── dokumente/ (~2.600 Dateien, ~450 MB)
                                                                    │   ├── releases/ (~30 Installer, ~5.4 GB)
@@ -268,41 +270,55 @@ tableComp.render(data.entries || []);
 ## Projektstruktur (oeffentlich)
 
 ```
-src/                                Python Desktop-App (~246 Dateien, ~82.000 Zeilen)
+src/                                Python Desktop-App (~280 Dateien, ~90.000 Zeilen)
   ui/                               UI-Layer (PySide6)
     admin/                          Admin-Bereich
       panels/                       17 Admin-Panels
+    module_admin/                   Modul-Admin-Verwaltung (Shell + 3 Panels)
+      module_admin_shell.py         Generische Shell mit Tabs (Zugriff, Rollen, Konfiguration)
+      access_panel.py               User-Zugriff + Rollen-Zuweisung pro Modul
+      roles_panel.py                Rollen-CRUD + Rechtezuweisung pro Modul
+      config_panel.py               Modul-spezifische Konfigurationspanels
     archive/                        Dokumentenarchiv (Sidebar, Table, Widgets, Workers)
     provision/                      Provisionsmanagement (10 Panels + Hub)
+    workforce/                      Workforce/HR (7 Panels + Hub)
     viewers/                        PDF- und Spreadsheet-Viewer
     styles/                         Design-Tokens
-  api/                              API-Client-Module (~29 Dateien)
+  api/                              API-Client-Module (~30 Dateien)
+    admin_modules.py                Modul- und Rollenverwaltung API (10 Methoden)
     openrouter/                     KI-Integration (Klassifikation, OCR, ~6 Dateien)
   bipro/                            BiPRO SOAP Client (~7 Dateien)
   services/                         Business-Services (~16 Dateien)
-  config/                           Konfiguration (VU-Endpoints, Zertifikate, ~6 Dateien)
+  config/                           Konfiguration (VU-Endpoints, Zertifikate, ~7 Dateien)
   domain/                           Datenmodelle
     archive/                        Archiv-Domain (Classifier, Rules, Entities, ~8 Dateien)
     provision/                      Provisions-Domain (Entities, Parser, Normalisierung, ~6 Dateien)
-  infrastructure/                   Adapter & Repositories (Clean Architecture, ~20 Dateien)
+  infrastructure/                   Adapter & Repositories (Clean Architecture, ~23 Dateien)
     api/                            API-Repositories (Provision)
     archive/                        Archiv-Adapter (AI, SmartScan, PDF, Hash, ~10 Dateien)
     storage/                        Lokaler Speicher
-    threading/                      Worker-Threads (Archive, Provision)
-  presenters/                       Presenter-Layer (MVP, ~16 Dateien)
+    threading/                      Worker-Threads (Archive, Provision, Freeze-Detector)
+  presenters/                       Presenter-Layer (MVP, ~12 Dateien)
     archive/                        Archiv-Presenter
     provision/                      Provisions-Presenter (~8 Dateien)
-  usecases/                         Use-Case-Layer (~25 Dateien)
+  usecases/                         Use-Case-Layer (~26 Dateien)
     archive/                        Archiv-Use-Cases (~15 Dateien)
     provision/                      Provisions-Use-Cases (~10 Dateien)
   parser/                           GDV-Parser
   layouts/                          GDV-Satzlayouts
   utils/                            Hilfsfunktionen (date_utils)
-  i18n/                             Internationalisierung (~2400 Keys, 2637 Zeilen)
+  workforce/                        Workforce/HR-Modul (~15 Dateien, ~2400 Zeilen)
+    api_client.py                   WorkforceApiClient (PHP-Backend-Kommunikation)
+    workers.py                      QThread-Worker (Sync, Delta, Export, Stats)
+    constants.py                    SCS_HEADERS, Trigger-Events, Operatoren
+    helpers.py                      Utility-Funktionen (Hash, Flatten, Date-Parse)
+    providers/                      HR-API-Anbindungen (Personio, HRworks, SageHR)
+    services/                       Geschaeftslogik (Sync, Delta, Export, Snapshot, Trigger, Stats)
+  i18n/                             Internationalisierung (~2600 Keys, 3 Sprachen: de, en, ru)
   tests/                            Smoke-, Stability- und Security-Tests (7 Dateien)
 run.py                              Entry Point (+ --background-update Weiche)
 VERSION                             Versionsdatei (aktuell 2.3.1)
-requirements.txt                    Dependencies (15 Pakete)
+requirements.txt                    Dependencies (16 Pakete)
 build_config.spec                   PyInstaller-Konfiguration
 installer.iss                       Inno Setup Installer-Skript
 ```
@@ -317,7 +333,7 @@ ATLAS_private - Doku - Backend/     (Git Submodule, privat)
   docs/                             Kern- und Entwickler-Dokumentation (3-Stufen-Hierarchie, 53 Dateien)
     00_CORE/                        Kern-Dokumentation (7 Dateien inkl. ATLAS_KOMPLETT.md)
     01_DEVELOPMENT/                 Entwickler-Dokumentation (10 Dateien)
-    02_SECURITY/                    Sicherheit & Berechtigungen (2 Dateien)
+    02_SECURITY/                    Sicherheit, Berechtigungen & Rollen (3 Dateien)
     03_REFERENCE/                   Referenz-Material (3 Dateien)
     04_PRODUCT/                     Produkt-Planung (Roadmap, Ideas, ADMIN_PANEL_ERWEITERUNG_PLAN.md)
     99_ARCHIVE/                     Historische Dokumente (4 Unterordner)
@@ -327,15 +343,15 @@ ATLAS_private - Doku - Backend/     (Git Submodule, privat)
   testdata/                         Testdaten (inkl. Provision)
   ChatGPT-Kontext/                  KI-Kontext-Dateien (11 Markdown-Dateien)
   BiPro-Webspace Spiegelung Live/   PHP REST-API Backend (~76 Dateien, ~22.800 eigene Zeilen)
-    api/                            33 PHP-Endpoints (+ lib/, setup/)
+    api/                            35 PHP-Endpoints (+ lib/, setup/)
     api/lib/                        Shared Libraries (DB, JWT, Crypto, Permissions, PHPMailer)
-    api/setup/                      DB-Migrationen (36 Skripte, 005-043)
+    api/setup/                      DB-Migrationen (42 Skripte, 005-050)
   ATLAS - Hetzner Server - ABBILD - NICHT LIVE/
     README.md                       Sync-Anleitung und Ordnerstruktur
     Abbild/                         Lokale Kopie des Servers (etc/, var/www/, opt/)
       var/www/atlas/                Gesamtes Web-Root inkl. Admin-Panel
         admin-panel/                Web-Admin-Panel (~50 Dateien, Vanilla JS SPA)
-        api/                        PHP REST-API (~47 Dateien)
+        api/                        PHP REST-API (~48 Dateien inkl. admin_modules.php)
   hetzner-migration/                Server-Migration Strato -> Hetzner (abgeschlossen 03.03.2026)
     INFRASTRUKTUR_DATEN.md          Live-Infrastruktur-Werte (IPs, Credentials, Pfade)
   AGENTS.md                         Vollstaendige Agent-Instruktionen (Single Source of Truth)
@@ -367,17 +383,38 @@ In `/etc/php/8.3/fpm/conf.d/99-atlas.ini` sind `exec` und `shell_exec` AKTIV (ni
 
 ---
 
-## Aktueller Stand (04.03.2026)
+## Definition of Done (DoD)
 
-### Implementiert
-- Desktop-App: Voll funktionsfaehig (BiPRO, Archiv, GDV, Provision, 17 Admin-Panels)
-- Web-Admin-Panel: 27 Panels deployed und funktionsfaehig
-  - 17 bestehende Desktop-Admin-Funktionen ins Web repliziert
-  - 9 neue Server-Management-Panels (Super-Admin)
-  - 1 System-Status-Panel (bereits vorhanden, erweitert)
-- PHP-API: ~47 Endpoints, inkl. 13 neue Server-Management-Endpoints
-- DB-Migrationen: Bis 043 (is_excluded, is_super_admin, server_audit_log)
-- Server: Hetzner Cloud, SSL, Fail2Ban, Backups, sudoers konfiguriert
+Jede Aenderung am Projekt muss folgende Kriterien erfuellen:
+
+- [ ] **Build laeuft**: `python -m PyInstaller build_config.spec --clean --noconfirm` erfolgreich
+- [ ] **Tests laufen**: `python src/tests/run_smoke_tests.py` + `pytest src/tests/` gruen
+- [ ] **Lint ok**: `ruff check src/` ohne Fehler
+- [ ] **i18n**: Alle neuen UI-Texte in `src/i18n/de.py` (Desktop) bzw. `admin-panel/i18n/de.js` (Web)
+- [ ] **Keine Secrets im Repo**: Keine API-Keys, Passwoerter, Tokens im Code
+- [ ] **Keine modalen Popups**: `ToastManager` statt `QMessageBox.information/warning/critical`
+- [ ] **Kein blockierender Code auf Main-Thread**: Lange Operationen via QThread-Worker
+- [ ] **Docs aktualisiert**: AGENTS.md und README.md bei Feature-Aenderungen aktualisieren
+- [ ] **VERSION**: Bei Release-wuerdigen Aenderungen VERSION-Datei aktualisieren
+- [ ] **PR-Checkliste**: `.github/pull_request_template.md` abarbeiten
+
+---
+
+## Aktueller Stand (05.03.2026)
+
+### Implementiert (Komplett)
+- **Desktop-App**: Voll funktionsfaehig mit 4 Hauptmodulen + Modul-Admin:
+  - **Core** (MainHub): BiPRO-Datenabruf, Dokumentenarchiv mit KI, GDV-Editor, Mitteilungszentrale, Chat
+  - **Provision** (ProvisionHub): 10 Panels - Dashboard, Performance, Import, VU-Zuordnung, Xempus, Freie Provisionen, Klaerung, Verteilung, Auszahlungen, Einstellungen
+  - **Workforce** (WorkforceHub): 7 Panels - Arbeitgeber, Mitarbeiter, Exporte, Snapshots, Statistiken, Trigger, SMTP
+  - **Admin** (AdminShell): 17 Panels - Nutzer, Sessions, Passwoerter, Aktivitaet, KI-Kosten, Releases, KI-Klassifikation, KI-Provider, Modell-Preise, Dokumenten-Regeln, E-Mail-Konten, SmartScan-Einstellungen, SmartScan-Historie, E-Mail-Posteingang, Mitteilungen, Server-Gesundheit, Migrationen
+  - **Modul-Admin** (ModuleAdminShell): 3 Tabs pro Modul - Zugriff, Rollen, Konfiguration
+- **Modul-System**: Modulare Zugriffssteuerung mit Rollen und Berechtigungen (Migrationen 045-050, 5 neue DB-Tabellen)
+- **Workforce-Modul**: HR-Provider-Integration (Personio, HRworks, SageHR Mock), Delta-SCS-Export, Trigger-System (E-Mail + API), 30 PHP-Endpoints (/hr/*), 9 DB-Tabellen (hr_*), 5 Permissions, Migration 044
+- **Web-Admin-Panel**: 27 Panels deployed (17 Desktop-Admin repliziert + 9 Server-Management + 1 System-Status)
+- **PHP-API**: ~48 Endpoints inkl. 13 Server-Management + 30 HR/Workforce + Modul-Verwaltung
+- **DB-Migrationen**: Bis 050 (hr_module, account_type, modules, user_modules, permissions, roles, role_permissions, user_roles, backfill)
+- **Server**: Hetzner Cloud (CCX13), SSL, Fail2Ban, Backups, sudoers konfiguriert
 
 ### Bekannte Einschraenkungen / Tech Debt
 - KI-Provider und Modell-Preise: Muessen im Web-Panel manuell konfiguriert werden (Desktop-Client nutzt config.php-Fallback)
@@ -386,3 +423,157 @@ In `/etc/php/8.3/fpm/conf.d/99-atlas.ini` sind `exec` und `shell_exec` AKTIV (ni
 - Kein Dark Mode im Web-Admin-Panel
 - Kein Release-Upload im Browser
 - Admin-Panel hat keine automatische Cache-Invalidierung (manueller Hard-Refresh noetig)
+- Workforce: SageHR-Provider ist nur Mock (keine echte API)
+- Workforce: Datenmigration aus HR-Hub JSON-Dateien noch nicht durchgefuehrt
+
+---
+
+## Workforce-Modul (HR)
+
+### Ueberblick
+- **UI-Name**: "Workforce" (eigener Hub, wie Provision/Ledger)
+- **DB-Tabellen**: `hr_*` (9 Tabellen, Migration 044)
+- **PHP-Endpoints**: `/hr/*` (30 Endpoints in `api/hr.php`)
+- **Permissions**: `hr.view`, `hr.sync`, `hr.export`, `hr.triggers`, `hr.admin` (explizit, nicht auto-Admin)
+- **Python-Modul**: `src/workforce/` (Provider, Services, API-Client, Worker)
+- **i18n-Prefix**: `WF_` (~200 Keys)
+
+### Architektur
+- **Provider-Calls**: Desktop -> HR-API direkt (Personio, HRworks), NICHT ueber PHP
+- **Persistenz**: Desktop -> PHP-API -> MySQL (CRUD, Bulk-Upsert, Snapshots, Exports)
+- **Credentials**: PHP verschluesselt/entschluesselt (AES-256-GCM via Crypto-Klasse)
+- **Trigger**: Desktop wertet aus + fuehrt aus (E-Mail via smtplib, API via requests)
+- **Exports**: Desktop generiert XLSX (openpyxl), uploaded an PHP/Volume
+
+### Kern-Datenfluss (Delta-Export)
+1. Credentials vom PHP-Backend holen (entschluesselt)
+2. Provider-API direkt aufrufen (Personio/HRworks)
+3. Letzten Snapshot vom PHP-Backend laden
+4. Delta berechnen (Hash-Vergleich lokal)
+5. XLSX generieren (openpyxl lokal)
+6. Neuen Snapshot speichern (PHP)
+7. Export hochladen (PHP/Volume)
+8. Trigger auswerten und ausfuehren (Desktop)
+9. Trigger-Runs loggen (PHP)
+
+### Dateien
+| Datei | Zweck |
+|-------|-------|
+| `src/workforce/api_client.py` | WorkforceApiClient (30+ Methoden) |
+| `src/workforce/workers.py` | QThread-Worker (Sync, Delta, Standard, Stats) |
+| `src/workforce/providers/` | BaseProvider, HRworks, Personio, SageHR |
+| `src/workforce/services/` | Sync, Delta, Export, Snapshot, Trigger, Stats |
+| `src/ui/workforce/workforce_hub.py` | Hub mit Sidebar (7 Panels) |
+| `src/ui/workforce/*_view.py` | 7 View-Panels |
+| `api/hr.php` | 30 PHP-Endpoints |
+| `api/setup/044_hr_module.php` | DB-Migration (9 Tabellen + 5 Permissions) |
+
+---
+
+## Modul-System (Rollen & Zugriffssteuerung)
+
+### Ueberblick
+- **Zweck**: Modulare Zugriffssteuerung -- jedes Modul (Core, Provision, Workforce) kann pro User freigeschaltet und mit Rollen/Rechten versehen werden
+- **Account-Typen**: `user`, `admin`, `super_admin` (3-stufig, Migration 045)
+- **Module**: `core`, `provision`, `workforce` (registriert in `modules`-Tabelle, Migration 046)
+- **Zugangslevel pro Modul**: `user` (Standard-Zugriff) oder `admin` (Modul-Admin, darf Rollen/Zugriff verwalten)
+- **Rollen**: Modul-spezifische Rollen mit konfigurierbaren Rechten (z.B. `provision.manager`, `hr.admin`)
+- **PHP-Endpoints**: `/admin/modules`, `/admin/modules/{key}/roles`, `/admin/modules/{key}/users`
+
+### Architektur
+
+```
+AppRouter (Modul-Check)
+├── has_module("core")      → MainHub
+├── has_module("provision") → ProvisionHub
+├── has_module("workforce") → WorkforceHub
+├── is_module_admin("core")      → ModuleAdminShell (Core)
+├── is_module_admin("provision") → ModuleAdminShell (Provision)
+└── is_module_admin("workforce") → ModuleAdminShell (Workforce)
+
+ModuleAdminShell (pro Modul)
+├── Tab 1: Zugriff (ModuleAccessPanel)    → User mit Zugriff, Rollen-Zuweisung
+├── Tab 2: Rollen (ModuleRolesPanel)      → Rollen CRUD, Rechte zuweisen
+└── Tab 3: Konfiguration (ModuleConfigPanel) → Modul-spezifische Config-Panels
+```
+
+### Datenfluss (Modul-Freischaltung)
+1. Super-Admin/Admin schaltet User fuer ein Modul frei (Nutzerverwaltung)
+2. `user_modules`-Eintrag wird erstellt (`is_enabled=true`, `access_level='user'`)
+3. Dashboard zeigt nur freigeschaltete Module als Kacheln
+4. GlobalHeartbeat prueft Modul-Aenderungen (`modules_updated`-Signal)
+5. Entzogener Zugriff fuehrt sofort zurueck zum Dashboard
+
+### DB-Tabellen (Migrationen 045-050)
+
+| Tabelle | Migration | Beschreibung |
+|---------|-----------|-------------|
+| `users.account_type` | 045 | ENUM erweitert: user, admin, super_admin |
+| `modules` | 046 | Registrierte Module (key, name, description) |
+| `user_modules` | 047 | User ↔ Modul (is_enabled, access_level) |
+| `permissions` | 048 | Erweitert um module_key, Rollen-Tabelle erstellt |
+| `roles` | 048 | Modul-spezifische Rollen (role_key, name, description) |
+| `role_permissions` | 049 | Rolle ↔ Permission Mapping |
+| `user_roles` | 049 | User ↔ Rolle Mapping pro Modul |
+
+### Dateien
+
+| Datei | Zweck |
+|-------|-------|
+| `src/api/admin_modules.py` | AdminModulesAPI (10 Methoden: Module, Rollen, User-Zugriff) |
+| `src/ui/module_admin/module_admin_shell.py` | Generische Shell mit 3 Tabs |
+| `src/ui/module_admin/access_panel.py` | User-Tabelle + Rollen-Zuweisungsdialog |
+| `src/ui/module_admin/roles_panel.py` | Rollen-CRUD + Rechte-Verwaltung |
+| `src/ui/module_admin/config_panel.py` | Einbettung bestehender Admin-Panels |
+| `src/ui/app_router.py` | Modul-Check + Lazy-Init der Module |
+| `api/admin_modules.php` | PHP-Backend (Module, Rollen, User-Module, User-Rollen) |
+| `api/setup/045_extend_account_type.php` | account_type ENUM erweitern |
+| `api/setup/046_create_modules.php` | modules-Tabelle erstellen |
+| `api/setup/047_create_user_modules.php` | user_modules-Tabelle erstellen |
+| `api/setup/048_extend_permissions_create_roles.php` | Rollen + Permissions |
+| `api/setup/049_create_role_permissions_user_roles.php` | Mapping-Tabellen |
+| `api/setup/050_backfill_user_modules.php` | Bestehende User → Core-Modul |
+
+---
+
+## Bekannte TODOs im Code
+
+| Datei | TODO |
+|-------|------|
+| `src/bipro/bipro_connector.py` L.211 | SmartAdmin Transfer-Service implementieren |
+| `src/ui/admin/panels/email_inbox.py` L.320 | API-Call zum Ignorieren |
+| `src/api/smartadmin_auth.py` L.346 | Vollstaendige X.509 WS-Security Implementation |
+| `src/api/smartadmin_auth.py` L.595 | listShipments SOAP-Call implementieren |
+
+---
+
+## Tasks (Roadmap)
+
+### Kurzfristig (naechste Sprints)
+1. **SageHR-Provider realisieren**: Mock durch echte API-Anbindung ersetzen
+2. **HR-Datenmigration**: Bestehende JSON-Daten aus HR-Hub in neue DB-Tabellen migrieren
+3. **SmartAdmin BiPRO**: Transfer-Service fuer SmartAdmin-Anbindung implementieren (TODO im Code)
+4. **E-Mail-Inbox Ignorieren**: API-Call zum Ignorieren von E-Mails im Posteingang
+
+### Mittelfristig
+5. **Dark Mode (Web-Admin-Panel)**: Aktuell nur Light-Theme
+6. **WebSocket-Support**: Polling-basierte Benachrichtigungen durch WebSockets ersetzen
+7. **Release-Upload im Browser**: Aktuell nur per Desktop-Client moeglich
+8. **Cache-Invalidierung (Admin-Panel)**: Automatische Aktualisierung statt manueller Hard-Refresh
+
+### Langfristig
+9. **Weitere BiPRO-Versicherer**: Anbindung weiterer VUs ueber BiPRO-Standard
+10. **X.509 WS-Security**: Vollstaendige Implementation fuer SmartAdmin
+
+---
+
+## Weitere Dokumentation
+
+| Dokument | Beschreibung |
+|----------|-------------|
+| [README.md](README.md) | Projektuebersicht, Features, Quickstart, Changelog |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detaillierte Architektur mit Datenfluss-Diagrammen |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Lokales Setup, Build, Test, Debugging |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Alle Konfigurationsoptionen und Umgebungsvariablen |
+| [docs/DOMAIN.md](docs/DOMAIN.md) | Fachdomaene: Begriffe, Entitaeten, Workflows |
+| `ATLAS_private - Doku - Backend/docs/` | Interne Kern- und Entwickler-Dokumentation (53 Dateien) |

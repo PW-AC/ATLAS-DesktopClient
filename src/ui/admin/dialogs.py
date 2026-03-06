@@ -269,59 +269,56 @@ class ReleaseEditDialog(QDialog):
 
 
 class UserEditDialog(QDialog):
-    """Dialog zum Erstellen/Bearbeiten eines Nutzers."""
-
-    PROVISION_PERM_KEYS: Set[str] = {'provision_access', 'provision_manage'}
+    """Dialog zum Erstellen/Bearbeiten eines Nutzers (v2 mit Modul-Freischaltungen)."""
 
     def __init__(self, parent=None, user_data: Dict = None, is_new: bool = True,
-                 can_manage_provision: bool = False):
+                 auth_api=None, **kwargs):
         super().__init__(parent)
         self._user_data = user_data or {}
         self._is_new = is_new
-        self._can_manage_provision = can_manage_provision
+        self._auth_api = auth_api
+        self._actor_is_super = False
+        if auth_api and auth_api.current_user:
+            self._actor_is_super = auth_api.current_user.is_super_admin
         self.setWindowTitle(texts.ADMIN_USERS_NEW if is_new else texts.ADMIN_USERS_EDIT)
-        self.setMinimumWidth(450)
+        self.setMinimumWidth(500)
         self._setup_ui()
-    
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
-        
+
         form = QFormLayout()
         form.setSpacing(8)
-        
-        # Benutzername
+
         self.username_edit = QLineEdit(self._user_data.get('username', ''))
         self.username_edit.setPlaceholderText(texts.ADMIN_DIALOG_USERNAME)
         if not self._is_new:
             self.username_edit.setReadOnly(True)
             self.username_edit.setStyleSheet("background-color: #f0f0f0;")
         form.addRow(texts.ADMIN_DIALOG_USERNAME + ":", self.username_edit)
-        
-        # E-Mail
+
         self.email_edit = QLineEdit(self._user_data.get('email', ''))
         self.email_edit.setPlaceholderText(texts.ADMIN_DIALOG_EMAIL)
         form.addRow(texts.ADMIN_DIALOG_EMAIL + ":", self.email_edit)
-        
-        # Passwort (nur bei Neuanlage)
+
         if self._is_new:
             self.password_edit = QLineEdit()
             self.password_edit.setPlaceholderText(texts.ADMIN_DIALOG_PASSWORD)
             self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
             form.addRow(texts.ADMIN_DIALOG_PASSWORD + ":", self.password_edit)
-        
-        # Kontotyp
+
         self.type_combo = QComboBox()
-        self.type_combo.addItem(texts.ADMIN_TYPE_USER, 'user')
-        self.type_combo.addItem(texts.ADMIN_TYPE_ADMIN, 'admin')
+        self.type_combo.addItem(texts.ACCOUNT_TYPE_USER, 'user')
+        if self._actor_is_super:
+            self.type_combo.addItem(texts.ACCOUNT_TYPE_ADMIN, 'admin')
+            self.type_combo.addItem(texts.ACCOUNT_TYPE_SUPER_ADMIN, 'super_admin')
         current_type = self._user_data.get('account_type', 'user')
         idx = self.type_combo.findData(current_type)
         if idx >= 0:
             self.type_combo.setCurrentIndex(idx)
-        self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         form.addRow(texts.ADMIN_DIALOG_TYPE + ":", self.type_combo)
-        
-        # Update-Channel
+
         self.channel_combo = QComboBox()
         self.channel_combo.addItem(texts.RELEASES_CHANNEL_STABLE, 'stable')
         self.channel_combo.addItem(texts.RELEASES_CHANNEL_BETA, 'beta')
@@ -331,44 +328,61 @@ class UserEditDialog(QDialog):
         if idx >= 0:
             self.channel_combo.setCurrentIndex(idx)
         form.addRow(texts.ADMIN_DIALOG_UPDATE_CHANNEL + ":", self.channel_combo)
-        
+
         layout.addLayout(form)
-        
-        # Berechtigungen
-        perm_group = QGroupBox(texts.ADMIN_DIALOG_PERMISSIONS)
-        perm_layout = QVBoxLayout(perm_group)
-        perm_layout.setSpacing(4)
-        
-        self._perm_hint = QLabel(texts.ADMIN_DIALOG_PERMISSIONS_HINT)
-        self._perm_hint.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
-        self._perm_hint.setVisible(current_type == 'admin')
-        perm_layout.addWidget(self._perm_hint)
-        
-        current_perms = self._user_data.get('permissions', [])
-        self._perm_checkboxes = {}
-        for perm_key, perm_name in texts.PERMISSION_NAMES.items():
-            is_provision_perm = perm_key in self.PROVISION_PERM_KEYS
-            if is_provision_perm and not self._can_manage_provision:
-                continue
-            cb = QCheckBox(perm_name)
-            cb.setChecked(perm_key in current_perms)
-            if is_provision_perm:
-                cb.setEnabled(True)
-            else:
-                cb.setEnabled(current_type != 'admin')
-            self._perm_checkboxes[perm_key] = cb
-            perm_layout.addWidget(cb)
-        
-        layout.addWidget(perm_group)
-        
-        # Buttons
+
+        modules_group = QGroupBox(texts.USER_MODULES_HEADER)
+        modules_layout = QVBoxLayout(modules_group)
+        modules_layout.setSpacing(6)
+
+        hint = QLabel(texts.MODULE_ENABLE_FIRST)
+        hint.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
+        hint.setWordWrap(True)
+        modules_layout.addWidget(hint)
+
+        self._module_widgets = {}
+        all_modules = [
+            ('core', 'Core'),
+            ('provision', 'Provision'),
+            ('workforce', 'Workforce'),
+            ('system', 'Administration'),
+        ]
+        current_modules = {
+            m.get('module_key'): m
+            for m in self._user_data.get('modules', [])
+        }
+
+        for mod_key, mod_name in all_modules:
+            row = QHBoxLayout()
+            cb = QCheckBox(mod_name)
+            mod_data = current_modules.get(mod_key, {})
+            cb.setChecked(bool(mod_data.get('is_enabled', False)))
+            row.addWidget(cb)
+
+            level_combo = QComboBox()
+            level_combo.addItem(texts.ACCESS_LEVEL_USER, 'user')
+            level_combo.addItem(texts.ACCESS_LEVEL_ADMIN, 'admin')
+            current_level = mod_data.get('access_level', 'user')
+            lvl_idx = level_combo.findData(current_level)
+            if lvl_idx >= 0:
+                level_combo.setCurrentIndex(lvl_idx)
+            if not self._actor_is_super:
+                level_combo.setEnabled(False)
+                level_combo.setToolTip(texts.HIERARCHY_CANNOT_PROMOTE)
+            row.addWidget(level_combo)
+
+            modules_layout.addLayout(row)
+            self._module_widgets[mod_key] = (cb, level_combo)
+
+        layout.addWidget(modules_group)
+
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        
+
         cancel_btn = QPushButton(texts.CANCEL)
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
-        
+
         save_btn = QPushButton(texts.SAVE)
         save_btn.setStyleSheet(f"""
             QPushButton {{
@@ -383,18 +397,9 @@ class UserEditDialog(QDialog):
         """)
         save_btn.clicked.connect(self._on_save)
         btn_layout.addWidget(save_btn)
-        
+
         layout.addLayout(btn_layout)
-    
-    def _on_type_changed(self, index: int):
-        is_admin = self.type_combo.currentData() == 'admin'
-        self._perm_hint.setVisible(is_admin)
-        for perm_key, cb in self._perm_checkboxes.items():
-            if perm_key in self.PROVISION_PERM_KEYS:
-                cb.setEnabled(True)
-            else:
-                cb.setEnabled(not is_admin)
-    
+
     def _on_save(self):
         if self._is_new:
             username = self.username_edit.text().strip()
@@ -408,14 +413,21 @@ class UserEditDialog(QDialog):
                     self.parent()._toast_manager.show_warning(texts.ADMIN_USERS_PW_TOO_SHORT)
                 return
         self.accept()
-    
+
     def get_data(self) -> Dict:
-        """Gibt die eingegebenen Daten zurueck."""
+        modules = []
+        for mod_key, (cb, level_combo) in self._module_widgets.items():
+            modules.append({
+                'module_key': mod_key,
+                'is_enabled': 1 if cb.isChecked() else 0,
+                'access_level': level_combo.currentData(),
+            })
+
         data = {
             'email': self.email_edit.text().strip(),
             'account_type': self.type_combo.currentData(),
             'update_channel': self.channel_combo.currentData(),
-            'permissions': [k for k, cb in self._perm_checkboxes.items() if cb.isChecked()]
+            'modules': modules,
         }
         if self._is_new:
             data['username'] = self.username_edit.text().strip()
