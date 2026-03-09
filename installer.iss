@@ -23,6 +23,7 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+UsePreviousGroup=no
 LicenseFile=LICENSE.txt
 OutputDir=Output
 OutputBaseFilename=ACENCIA-ATLAS-Setup
@@ -57,6 +58,13 @@ Source: "dist\ACENCIA-ATLAS\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignorever
 Source: "dist\ACENCIA-ATLAS\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "src\ui\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
+
+[InstallDelete]
+; Legacy-Migration: Alte "BiPRO-GDV Tool" Startmenü-Verknüpfungen entfernen
+Type: files; Name: "{userprograms}\BiPRO-GDV Tool\*.lnk"
+Type: dirifempty; Name: "{userprograms}\BiPRO-GDV Tool"
+Type: files; Name: "{commonprograms}\BiPRO-GDV Tool\*.lnk"
+Type: dirifempty; Name: "{commonprograms}\BiPRO-GDV Tool"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"
