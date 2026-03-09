@@ -169,6 +169,8 @@ class StatsView(QWidget):
                 self._employer_combo.addItem(emp.get('name', '?'), emp.get('id'))
         except Exception as e:
             logger.error(f"Fehler beim Laden der Arbeitgeber: {e}")
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.WF_STATS_EMPLOYER_LOAD_ERROR)
 
     def _on_employer_changed(self, _index: int):
         self._clear_results()
@@ -580,5 +582,13 @@ class StatsView(QWidget):
                 self._toast_manager.show_error(f"{texts.WF_STATS_EXPORT_ERROR}: {e}")
 
     def refresh(self):
+        prev_employer_id = self._employer_combo.currentData()
+        self._employer_combo.blockSignals(True)
         self._load_employers()
-        self._clear_results()
+
+        if prev_employer_id is not None:
+            for i in range(self._employer_combo.count()):
+                if self._employer_combo.itemData(i) == prev_employer_id:
+                    self._employer_combo.setCurrentIndex(i)
+                    break
+        self._employer_combo.blockSignals(False)

@@ -396,6 +396,9 @@ class WorkforceHub(QWidget):
         self._fingerprint_check_running = False
         if not fingerprint:
             return
+        if not self._last_data_fingerprint:
+            self._last_data_fingerprint = fingerprint
+            return
         if fingerprint != self._last_data_fingerprint:
             self._last_data_fingerprint = fingerprint
             self._refresh_all(show_toast=False)
