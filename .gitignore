@@ -129,6 +129,9 @@ neuer API KEY/
 .env
 .env.*
 
+# Dev-Auth: Privater Schluessel (niemals committen)
+dev_keys/
+
 # Test-Reports (enthalten Systeminfos)
 smoke_test_report*.json
 provision_test_report*.json

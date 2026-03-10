@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .client import APIClient, APIError
 from config.server_config import CONTROL_API_URL, API_VERIFY_SSL
+from config.runtime import is_dev_mode
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +250,7 @@ class AuthAPI:
                 user_data = data.get('user', {})
                 self._current_user = _build_user(user_data)
 
-            if remember:
+            if remember and not is_dev_mode():
                 self._save_token(token, self._serialize_user(self._current_user))
 
             logger.info(f"Login erfolgreich (Control Plane, auto-select): {username} -> {selected.tenant_key}")
@@ -313,7 +314,7 @@ class AuthAPI:
         if user_info:
             self._current_user = _build_user(user_info)
 
-        if remember and self._current_user:
+        if remember and self._current_user and not is_dev_mode():
             self._save_token(token, self._serialize_user(self._current_user))
 
         logger.info(f"Universe ausgewaehlt: {selected.tenant_key}")
@@ -374,7 +375,7 @@ class AuthAPI:
                 else:
                     self._extract_tenant_from_token(token)
 
-                if remember:
+                if remember and not is_dev_mode():
                     self._save_token(token, user_data)
 
                 logger.info(f"Login erfolgreich (Legacy): {username}")
@@ -435,8 +436,9 @@ class AuthAPI:
         self.client.clear_token()
         self._current_user = None
         
-        # Gespeicherten Token löschen
-        self._delete_saved_token()
+        # Gespeicherten Token löschen (nur EXE: Im Dev-Modus EXE-Token unberuehrt lassen)
+        if not is_dev_mode():
+            self._delete_saved_token()
         
         logger.info("Logout erfolgreich")
         return True
@@ -477,9 +479,14 @@ class AuthAPI:
         BUG-0014 Fix: Token wird erst nach erfolgreicher Validierung
         persistent gesetzt. Vorheriger Token wird bei Fehler zurueckgerollt.
         
+        Im Dev-Modus: Kein Auto-Login, EXE-Token bleibt unberuehrt.
+        
         Returns:
             AuthState
         """
+        if is_dev_mode():
+            logger.debug("Dev-Modus: Auto-Login uebersprungen (EXE-Token wird nicht gelesen)")
+            return AuthState(is_authenticated=False)
         saved = self._load_saved_token()
         if not saved:
             return AuthState(is_authenticated=False)
@@ -531,7 +538,9 @@ class AuthAPI:
             True wenn Token erfolgreich erneuert
         """
         logger.info("Versuche automatische Re-Authentifizierung...")
-        
+        if is_dev_mode():
+            logger.debug("Dev-Modus: Re-Authentifizierung uebersprungen (EXE-Token wird nicht gelesen)")
+            return False
         saved = self._load_saved_token()
         if not saved:
             logger.warning("Kein gespeicherter Token vorhanden")
@@ -627,7 +636,11 @@ class AuthAPI:
         SV-005 Fix: Speichert Token lokal mit OS-Schutz.
         Nutzt keyring (Windows Credential Manager/DPAPI) wenn verfuegbar,
         sonst Datei mit restriktiven Permissions.
+        Im Dev-Modus: Kein Speichern, EXE-Token bleibt unberuehrt.
         """
+        if is_dev_mode():
+            logger.debug("Dev-Modus: Token wird nicht gespeichert (EXE-Token bleibt unberuehrt)")
+            return
         data_json = json.dumps({'token': token, 'user': user_data})
         
         # Versuch 1: keyring (bevorzugt, DPAPI-geschuetzt)
@@ -655,7 +668,10 @@ class AuthAPI:
     def _load_saved_token(self) -> Optional[Dict]:
         """
         SV-005 Fix: Laedt Token aus keyring oder Datei.
+        Im Dev-Modus: Kein Lesen, EXE-Token bleibt unberuehrt.
         """
+        if is_dev_mode():
+            return None
         # Versuch 1: keyring
         try:
             import keyring
@@ -676,7 +692,10 @@ class AuthAPI:
     def _delete_saved_token(self) -> None:
         """
         SV-005 Fix: Loescht Token aus keyring und Datei.
+        Im Dev-Modus: Kein Loeschen, EXE-Token bleibt unberuehrt.
         """
+        if is_dev_mode():
+            return
         # keyring aufraeumen
         try:
             import keyring

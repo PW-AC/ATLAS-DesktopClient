@@ -183,7 +183,21 @@ class LoginDialog(QDialog):
             self.login_button.setEnabled(True)
             self.username_input.setFocus()
             
-            # Auto-Login versuchen
+            from config.runtime import is_dev_mode
+            if is_dev_mode():
+                from dev_auth import try_dev_login
+                state = try_dev_login(self.client, self.auth_api)
+                if state:
+                    if state.is_authenticated:
+                        self.status_label.setText(f"Dev-Auth: Angemeldet als {state.user.username}")
+                        self.status_label.setStyleSheet("color: green;")
+                        self.accept()
+                        return
+                    if state.tenants:
+                        self.status_label.setText("Dev-Auth: Universe auswaehlen...")
+                        self.status_label.setStyleSheet("color: #2563eb;")
+                        self._show_universe_selector(state)
+                        return
             self._try_auto_login()
         else:
             self.status_label.setText("Server nicht erreichbar")

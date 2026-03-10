@@ -17,6 +17,7 @@ from .smartadmin_endpoints import (
 from .server_config import (
     API_BASE_URL, API_VERIFY_SSL, SERVER_LABEL, IS_DEV, USE_DEV_SERVER
 )
+from .runtime import is_dev_mode
 
 __all__ = [
     'PROCESSING_RULES',
@@ -30,4 +31,6 @@ __all__ = [
     'get_easylogin_companies',
     # Server-Konfiguration
     'API_BASE_URL', 'API_VERIFY_SSL', 'SERVER_LABEL', 'IS_DEV', 'USE_DEV_SERVER',
+    # Laufzeit
+    'is_dev_mode',
 ]

@@ -54,6 +54,8 @@ from infrastructure.threading.provision_workers import (
     # Xempus Insight
     EmployerLoadWorker,
     EmployerDetailWorker,
+    EmployeePageLoadWorker,
+    EmployeeDetailWorker,
     XempusStatsLoadWorker,
     XempusBatchesLoadWorker,
     XempusImportWorker,

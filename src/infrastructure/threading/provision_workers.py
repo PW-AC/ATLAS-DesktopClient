@@ -814,6 +814,49 @@ class XempusStatsLoadWorker(QThread):
             self.error.emit(str(e))
 
 
+class EmployeePageLoadWorker(QThread):
+    """Laedt eine einzelne Seite von Mitarbeitern (serverseitige Pagination)."""
+    finished = Signal(list, dict)
+    error = Signal(str)
+
+    def __init__(self, api, page: int = 1, per_page: int = 48,
+                 employer_id: str = None, q: str = None):
+        super().__init__()
+        self._api = api
+        self._page = page
+        self._per_page = per_page
+        self._employer_id = employer_id
+        self._q = q
+
+    def run(self):
+        try:
+            employees, pagination = self._api.get_employees(
+                employer_id=self._employer_id, q=self._q,
+                page=self._page, per_page=self._per_page)
+            if not isinstance(pagination, dict):
+                pagination = {}
+            self.finished.emit(employees or [], pagination)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class EmployeeDetailWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, api, employee_id: str):
+        super().__init__()
+        self._api = api
+        self._employee_id = employee_id
+
+    def run(self):
+        try:
+            detail = self._api.get_employee_detail(self._employee_id)
+            self.finished.emit(detail)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class XempusBatchesLoadWorker(QThread):
     finished = Signal(list)
     error = Signal(str)

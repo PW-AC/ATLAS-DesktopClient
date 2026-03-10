@@ -353,10 +353,17 @@ class UserEditDialog(QDialog):
                 {'module_key': 'workforce', 'name': 'Workforce', 'roles': []},
                 {'module_key': 'system', 'name': 'Administration', 'roles': []},
             ]
-        current_modules = {
-            m.get('module_key'): m
-            for m in self._user_data.get('modules', [])
-        }
+        # Backend liefert modules und roles getrennt; Dialog braucht roles pro Modul
+        current_modules = {}
+        for m in self._user_data.get('modules', []):
+            mod_key = m.get('module_key', '')
+            current_modules[mod_key] = {**m, 'roles': []}
+        for r in self._user_data.get('roles', []):
+            mod_key = r.get('module_key', '')
+            if mod_key in current_modules:
+                current_modules[mod_key]['roles'].append({
+                    'id': r.get('role_id') or r.get('id'),
+                })
 
         for mod in all_modules:
             mod_key = mod.get('module_key', '')

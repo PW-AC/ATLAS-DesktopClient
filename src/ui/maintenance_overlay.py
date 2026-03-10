@@ -276,7 +276,7 @@ class MaintenanceOverlay(QWidget):
 
     def _on_status_received(self, status: str, message: str):
         from api.system_status import has_access
-        from main import is_dev_mode
+        from config.runtime import is_dev_mode
 
         if has_access(status, self._user.is_admin, is_dev_mode()):
             self.hide_overlay()
@@ -395,7 +395,7 @@ class MaintenanceWindow(QMainWindow):
 
     def _on_status_received(self, status: str, message: str):
         from api.system_status import has_access
-        from main import is_dev_mode
+        from config.runtime import is_dev_mode
 
         if has_access(status, self._user.is_admin, is_dev_mode()):
             self._recheck_timer.stop()

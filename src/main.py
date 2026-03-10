@@ -58,10 +58,7 @@ def _read_app_version() -> str:
     return "0.0.0"  # Fallback
 
 
-def is_dev_mode() -> bool:
-    """Erkennt ob die App im Entwicklungsmodus laeuft (python run.py statt EXE)."""
-    return not getattr(sys, 'frozen', False)
-
+from config.runtime import is_dev_mode
 
 APP_VERSION = _read_app_version()
 
@@ -296,8 +293,10 @@ def main():
 
     app = _OpaquePopupApp(sys.argv)
 
-    # Single-Instance Check
-    if not _acquire_single_instance():
+    # Single-Instance Check (nur wenn nicht im Dev-Modus – wie beim Update-Check)
+    if is_dev_mode():
+        logger.info("Dev-Modus erkannt (python run.py) - Single-Instance-Check uebersprungen")
+    elif not _acquire_single_instance():
         from i18n import de as _texts
         QMessageBox.warning(
             None,
