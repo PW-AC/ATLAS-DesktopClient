@@ -626,9 +626,9 @@ class MailImportWorker(QThread):
             docs_api = self._thread_apis[tid]
 
             if box_type:
-                doc = docs_api.upload(file_path, 'imap_import', box_type=box_type)
+                doc = docs_api.upload(file_path, 'mail', box_type=box_type)
             else:
-                doc = docs_api.upload(file_path, 'imap_import')
+                doc = docs_api.upload(file_path, 'mail')
             if doc:
                 # Fruehe Text-Extraktion fuer Inhaltsduplikat-Erkennung
                 if box_type != 'roh':

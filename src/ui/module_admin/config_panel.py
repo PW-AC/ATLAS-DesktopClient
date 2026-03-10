@@ -95,6 +95,13 @@ class ModuleConfigPanel(QWidget):
         if self._nav_buttons:
             self._navigate_to(0)
 
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name == '_toast_manager':
+            for p in getattr(self, '_panels', []):
+                if p is not None:
+                    p._toast_manager = value
+
     def _navigate_to(self, index: int):
         for i, btn in enumerate(self._nav_buttons):
             btn.setChecked(i == index)

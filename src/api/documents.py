@@ -77,7 +77,7 @@ class Document:
     original_filename: str
     mime_type: Optional[str]
     file_size: int
-    source_type: str  # 'bipro_auto', 'manual_upload', 'self_created', 'scan'
+    source_type: str  # 'bipro_auto', 'manual_upload', 'self_created', 'scan', 'mail'
     is_gdv: bool
     created_at: str
     uploaded_by_name: Optional[str] = None
@@ -237,7 +237,8 @@ class Document:
         mapping = {
             'manual_upload': 'Manuell',
             'self_created': 'Selbst erstellt',
-            'scan': 'Scan'
+            'scan': 'Scan',
+            'mail': 'Mail',
         }
         return mapping.get(source, source)
     

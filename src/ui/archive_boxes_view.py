@@ -595,6 +595,7 @@ class ArchiveBoxesView(QWidget):
         self.source_filter.addItem("BiPRO", "bipro_auto")
         self.source_filter.addItem("Manuell", "manual_upload")
         self.source_filter.addItem("Scan", "scan")
+        self.source_filter.addItem("Mail", "mail")
         self.source_filter.currentIndexChanged.connect(self._apply_filter)
         filter_layout.addWidget(self.source_filter)
         

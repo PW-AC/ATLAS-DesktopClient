@@ -307,7 +307,9 @@ class ArchiveView(QWidget):
             elif doc.source_type == 'self_created':
                 source_item.setForeground(QColor("#4CAF50"))
             elif doc.source_type == 'scan':
-                source_item.setForeground(QColor("#9C27B0"))  # Lila fuer Scan
+                source_item.setForeground(QColor("#9C27B0"))
+            elif doc.source_type == 'mail':
+                source_item.setForeground(QColor("#FF9800"))
             self.table.setItem(row, 2, source_item)
             
             # GDV

@@ -577,6 +577,11 @@ class EmailAccountDialog(QDialog):
         self._imap_enc.addItem(texts.EMAIL_ACCOUNT_ENCRYPTION_NONE, "none")
         layout.addRow(texts.EMAIL_ACCOUNT_ENCRYPTION + " (IMAP)", self._imap_enc)
         
+        # E-Mail-Adresse (Konto-Adresse, unabhaengig vom Login)
+        self._email_address = QLineEdit()
+        self._email_address.setPlaceholderText("info@firma.de")
+        layout.addRow(texts.EMAIL_ACCOUNT_EMAIL_ADDRESS, self._email_address)
+        
         # Credentials
         self._username = QLineEdit()
         self._username.setPlaceholderText("user@web.de")
@@ -634,6 +639,7 @@ class EmailAccountDialog(QDialog):
             ienc_idx = self._imap_enc.findData(imap_enc)
             if ienc_idx >= 0:
                 self._imap_enc.setCurrentIndex(ienc_idx)
+            self._email_address.setText(self._existing.get('email_address', '') or '')
             self._username.setText(self._existing.get('username', '') or '')
             self._from_address.setText(self._existing.get('from_address', '') or '')
             self._from_name.setText(self._existing.get('from_name', '') or '')
@@ -654,7 +660,8 @@ class EmailAccountDialog(QDialog):
     
     def get_data(self) -> Dict:
         """Gibt die eingegebenen Daten zurueck."""
-        email_address = self._username.text().strip()
+        email_address = self._email_address.text().strip()
+        username = self._username.text().strip() or email_address
         data = {
             'account_name': self._name.text().strip(),
             'email_address': email_address,
@@ -665,7 +672,7 @@ class EmailAccountDialog(QDialog):
             'imap_host': self._imap_host.text().strip(),
             'imap_port': self._imap_port.value(),
             'imap_encryption': self._imap_enc.currentData(),
-            'username': email_address,
+            'username': username,
             'from_address': self._from_address.text().strip() or email_address,
             'from_name': self._from_name.text().strip(),
         }

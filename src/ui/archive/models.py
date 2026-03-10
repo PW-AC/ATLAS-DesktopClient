@@ -145,6 +145,8 @@ class DocumentTableModel(QAbstractTableModel):
                     return QColor(INFO)
                 elif doc.source_type == 'scan':
                     return QColor("#9C27B0")
+                elif doc.source_type == 'mail':
+                    return QColor("#FF9800")
             elif col == self.COL_TYPE:
                 ft = self._get_file_type(doc)
                 if ft == "GDV":

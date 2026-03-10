@@ -219,18 +219,34 @@ class EmailAccountsPanel(QWidget):
                 self._toast_manager.show_error(texts.EMAIL_ACCOUNT_ERROR_SAVE.format(error=str(e)))
 
     def _test_email_account(self):
-        """SMTP-Verbindung testen."""
+        """SMTP-Verbindung testen (asynchron via Worker-Thread)."""
         selected = self._ea_table.currentRow()
         if selected < 0 or selected >= len(self._ea_data):
             self._toast_manager.show_info(texts.EMAIL_ACCOUNT_NONE)
             return
         acc = self._ea_data[selected]
         self._toast_manager.show_info(texts.EMAIL_ACCOUNT_TEST_RUNNING)
-        try:
-            result = self._email_accounts_api.test_connection(acc['id'])
-            if result and result.get('test_result') == 'success':
-                self._toast_manager.show_success(texts.EMAIL_ACCOUNT_TEST_SUCCESS)
-            else:
-                self._toast_manager.show_error(texts.EMAIL_ACCOUNT_TEST_FAILED.format(error=result.get('message', 'Unbekannt')))
-        except Exception as e:
-            self._toast_manager.show_error(texts.EMAIL_ACCOUNT_TEST_FAILED.format(error=str(e)))
+
+        worker = AdminWriteWorker(
+            self._email_accounts_api.test_connection, acc['id']
+        )
+        worker.finished.connect(self._on_test_finished)
+        worker.error.connect(self._on_test_error)
+        self._active_workers.append(worker)
+        worker.start()
+
+    def _on_test_finished(self, result):
+        """Callback wenn SMTP-Test abgeschlossen."""
+        if result and result.get('test_result') == 'success':
+            self._toast_manager.show_success(texts.EMAIL_ACCOUNT_TEST_SUCCESS)
+        else:
+            msg = result.get('message', 'Unbekannt') if result else 'Unbekannt'
+            self._toast_manager.show_error(
+                texts.EMAIL_ACCOUNT_TEST_FAILED.format(error=msg)
+            )
+
+    def _on_test_error(self, error_msg: str):
+        """Callback wenn SMTP-Test fehlschlaegt."""
+        self._toast_manager.show_error(
+            texts.EMAIL_ACCOUNT_TEST_FAILED.format(error=error_msg)
+        )

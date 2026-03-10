@@ -114,6 +114,14 @@ class ModuleAdminShell(QWidget):
         self._tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self._tabs)
 
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name == '_toast_manager' and hasattr(self, '_tabs'):
+            for i in range(self._tabs.count()):
+                w = self._tabs.widget(i)
+                if w is not None:
+                    w._toast_manager = value
+
     def _on_tab_changed(self, index: int):
         w = self._tabs.widget(index)
         if hasattr(w, 'load_data'):
