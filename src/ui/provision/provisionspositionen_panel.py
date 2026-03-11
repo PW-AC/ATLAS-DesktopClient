@@ -22,7 +22,7 @@ import calendar
 from api.provision import ProvisionAPI
 from domain.provision.entities import Commission, Employee, ContractSearchResult, PaginationInfo
 from ui.styles.tokens import (
-    PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
+    PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_HOVER,
     BG_PRIMARY, BG_SECONDARY, BG_TERTIARY, BORDER_DEFAULT,
     SUCCESS, ERROR, WARNING,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -405,7 +405,7 @@ class ProvisionspositionenPanel(QWidget):
         self._det_btn_assign.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 8px 16px; font-weight: 500; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
         self._det_btn_assign.clicked.connect(self._on_detail_assign)
         self._detail_layout.addWidget(self._det_btn_assign)

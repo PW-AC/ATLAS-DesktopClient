@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QMimeData
 from PySide6.QtGui import QDrag, QFont, QColor, QPainter
 
 from ui.archive.models import DocumentTableModel
+from ui.styles.tokens import PRIMARY_900, TEXT_INVERSE
 
 __all__ = ['DraggableDocumentView']
 
@@ -115,9 +116,9 @@ class DraggableDocumentView(QTableView):
         from PySide6.QtGui import QPixmap
         
         pixmap = QPixmap(140, 32)
-        pixmap.fill(QColor("#1a1a2e"))
+        pixmap.fill(QColor(PRIMARY_900))
         painter = QPainter(pixmap)
-        painter.setPen(QColor("#ffffff"))
+        painter.setPen(QColor(TEXT_INVERSE))
         painter.setFont(QFont("Segoe UI", 10))
         text = f"{count} Dokument{'e' if count > 1 else ''}"
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)

@@ -22,6 +22,7 @@ from ui.styles.tokens import (
     SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_WIDTH_INT,
     ACCENT_500, PRIMARY_500, PRIMARY_0, PRIMARY_900,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
+    BORDER_SUBTLE,
 )
 from i18n import de as texts
 
@@ -158,7 +159,7 @@ class ContactHub(QWidget):
         sidebar.setStyleSheet(f"""
             QFrame#contact_sidebar {{
                 background-color: {SIDEBAR_BG};
-                border-right: 1px solid rgba(136, 169, 195, 0.15);
+                border-right: 1px solid {BORDER_SUBTLE};
             }}
         """)
 
@@ -173,7 +174,7 @@ class ContactHub(QWidget):
             QPushButton {{
                 background-color: transparent;
                 border: none;
-                border-bottom: 1px solid rgba(136, 169, 195, 0.15);
+                border-bottom: 1px solid {BORDER_SUBTLE};
                 padding: 10px 16px;
                 text-align: left;
                 font-family: {FONT_BODY};
@@ -245,7 +246,7 @@ class ContactHub(QWidget):
             QPushButton {{
                 background-color: transparent;
                 border: none;
-                border-top: 1px solid rgba(136, 169, 195, 0.15);
+                border-top: 1px solid {BORDER_SUBTLE};
                 padding: 10px 16px;
                 text-align: left;
                 font-family: {FONT_BODY};

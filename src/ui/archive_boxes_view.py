@@ -39,14 +39,14 @@ logger = logging.getLogger(__name__)
 from ui.styles.tokens import (
     PRIMARY_900, PRIMARY_500, PRIMARY_100, PRIMARY_0,
     ACCENT_500, ACCENT_100,
-    TEXT_PRIMARY, TEXT_SECONDARY,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_INVERSE,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
-    SUCCESS, WARNING, ERROR, INFO,
+    SUCCESS, SUCCESS_LIGHT, WARNING, ERROR, INFO,
     FONT_HEADLINE, FONT_BODY, FONT_MONO,
     FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD, SPACING_SM, SPACING_MD,
     get_button_primary_style, get_button_secondary_style, get_button_ghost_style,
-    DOCUMENT_DISPLAY_COLORS
+    DOCUMENT_DISPLAY_COLORS, NEUTRAL_BORDER,
 )
 
 from api.client import APIClient
@@ -639,8 +639,8 @@ class ArchiveBoxesView(QWidget):
         self._smartscan_btn.setFixedHeight(30)
         self._smartscan_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: #4CAF50;
-                color: white;
+                background-color: {SUCCESS};
+                color: {TEXT_INVERSE};
                 border: none;
                 border-radius: 4px;
                 padding: 4px 14px;
@@ -648,14 +648,14 @@ class ArchiveBoxesView(QWidget):
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background-color: #43A047;
+                background-color: {SUCCESS};
             }}
             QPushButton:pressed {{
-                background-color: #388E3C;
+                background-color: {SUCCESS};
             }}
             QPushButton:disabled {{
-                background-color: #A5D6A7;
-                color: #E8F5E9;
+                background-color: {SUCCESS_LIGHT};
+                color: {SUCCESS_LIGHT};
             }}
         """)
         self._smartscan_btn.clicked.connect(self._on_smartscan_btn_clicked)
@@ -1400,7 +1400,7 @@ class ArchiveBoxesView(QWidget):
         }
         
         for color_key, color_label in color_labels.items():
-            hex_color = DOCUMENT_DISPLAY_COLORS.get(color_key, '#ffffff')
+            hex_color = DOCUMENT_DISPLAY_COLORS.get(color_key, BG_PRIMARY)
             color_action = QAction(f"\u25cf  {color_label}", self)
             color_action.setData(color_key)
             # Farbigen Punkt als Icon-Ersatz via Stylesheet nicht moeglich,
@@ -1784,7 +1784,7 @@ class ArchiveBoxesView(QWidget):
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setBrush(QBrush(QColor(hex_color)))
-        painter.setPen(QColor("#999999"))
+        painter.setPen(QColor(NEUTRAL_BORDER))
         painter.drawEllipse(2, 2, 12, 12)
         painter.end()
         return QIcon(pixmap)

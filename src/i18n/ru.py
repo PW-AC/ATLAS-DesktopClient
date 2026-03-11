@@ -65,6 +65,11 @@ SETTINGS_FONT_CLASSIC = "Классический"
 SETTINGS_FONT_CLASSIC_FONTS = "Tenor Sans & Open Sans"
 SETTINGS_RESTART_HINT = "Изменения вступят в силу при следующем запуске приложения."
 SETTINGS_LANGUAGE_SECTION = "Язык"
+SETTINGS_THEME_SECTION = "Цветовая схема"
+SETTINGS_THEME_LIGHT = "Светлая"
+SETTINGS_THEME_LIGHT_DESC = "Светлый фон, тёмный текст"
+SETTINGS_THEME_DARK = "Тёмная"
+SETTINGS_THEME_DARK_DESC = "Тёмный фон, светлый текст"
 
 # === Настройки ===
 SETTINGS_TITLE = "Настройки"

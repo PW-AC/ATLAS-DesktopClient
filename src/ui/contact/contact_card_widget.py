@@ -17,29 +17,31 @@ from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION, FONT_SIZE_H2,
     BG_PRIMARY, BORDER_DEFAULT, RADIUS_XL, FONT_WEIGHT_BOLD,
+    INFO_LIGHT, VIOLET, BLUE_BRIGHT, ERROR_LIGHT, ERROR,
+    WARNING_LIGHT, TEXT_DISABLED, SUCCESS, TEXT_INVERSE,
 )
 from i18n import de as texts
 
 _CONTACT_TYPE_STYLE = {
     'person': {
-        'bg': '#F3E5F5', 'accent': '#9C27B0',
+        'bg': INFO_LIGHT, 'accent': VIOLET,
         'icon': texts.CONTACT_CARD_ICON_PERSON, 'badge': texts.CONTACT_TYPE_PERSON,
     },
     'employee': {
-        'bg': '#E3F2FD', 'accent': '#1976D2',
+        'bg': INFO_LIGHT, 'accent': BLUE_BRIGHT,
         'icon': texts.CONTACT_CARD_ICON_EMPLOYEE, 'badge': texts.CONTACT_TYPE_EMPLOYEE,
     },
     'asp': {
-        'bg': '#FFEBEE', 'accent': '#D32F2F',
+        'bg': ERROR_LIGHT, 'accent': ERROR,
         'icon': texts.CONTACT_CARD_ICON_ASP, 'badge': texts.CONTACT_TYPE_ASP,
     },
     'temporary': {
-        'bg': '#FFF8E1', 'accent': '#F9A825',
+        'bg': WARNING_LIGHT, 'accent': ACCENT_500,
         'icon': texts.CONTACT_CARD_ICON_TEMPORARY, 'badge': texts.CONTACT_TYPE_TEMPORARY,
     },
 }
 _DEFAULT_TYPE_STYLE = {
-    'bg': '#FFFFFF', 'accent': '#9E9E9E',
+    'bg': BG_PRIMARY, 'accent': TEXT_DISABLED,
     'icon': texts.CONTACT_CARD_ICON_OTHER, 'badge': texts.CONTACT_TYPE_OTHER,
 }
 
@@ -233,7 +235,7 @@ class ContactCard(QFrame):
         badge = QLabel(ts['badge'])
         badge.setStyleSheet(f"""
             background-color: {ts['accent']};
-            color: white;
+            color: {TEXT_INVERSE};
             padding: 1px 8px;
             border-radius: 4px;
             font-size: {FONT_SIZE_CAPTION};
@@ -270,9 +272,9 @@ class ContactCard(QFrame):
             call_btn.setFixedSize(28, 28)
             call_btn.setCursor(Qt.PointingHandCursor)
             call_btn.setStyleSheet(
-                "QPushButton { background-color: #4CAF50; border: none; border-radius: 14px; "
-                "font-size: 13pt; color: white; padding: 0; } "
-                "QPushButton:hover { background-color: #388E3C; }"
+                f"QPushButton {{ background-color: {SUCCESS}; border: none; border-radius: 14px; "
+                f"font-size: 13pt; color: {TEXT_INVERSE}; padding: 0; }} "
+                f"QPushButton:hover {{ background-color: {SUCCESS}; }}"
             )
             teams_number = _phone_for_teams(phone)
             call_btn.clicked.connect(lambda _, n=teams_number: call_with_teams(n))
@@ -328,7 +330,7 @@ class ContactCard(QFrame):
                 font-family: {FONT_BODY};
                 font-size: {FONT_SIZE_BODY};
                 font-weight: {FONT_WEIGHT_BOLD};
-                color: #D32F2F;
+                color: {ERROR};
             """)
             cb_lbl.setWordWrap(True)
             layout.addWidget(cb_lbl)

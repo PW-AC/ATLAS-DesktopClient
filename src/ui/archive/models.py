@@ -16,7 +16,11 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QFont, QColor, QBrush, QPainter
 
 from api.documents import Document, BOX_DISPLAY_NAMES, BOX_COLORS
-from ui.styles.tokens import SUCCESS, ERROR, INFO, DOCUMENT_DISPLAY_COLORS
+from ui.styles.tokens import (
+    SUCCESS, ERROR, INFO, DOCUMENT_DISPLAY_COLORS,
+    DUPLICATE_FILE, DUPLICATE_CONTENT, STATUS_SCAN, STATUS_MAIL,
+    TEXT_DISABLED, TEXT_SECONDARY,
+)
 from utils.date_utils import format_date_german
 
 
@@ -130,23 +134,23 @@ class DocumentTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.ForegroundRole:
             if col == self.COL_DUPLICATE:
                 if doc.is_duplicate:
-                    return QColor("#f59e0b")  # Amber: Datei-Duplikat
+                    return QColor(DUPLICATE_FILE)     # Amber: Datei-Duplikat
                 elif doc.is_content_duplicate:
-                    return QColor("#6366f1")  # Indigo: Inhaltsduplikat
+                    return QColor(DUPLICATE_CONTENT)  # Indigo: Inhaltsduplikat
             elif col == self.COL_EMPTY_PAGES:
                 if doc.is_completely_empty:
-                    return QColor("#dc2626")  # Rot: komplett leer
+                    return QColor(ERROR)              # Rot: komplett leer
                 elif doc.has_empty_pages:
-                    return QColor("#f59e0b")  # Orange: teilweise leer
+                    return QColor(DUPLICATE_FILE)     # Orange: teilweise leer
             elif col == self.COL_BOX:
                 return QColor(doc.box_color)
             elif col == self.COL_SOURCE:
                 if doc.source_type == 'bipro_auto':
                     return QColor(INFO)
                 elif doc.source_type == 'scan':
-                    return QColor("#9C27B0")
+                    return QColor(STATUS_SCAN)
                 elif doc.source_type == 'mail':
-                    return QColor("#FF9800")
+                    return QColor(STATUS_MAIL)
             elif col == self.COL_TYPE:
                 ft = self._get_file_type(doc)
                 if ft == "GDV":
@@ -306,12 +310,12 @@ class DocumentTableModel(QAbstractTableModel):
         meta_line = " &nbsp;|&nbsp; ".join(meta_parts) if meta_parts else ''
 
         html = f"""<div style="padding: 4px;">
-<div style="color: #9E9E9E; font-size: 11px; margin-bottom: 2px;">{escape(label)}</div>
+<div style="color: {TEXT_DISABLED}; font-size: 11px; margin-bottom: 2px;">{escape(label)}</div>
 <div style="font-weight: bold; font-size: 12px; margin-bottom: 3px;">{escape(filename)}</div>"""
         if meta_line:
-            html += f'\n<div style="color: #757575; font-size: 11px;">{meta_line}</div>'
+            html += f'\n<div style="color: {TEXT_SECONDARY}; font-size: 11px;">{meta_line}</div>'
         if doc_id:
-            html += f'\n<div style="color: #BDBDBD; font-size: 10px; margin-top: 2px;">ID: {doc_id}</div>'
+            html += f'\n<div style="color: {TEXT_DISABLED}; font-size: 10px; margin-top: 2px;">ID: {doc_id}</div>'
         html += '\n</div>'
         return html
 

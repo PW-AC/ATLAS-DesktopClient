@@ -112,12 +112,6 @@ if _src_dir not in sys.path:
 
 from PySide6.QtCore import QObject, Signal as QtSignal
 
-from ui.login_dialog import LoginDialog
-from ui.app_router import AppRouter
-from ui.styles.tokens import get_application_stylesheet
-from i18n import de as texts
-
-
 class ForcedLogoutHandler(QObject):
     """
     Vermittler fuer erzwungenen Logout aus beliebigen Threads.
@@ -143,22 +137,20 @@ class ForcedLogoutHandler(QObject):
     
     def _do_forced_logout(self, reason: str) -> None:
         """Wird im Main-Thread ausgefuehrt."""
+        from i18n import de as _texts
         logger.warning(f"Erzwungener Logout durchgefuehrt: {reason}")
         
-        # Auth-State bereinigen
         try:
             self._auth_api.logout()
         except Exception:
             pass
         
-        # Meldung anzeigen
         QMessageBox.warning(
             self._window,
-            texts.FORCED_LOGOUT_TITLE,
-            texts.FORCED_LOGOUT_MESSAGE
+            _texts.FORCED_LOGOUT_TITLE,
+            _texts.FORCED_LOGOUT_MESSAGE
         )
         
-        # Fenster schliessen
         self._window.close()
 
 
@@ -267,7 +259,9 @@ def release_single_instance_mutex():
 class _OpaquePopupApp(QApplication):
     """QApplication-Subklasse die opake Popups auf Windows erzwingt."""
 
-    _WHITE = QColor(255, 255, 255)
+    def _popup_bg(self) -> QColor:
+        from ui.styles.tokens import BG_PRIMARY
+        return QColor(BG_PRIMARY)
 
     def notify(self, obj, event):
         etype = event.type()
@@ -279,9 +273,10 @@ class _OpaquePopupApp(QApplication):
                 obj.setAttribute(Qt.WA_TranslucentBackground, False)
                 obj.setAttribute(Qt.WA_NoSystemBackground, False)
                 obj.setAutoFillBackground(True)
+                bg = self._popup_bg()
                 pal = obj.palette()
-                pal.setColor(QPalette.Window, self._WHITE)
-                pal.setColor(QPalette.Base, self._WHITE)
+                pal.setColor(QPalette.Window, bg)
+                pal.setColor(QPalette.Base, bg)
                 obj.setPalette(pal)
         return super().notify(obj, event)
 
@@ -321,13 +316,17 @@ def main():
     if loaded_fonts:
         logger.debug(f"Eingebettete Schriftarten: {', '.join(set(loaded_fonts))}")
 
-    # Font-Preset aus lokalen Einstellungen laden
+    # Font-Preset und Theme aus lokalen Einstellungen laden
     from PySide6.QtCore import QSettings
     import ui.styles.tokens as _tok
     _local = QSettings("ACENCIA GmbH", "ACENCIA ATLAS")
     _font_preset = _local.value("appearance/font_preset", "classic")
     _tok.apply_font_preset(_font_preset)
     logger.debug(f"Font-Preset: {_font_preset}")
+
+    _theme = _local.value("appearance/theme", "light")
+    _tok.apply_theme(_theme)
+    logger.debug(f"Theme: {_theme}")
 
     # Standard-Font setzen (basierend auf aktuellem Body-Preset)
     _body_font_name = _tok.FONT_BODY.split(",")[0].strip().strip('"')
@@ -339,6 +338,12 @@ def main():
         logger.debug(f"{_body_font_name} nicht verfuegbar, Fallback auf Segoe UI")
     app.setFont(default_font)
 
+    # UI-Module NACH apply_theme() importieren, damit alle from-imports
+    # die aktuellen Theme-Farbwerte erhalten (nicht die Light-Defaults).
+    from ui.styles.tokens import get_application_stylesheet
+    from ui.login_dialog import LoginDialog
+    from i18n import de as texts
+
     # ACENCIA Corporate Design Stylesheet
     app.setStyleSheet(get_application_stylesheet())
     
@@ -346,7 +351,8 @@ def main():
     login_dialog = LoginDialog()
     
     if login_dialog.exec() == QDialog.Accepted:
-        # Login erfolgreich - Hauptfenster mit API-Client starten
+        from ui.app_router import AppRouter
+
         api_client = login_dialog.get_client()
         auth_api = login_dialog.get_auth()
         

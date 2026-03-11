@@ -17,9 +17,10 @@ from typing import Optional
 from api.provision import ProvisionAPI, Commission, ContractSearchResult
 from api.client import APIError
 from ui.styles.tokens import (
-    PRIMARY_500, PRIMARY_900, ACCENT_500,
+    PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_HOVER,
     BG_SECONDARY, BORDER_DEFAULT,
-    SUCCESS, ERROR, WARNING,
+    SUCCESS, SUCCESS_LIGHT, ERROR, ERROR_LIGHT, WARNING, WARNING_LIGHT,
+    INFO_LIGHT, BLUE_BRIGHT, AMBER,
     FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     get_provision_table_style,
 )
@@ -48,10 +49,10 @@ MATCH_REASON_LABELS = {
 }
 
 MATCH_SCORE_COLORS = {
-    100: {"bg": "#dcfce7", "text": "#166534"},
-    90: {"bg": "#dbeafe", "text": "#1e40af"},
-    70: {"bg": "#fef9c3", "text": "#854d0e"},
-    40: {"bg": "#fee2e2", "text": "#991b1b"},
+    100: {"bg": SUCCESS_LIGHT, "text": SUCCESS},
+    90: {"bg": INFO_LIGHT, "text": BLUE_BRIGHT},
+    70: {"bg": WARNING_LIGHT, "text": AMBER},
+    40: {"bg": ERROR_LIGHT, "text": ERROR},
 }
 
 
@@ -123,7 +124,7 @@ class MatchContractDialog(QDialog):
         search_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 4px 16px; font-weight: 500; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
         search_btn.clicked.connect(self._do_search)
         search_row.addWidget(search_btn)
@@ -153,10 +154,10 @@ class MatchContractDialog(QDialog):
         self._table.setItemDelegateForColumn(SuggestionsModel.COL_SCORE, score_delegate)
 
         reason_delegate = PillBadgeDelegate({
-            'vsnr_exact': {"bg": "#dcfce7", "text": "#166534"},
-            'vsnr_alt': {"bg": "#dbeafe", "text": "#1e40af"},
-            'name_exact': {"bg": "#fef9c3", "text": "#854d0e"},
-            'name_partial': {"bg": "#fee2e2", "text": "#991b1b"},
+            'vsnr_exact': {"bg": SUCCESS_LIGHT, "text": SUCCESS},
+            'vsnr_alt': {"bg": INFO_LIGHT, "text": BLUE_BRIGHT},
+            'name_exact': {"bg": WARNING_LIGHT, "text": AMBER},
+            'name_partial': {"bg": ERROR_LIGHT, "text": ERROR},
         }, label_map={
             'vsnr_exact': texts.PROVISION_MATCH_DLG_SCORE_VSNR_EXACT,
             'vsnr_alt': texts.PROVISION_MATCH_DLG_SCORE_VSNR_ALT,
@@ -180,7 +181,7 @@ class MatchContractDialog(QDialog):
         self._assign_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 8px 24px; font-weight: 600; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
             QPushButton:disabled {{ background-color: {BORDER_DEFAULT}; color: {PRIMARY_500}; }}
         """)
         self._assign_btn.clicked.connect(self._do_assign)
@@ -449,7 +450,7 @@ class OverrideDialog(QDialog):
         save_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 8px 24px; font-weight: 600; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(save_btn)
@@ -536,7 +537,7 @@ class NoteDialog(QDialog):
         save_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 8px 24px; font-weight: 600; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(save_btn)

@@ -40,7 +40,7 @@ from ui.styles.tokens import (
     FONT_HEADLINE, FONT_BODY,
     FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD, SPACING_SM, SPACING_MD, SPACING_LG,
-    SIDEBAR_WIDTH_INT
+    SIDEBAR_WIDTH_INT, BORDER_SUBTLE,
 )
 
 
@@ -448,7 +448,7 @@ class MainHub(QMainWindow):
             QPushButton {{
                 background-color: transparent;
                 border: none;
-                border-bottom: 1px solid rgba(136, 169, 195, 0.15);
+                border-bottom: 1px solid {BORDER_SUBTLE};
                 padding: 10px 16px;
                 text-align: left;
                 font-family: {FONT_BODY};

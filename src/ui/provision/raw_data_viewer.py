@@ -25,6 +25,7 @@ from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
 from ui.styles.tokens import (
     PRIMARY_0, PRIMARY_500, PRIMARY_900, ACCENT_500,
+    BG_SECONDARY, WARNING_LIGHT,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     SUCCESS, WARNING,
 )
@@ -368,12 +369,12 @@ class RawDataViewerDialog(QDialog):
         html = '<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;">'
         if headers:
             html += '<tr>'
-            html += '<th style="background:#ddd;">#</th>'
+            html += f'<th style="background:{BG_SECONDARY};">#</th>'
             for h in headers:
-                html += f'<th style="background:#ddd;">{h}</th>'
+                html += f'<th style="background:{BG_SECONDARY};">{h}</th>'
             html += '</tr>'
         for idx, row in enumerate(rows):
-            bg = ' style="background:#ffffcc;"' if (idx == (self._target_row or 0) - 2) else ''
+            bg = f' style="background:{WARNING_LIGHT};"' if (idx == (self._target_row or 0) - 2) else ''
             html += f'<tr{bg}>'
             html += f'<td>{idx + 2}</td>'
             for cell in row:

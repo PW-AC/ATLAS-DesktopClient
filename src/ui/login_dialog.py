@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont, QPixmap
 from api.client import APIClient, APIError
 from api.auth import AuthAPI, AuthState
 from ui.universe_selector import UniverseSelectorDialog
+from ui.styles.tokens import TEXT_SECONDARY, BLUE_BRIGHT, ERROR
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ class LoginDialog(QDialog):
         # Tagline
         tagline = QLabel("Der Datenkern.")
         tagline.setAlignment(Qt.AlignCenter)
-        tagline.setStyleSheet("color: #6B7280; font-size: 11px;")
+        tagline.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
         layout.addWidget(tagline)
         
         # Status-Label
@@ -195,7 +196,7 @@ class LoginDialog(QDialog):
                         return
                     if state.tenants:
                         self.status_label.setText("Dev-Auth: Universe auswaehlen...")
-                        self.status_label.setStyleSheet("color: #2563eb;")
+                        self.status_label.setStyleSheet(f"color: {BLUE_BRIGHT};")
                         self._show_universe_selector(state)
                         return
             self._try_auto_login()
@@ -234,13 +235,13 @@ class LoginDialog(QDialog):
         
         if not username:
             self.status_label.setText("Bitte Benutzername eingeben.")
-            self.status_label.setStyleSheet("color: #dc2626;")
+            self.status_label.setStyleSheet(f"color: {ERROR};")
             self.username_input.setFocus()
             return
         
         if not password:
             self.status_label.setText("Bitte Passwort eingeben.")
-            self.status_label.setStyleSheet("color: #dc2626;")
+            self.status_label.setStyleSheet(f"color: {ERROR};")
             self.password_input.setFocus()
             return
         
@@ -297,7 +298,7 @@ class LoginDialog(QDialog):
         dialog = UniverseSelectorDialog(state.tenants, self)
         if dialog.exec() == UniverseSelectorDialog.Accepted and dialog.selected_tenant_id:
             self.status_label.setText("Universe wird geladen...")
-            self.status_label.setStyleSheet("color: #6b7280;")
+            self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
             self.progress.show()
 
             try:

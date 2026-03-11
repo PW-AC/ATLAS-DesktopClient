@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont, QColor
 
 from workforce.api_client import WorkforceApiClient
 from workforce.workers import SyncWorker, DeltaExportWorker, StandardExportWorker
+from ui.workforce.utils import format_date_de
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_100,
     FONT_HEADLINE, FONT_BODY, FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -275,9 +276,7 @@ class ExportsView(QWidget):
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self._history_table.setItem(row, 2, size_item)
 
-            created = exp.get('created_at', '-') or '-'
-            if created != '-':
-                created = created[:19].replace('T', ' ')
+            created = format_date_de(exp.get('created_at', '-') or '-')
             self._history_table.setItem(row, 3, QTableWidgetItem(created))
 
             actions_widget = QWidget()

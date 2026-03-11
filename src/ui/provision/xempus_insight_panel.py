@@ -34,8 +34,10 @@ from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BG_TERTIARY, BORDER_DEFAULT,
     SUCCESS, ERROR, WARNING,
+    TEXT_DISABLED, TEXT_SECONDARY,
+    INDIGO, BLUE_BRIGHT,
     FONT_BODY, FONT_HEADLINE, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
-    TEXT_SECONDARY, RADIUS_MD,
+    RADIUS_MD,
     PILL_COLORS, get_provision_table_style, build_rich_tooltip,
 )
 from ui.provision.widgets import (
@@ -314,10 +316,10 @@ class _EmployersTab(QWidget):
         for key, label, accent, tip in [
             ('total', texts.XEMPUS_EMPLOYER_KPI_TOTAL, PRIMARY_900, texts.XEMPUS_EMPLOYER_KPI_TOTAL_TIP),
             ('active', texts.XEMPUS_EMPLOYER_KPI_ACTIVE, SUCCESS, texts.XEMPUS_EMPLOYER_KPI_ACTIVE_TIP),
-            ('employees', texts.XEMPUS_EMPLOYER_KPI_EMPLOYEES_TOTAL, '#3f51b5', texts.XEMPUS_EMPLOYER_KPI_EMPLOYEES_TOTAL_TIP),
+            ('employees', texts.XEMPUS_EMPLOYER_KPI_EMPLOYEES_TOTAL, INDIGO, texts.XEMPUS_EMPLOYER_KPI_EMPLOYEES_TOTAL_TIP),
             ('avg_emp', texts.XEMPUS_EMPLOYER_KPI_AVG_EMPLOYEES, ACCENT_500, texts.XEMPUS_EMPLOYER_KPI_AVG_EMPLOYEES_TIP),
             ('cities', texts.XEMPUS_EMPLOYER_KPI_CITIES, PRIMARY_500, texts.XEMPUS_EMPLOYER_KPI_CITIES_TIP),
-            ('consultations', texts.XEMPUS_EMPLOYER_KPI_CONSULTATIONS, '#5b8def', texts.XEMPUS_EMPLOYER_KPI_CONSULTATIONS_TIP),
+            ('consultations', texts.XEMPUS_EMPLOYER_KPI_CONSULTATIONS, BLUE_BRIGHT, texts.XEMPUS_EMPLOYER_KPI_CONSULTATIONS_TIP),
             ('conversion', texts.XEMPUS_EMPLOYER_KPI_CONVERSION, SUCCESS, texts.XEMPUS_EMPLOYER_KPI_CONVERSION_TIP),
         ]:
             card = self._make_kpi_card(label, "–", accent)
@@ -463,8 +465,8 @@ class _EmployersTab(QWidget):
                 item.widget().deleteLater()
 
         status_colors = {
-            'converted': SUCCESS, 'open': WARNING, 'applied': '#5b8def',
-            'rejected': ERROR, 'not_desired': '#9e9e9e', 'other': PRIMARY_500,
+            'converted': SUCCESS, 'open': WARNING, 'applied': BLUE_BRIGHT,
+            'rejected': ERROR, 'not_desired': TEXT_DISABLED, 'other': PRIMARY_500,
         }
         for entry in distribution:
             cat = entry.get('category', 'other')

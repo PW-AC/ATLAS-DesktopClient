@@ -19,9 +19,10 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, PRIMARY_100, PRIMARY_0,
     ACCENT_500, ACCENT_100,
-    TEXT_PRIMARY, TEXT_SECONDARY,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
     SUCCESS, WARNING, ERROR,
+    BLUE_BRIGHT, VIOLET, INDIGO, CYAN, AMBER, SLATE,
     FONT_HEADLINE, FONT_BODY, FONT_MONO,
     FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD,
@@ -44,18 +45,18 @@ class DocumentHistoryPanel(QWidget):
     
     # Aktions-Farben
     ACTION_COLORS = {
-        'move': '#3b82f6',              # Blau
-        'download': '#059669',          # Gruen
-        'upload': '#6b7280',            # Grau
-        'delete': '#dc2626',            # Rot
-        'bulk_archive': '#f59e0b',      # Orange
-        'bulk_unarchive': '#f59e0b',    # Orange
-        'archive': '#f59e0b',           # Orange
-        'unarchive': '#f59e0b',         # Orange
-        'bulk_set_color': '#8b5cf6',    # Lila
-        'update': '#6366f1',            # Indigo
-        'classify': '#06b6d4',          # Cyan
-        'list': '#9ca3af',              # Hellgrau (unwichtig)
+        'move': BLUE_BRIGHT,
+        'download': SUCCESS,
+        'upload': SLATE,
+        'delete': ERROR,
+        'bulk_archive': AMBER,
+        'bulk_unarchive': AMBER,
+        'archive': AMBER,
+        'unarchive': AMBER,
+        'bulk_set_color': VIOLET,
+        'update': INDIGO,
+        'classify': CYAN,
+        'list': TEXT_DISABLED,
     }
     
     def __init__(self, parent=None):
@@ -263,7 +264,7 @@ class DocumentHistoryPanel(QWidget):
         created_at = entry.get('created_at', '')
         
         # Farbe fuer diese Aktion
-        color = self.ACTION_COLORS.get(action, '#6b7280')
+        color = self.ACTION_COLORS.get(action, SLATE)
         
         # Aktion menschenlesbar aufbereiten
         action_text = self._format_action(action, details)

@@ -17,6 +17,13 @@ from ui.toast import ToastManager
 from PySide6.QtCore import Qt, Signal, QTimer
 
 from api.documents import Document
+from ui.styles.tokens import (
+    PRIMARY_900,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED, TEXT_INVERSE,
+    BG_TERTIARY, BORDER_DEFAULT,
+    ACCENT_500, BLUE_BRIGHT, VIOLET, AMBER,
+    ERROR, ERROR_LIGHT, WARNING_LIGHT, INFO_LIGHT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -247,19 +254,19 @@ class DuplicateCompareDialog(QDialog):
         
         # Footer mit Schliessen-Button
         footer = QFrame()
-        footer.setStyleSheet("QFrame { background: #f5f5f5; border-top: 1px solid #e0e0e0; }")
+        footer.setStyleSheet(f"QFrame {{ background: {BG_TERTIARY}; border-top: 1px solid {BORDER_DEFAULT}; }}")
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(16, 8, 16, 8)
         
         footer_layout.addStretch()
         close_btn = QPushButton(DUPLICATE_COMPARE_CLOSE)
         close_btn.setFixedWidth(140)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #001f3d; color: white; border: none;
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {PRIMARY_900}; color: {TEXT_INVERSE}; border: none;
                 padding: 8px 16px; border-radius: 4px; font-weight: bold;
-            }
-            QPushButton:hover { background: #002d5c; }
+            }}
+            QPushButton:hover {{ background: {PRIMARY_900}; }}
         """)
         close_btn.clicked.connect(self.close)
         footer_layout.addWidget(close_btn)
@@ -282,7 +289,7 @@ class DuplicateCompareDialog(QDialog):
         
         pane = QFrame()
         pane.setObjectName(f"pane_{side}")
-        border_color = "#fa9939" if side == 'left' else "#3b82f6"
+        border_color = ACCENT_500 if side == 'left' else BLUE_BRIGHT
         pane.setStyleSheet(f"""
             QFrame#{pane.objectName()} {{
                 background: white;
@@ -304,12 +311,12 @@ class DuplicateCompareDialog(QDialog):
         
         header_label = QLabel(section_label)
         header_label.setStyleSheet(
-            "font-size: 11px; color: #9E9E9E; font-weight: bold; text-transform: uppercase;")
+            f"font-size: 11px; color: {TEXT_DISABLED}; font-weight: bold; text-transform: uppercase;")
         layout.addWidget(header_label)
         
         # Dateiname
         name_label = QLabel(escape(doc.original_filename))
-        name_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #001f3d;")
+        name_label.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {TEXT_PRIMARY};")
         name_label.setWordWrap(True)
         layout.addWidget(name_label)
         
@@ -331,18 +338,18 @@ class DuplicateCompareDialog(QDialog):
             meta_parts.append(f"\U0001f4e6 {DUPLICATE_TOOLTIP_ARCHIVED}")
         
         meta_label = QLabel(" | ".join(meta_parts))
-        meta_label.setStyleSheet("font-size: 11px; color: #757575;")
+        meta_label.setStyleSheet(f"font-size: 11px; color: {TEXT_SECONDARY};")
         layout.addWidget(meta_label)
         
         # ID
         id_label = QLabel(f"ID: {doc.id}")
-        id_label.setStyleSheet("font-size: 10px; color: #BDBDBD;")
+        id_label.setStyleSheet(f"font-size: 10px; color: {TEXT_DISABLED};")
         layout.addWidget(id_label)
         
         # --- Vorschau-Bereich ---
         preview_container = QFrame()
         preview_container.setStyleSheet(
-            "QFrame { background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px; }")
+            f"QFrame {{ background: {BG_TERTIARY}; border: 1px solid {BORDER_DEFAULT}; border-radius: 4px; }}")
         preview_layout = QVBoxLayout(preview_container)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -354,7 +361,7 @@ class DuplicateCompareDialog(QDialog):
             # Seite 0: Loading
             loading_label = QLabel(DUPLICATE_COMPARE_LOADING)
             loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            loading_label.setStyleSheet("color: #9E9E9E; font-size: 12px; padding: 40px;")
+            loading_label.setStyleSheet(f"color: {TEXT_DISABLED}; font-size: 12px; padding: 40px;")
             stack.addWidget(loading_label)
             
             # Seite 1: QPdfView (sichtbar und gelayoutet von Anfang an)
@@ -375,7 +382,7 @@ class DuplicateCompareDialog(QDialog):
             no_preview = QLabel(DUPLICATE_COMPARE_NO_PREVIEW)
             no_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
             no_preview.setStyleSheet(
-                "color: #9E9E9E; font-size: 13px; padding: 60px; font-style: italic;")
+                f"color: {TEXT_DISABLED}; font-size: 13px; padding: 60px; font-style: italic;")
             preview_layout.addWidget(no_preview)
         
         layout.addWidget(preview_container, 1)
@@ -384,9 +391,9 @@ class DuplicateCompareDialog(QDialog):
         status_label = QLabel("")
         status_label.setObjectName(f"status_{side}")
         status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_label.setStyleSheet("""
-            font-size: 14px; font-weight: bold; color: #ef4444;
-            padding: 8px; background: #fff5f5; border: 1px solid #fecaca;
+        status_label.setStyleSheet(f"""
+            font-size: 14px; font-weight: bold; color: {ERROR};
+            padding: 8px; background: {ERROR_LIGHT}; border: 1px solid {ERROR_LIGHT};
             border-radius: 4px;
         """)
         status_label.setVisible(False)
@@ -401,13 +408,13 @@ class DuplicateCompareDialog(QDialog):
         
         # Loeschen
         delete_btn = QPushButton(DUPLICATE_COMPARE_ACTION_DELETE)
-        delete_btn.setStyleSheet("""
-            QPushButton {
-                background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
+        delete_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {ERROR_LIGHT}; color: {ERROR}; border: 1px solid {ERROR_LIGHT};
                 padding: 6px 12px; border-radius: 3px; font-size: 11px;
-            }
-            QPushButton:hover { background: #fecaca; }
-            QPushButton:disabled { background: #f5f5f5; color: #ccc; border: 1px solid #e0e0e0; }
+            }}
+            QPushButton:hover {{ background: {ERROR_LIGHT}; }}
+            QPushButton:disabled {{ background: {BG_TERTIARY}; color: {TEXT_DISABLED}; border: 1px solid {BORDER_DEFAULT}; }}
         """)
         delete_btn.clicked.connect(lambda: self._delete_document(side))
         actions_layout.addWidget(delete_btn)
@@ -420,26 +427,26 @@ class DuplicateCompareDialog(QDialog):
             else:
                 archive_btn = QPushButton(DUPLICATE_COMPARE_ACTION_ARCHIVE)
                 archive_btn.clicked.connect(lambda: self._archive_document(side))
-            archive_btn.setStyleSheet("""
-                QPushButton {
-                    background: #fef3c7; color: #92400e; border: 1px solid #fde68a;
+            archive_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {WARNING_LIGHT}; color: {AMBER}; border: 1px solid {WARNING_LIGHT};
                     padding: 6px 12px; border-radius: 3px; font-size: 11px;
-                }
-                QPushButton:hover { background: #fde68a; }
-                QPushButton:disabled { background: #f5f5f5; color: #ccc; border: 1px solid #e0e0e0; }
+                }}
+                QPushButton:hover {{ background: {WARNING_LIGHT}; }}
+                QPushButton:disabled {{ background: {BG_TERTIARY}; color: {TEXT_DISABLED}; border: 1px solid {BORDER_DEFAULT}; }}
             """)
             actions_layout.addWidget(archive_btn)
         
         # Verschieben (mit Dropdown-Menue)
         move_btn = QPushButton(DUPLICATE_COMPARE_ACTION_MOVE)
-        move_btn.setStyleSheet("""
-            QPushButton {
-                background: #e0f2fe; color: #075985; border: 1px solid #bae6fd;
+        move_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {INFO_LIGHT}; color: {PRIMARY_900}; border: 1px solid {INFO_LIGHT};
                 padding: 6px 12px; border-radius: 3px; font-size: 11px;
-            }
-            QPushButton:hover { background: #bae6fd; }
-            QPushButton::menu-indicator { subcontrol-position: right center; }
-            QPushButton:disabled { background: #f5f5f5; color: #ccc; border: 1px solid #e0e0e0; }
+            }}
+            QPushButton:hover {{ background: {INFO_LIGHT}; }}
+            QPushButton::menu-indicator {{ subcontrol-position: right center; }}
+            QPushButton:disabled {{ background: {BG_TERTIARY}; color: {TEXT_DISABLED}; border: 1px solid {BORDER_DEFAULT}; }}
         """)
         move_menu = QMenu(move_btn)
         move_targets = ['gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige', 'eingang', 'roh']
@@ -456,14 +463,14 @@ class DuplicateCompareDialog(QDialog):
         
         # Farbe (mit Dropdown-Menue)
         color_btn = QPushButton(DUPLICATE_COMPARE_ACTION_COLOR)
-        color_btn.setStyleSheet("""
-            QPushButton {
-                background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff;
+        color_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {INFO_LIGHT}; color: {VIOLET}; border: 1px solid {INFO_LIGHT};
                 padding: 6px 12px; border-radius: 3px; font-size: 11px;
-            }
-            QPushButton:hover { background: #e9d5ff; }
-            QPushButton::menu-indicator { subcontrol-position: right center; }
-            QPushButton:disabled { background: #f5f5f5; color: #ccc; border: 1px solid #e0e0e0; }
+            }}
+            QPushButton:hover {{ background: {INFO_LIGHT}; }}
+            QPushButton::menu-indicator {{ subcontrol-position: right center; }}
+            QPushButton:disabled {{ background: {BG_TERTIARY}; color: {TEXT_DISABLED}; border: 1px solid {BORDER_DEFAULT}; }}
         """)
         from ui.styles.tokens import DOCUMENT_DISPLAY_COLORS
         from i18n.de import (DOC_COLOR_GREEN, DOC_COLOR_RED, DOC_COLOR_BLUE,
@@ -476,7 +483,7 @@ class DuplicateCompareDialog(QDialog):
         }
         color_menu = QMenu(color_btn)
         for color_key, color_label in color_labels.items():
-            hex_color = DOCUMENT_DISPLAY_COLORS.get(color_key, '#ccc')
+            hex_color = DOCUMENT_DISPLAY_COLORS.get(color_key, BORDER_DEFAULT)
             action = color_menu.addAction(f"\u25cf {color_label}")
             action.triggered.connect(
                 lambda checked, ck=color_key, s=side: self._color_document(s, ck))
@@ -584,7 +591,7 @@ class DuplicateCompareDialog(QDialog):
                 from i18n.de import DUPLICATE_COMPARE_NO_PREVIEW
                 loading.setText(DUPLICATE_COMPARE_NO_PREVIEW)
                 loading.setStyleSheet(
-                    "color: #ef4444; font-size: 12px; padding: 40px; font-style: italic;")
+                    f"color: {ERROR}; font-size: 12px; padding: 40px; font-style: italic;")
         logger.warning(f"PDF-Vorschau Fehler ({side}): {error}")
     
     def _get_doc(self, side: str) -> Document:

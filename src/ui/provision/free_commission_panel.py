@@ -19,7 +19,8 @@ from infrastructure.threading.worker_utils import run_worker
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
-    SUCCESS, ERROR,
+    TEXT_DISABLED,
+    SUCCESS, ERROR, ERROR_LIGHT,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     get_provision_table_style,
 )
@@ -100,8 +101,8 @@ class FreeCommissionPanel(QWidget):
                 font-size: {FONT_SIZE_BODY};
                 font-weight: 600;
             }}
-            QPushButton:hover {{ background-color: #1a6fb5; }}
-            QPushButton:pressed {{ background-color: #155a93; }}
+            QPushButton:hover {{ background-color: {PRIMARY_500}; }}
+            QPushButton:pressed {{ background-color: {PRIMARY_900}; }}
         """)
         self._create_btn.clicked.connect(self._on_create)
         header._action_area.addWidget(self._create_btn)
@@ -121,8 +122,8 @@ class FreeCommissionPanel(QWidget):
                 border: 1px solid {ERROR}; border-radius: 4px;
                 padding: 4px 12px; font-size: {FONT_SIZE_CAPTION};
             }}
-            QPushButton:hover {{ background-color: #fde8e8; }}
-            QPushButton:disabled {{ color: #ccc; border-color: #ccc; }}
+            QPushButton:hover {{ background-color: {ERROR_LIGHT}; }}
+            QPushButton:disabled {{ color: {TEXT_DISABLED}; border-color: {TEXT_DISABLED}; }}
         """)
         self._del_btn.setEnabled(False)
         self._del_btn.clicked.connect(self._on_delete_selected)

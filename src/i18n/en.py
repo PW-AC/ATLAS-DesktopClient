@@ -65,6 +65,11 @@ SETTINGS_FONT_CLASSIC = "Classic"
 SETTINGS_FONT_CLASSIC_FONTS = "Tenor Sans & Open Sans"
 SETTINGS_RESTART_HINT = "Changes will take effect the next time the app starts."
 SETTINGS_LANGUAGE_SECTION = "Language"
+SETTINGS_THEME_SECTION = "Color scheme"
+SETTINGS_THEME_LIGHT = "Light"
+SETTINGS_THEME_LIGHT_DESC = "Light background, dark text"
+SETTINGS_THEME_DARK = "Dark"
+SETTINGS_THEME_DARK_DESC = "Dark background, light text"
 
 # === Settings ===
 SETTINGS_TITLE = "Settings"

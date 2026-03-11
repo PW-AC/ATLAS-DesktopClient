@@ -19,8 +19,8 @@ import calendar
 from api.provision import ProvisionAPI
 from domain.provision.entities import Commission, VermittlerMapping, Employee
 from ui.styles.tokens import (
-    PRIMARY_500, PRIMARY_900, ACCENT_500,
-    ERROR, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
+    PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_HOVER,
+    ERROR, ERROR_LIGHT, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     PILL_COLORS, get_provision_table_style,
 )
 from ui.provision.widgets import (
@@ -102,7 +102,7 @@ class ZuordnungPanel(QWidget):
         auto_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 8px 16px; font-weight: 500; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
         auto_btn.clicked.connect(self._trigger_auto_match)
         header.add_action(auto_btn)
@@ -188,7 +188,7 @@ class ZuordnungPanel(QWidget):
         problem_delegate = PillBadgeDelegate(
             {
                 "kein_passender_vertrag_gefunden": PILL_COLORS["offen"],
-                "vermittler_unbekannt": {"bg": "#fee2e2", "text": "#991b1b"},
+                "vermittler_unbekannt": {"bg": ERROR_LIGHT, "text": ERROR},
                 "berater-mapping_fehlt": PILL_COLORS.get("vertrag_gefunden", {"bg": "#fef3c7", "text": "#92400e"}),
             }
         )

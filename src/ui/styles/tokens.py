@@ -70,19 +70,84 @@ INFO_500 = INFO
 INFO_LIGHT = PRIMARY_100
 
 # =============================================================================
+# ERWEITERTE SPEKTRUM-FARBEN (für Box-System, Charts, Status-Indikatoren)
+# =============================================================================
+
+AMBER        = "#f59e0b"   # Amber/Gold – Eingang, Duplikat-Warnung
+ORANGE_WARM  = "#f97316"   # Warmes Orange – Verarbeitung
+GREEN_EMERALD = "#10b981"  # Smaragdgrün – GDV-Box
+INDIGO       = "#6366f1"   # Indigo – Courtage, Inhaltsduplikat
+BLUE_BRIGHT  = "#3b82f6"   # Helles Blau – Sach-Versicherung
+VIOLET       = "#8b5cf6"   # Violett – Leben-Versicherung, KI
+CYAN         = "#06b6d4"   # Cyan – Kranken-Versicherung
+SLATE        = "#64748b"   # Blaugrau – Sonstiges
+STONE        = "#78716c"   # Steingrau – Roh/Archiv
+
+# =============================================================================
+# STATUS-FARBEN ERWEITERUNG (Quelltypen, KI, Duplikate, Critical)
+# =============================================================================
+
+STATUS_SCAN      = VIOLET           # Lila – Scan-Herkunft
+STATUS_MAIL      = "#FF9800"        # Orange – Mail-Herkunft
+STATUS_AI_ACTIVE = VIOLET           # Lila – KI-verarbeitet
+
+DUPLICATE_FILE    = AMBER           # Amber – Datei-Duplikat
+DUPLICATE_CONTENT = INDIGO          # Indigo – Inhaltsduplikat
+
+NEUTRAL_BORDER    = "#999999"       # Neutrales Grau – Borders in Color-Pickern
+
+CRITICAL          = "#7c2d12"       # Dunkles Braun-Rot – schwerwiegende Fehler
+CRITICAL_LIGHT    = "#fef2f2"       # Sehr helles Rot-Weiß – Critical-Hintergrund
+
+MAINTENANCE_CARD_BG = "#0d3259"     # Dunkles Blau – Maintenance-Overlay-Karten
+
+# Tooltip
+TOOLTIP_BG   = "#fffdf5"
+TOOLTIP_TEXT  = "#1a1a1a"
+
+# Tabellen (Provision-spezifisch, leicht bläulich)
+TABLE_ALT_BG        = "#f5f8fb"
+TABLE_BORDER        = "#b0c4d8"
+TABLE_GRID          = "#d5dfe8"
+TABLE_SELECTED_BG   = "#d0dfed"
+TABLE_HOVER_BG      = "#edf2f7"
+TABLE_HEADER_BG     = "#d0dcea"
+TABLE_HEADER_BORDER = "#98b3cb"
+TABLE_HEADER_HOVER  = "#bfcfdf"
+
+# Accent-Interaktionszustände
+ACCENT_HOVER   = "#e88a2d"
+ACCENT_PRESSED = "#d97706"
+
+# Subtile Borders (rgba, theme-aware)
+BORDER_SUBTLE = "rgba(136, 169, 195, 0.15)"
+
+# =============================================================================
+# CHART-FARBEN (Matplotlib / Statistik-Views)
+# =============================================================================
+
+CHART_PALETTE = [
+    PRIMARY_900, ACCENT_500, PRIMARY_500, SUCCESS, ERROR,
+    INDIGO, CYAN, VIOLET, AMBER, SLATE,
+]
+CHART_BG_COLOR   = BG_PRIMARY   # "#ffffff"
+CHART_TEXT_COLOR = PRIMARY_900  # "#001f3d"
+CHART_GRID_COLOR = PRIMARY_100  # "#e3ebf2"
+
+# =============================================================================
 # BOX-FARBEN (Dokumentenarchiv) - Harmonisch mit CI
 # =============================================================================
 
 BOX_COLORS = {
-    "eingang": "#f59e0b",       # Amber - Attention
-    "verarbeitung": "#f97316",  # Orange - In Progress
-    "gdv": "#10b981",           # Grün - Primäre Daten
-    "courtage": "#6366f1",      # Indigo - Finanzdaten
-    "sach": "#3b82f6",          # Blau - Versicherungstyp
-    "leben": "#8b5cf6",         # Violett - Versicherungstyp
-    "kranken": "#06b6d4",       # Cyan - Versicherungstyp
-    "sonstige": "#64748b",      # Grau - Neutral
-    "roh": "#78716c",           # Steingrau - Archiv/System
+    "eingang":      AMBER,
+    "verarbeitung": ORANGE_WARM,
+    "gdv":          GREEN_EMERALD,
+    "courtage":     INDIGO,
+    "sach":         BLUE_BRIGHT,
+    "leben":        VIOLET,
+    "kranken":      CYAN,
+    "sonstige":     SLATE,
+    "roh":          STONE,
 }
 
 # =============================================================================
@@ -163,6 +228,203 @@ def apply_font_preset(preset_id: str):
     preset = FONT_PRESETS.get(preset_id, FONT_PRESETS["classic"])
     FONT_HEADLINE = preset["headline"]
     FONT_BODY = preset["body"]
+
+
+# =============================================================================
+# DARK MODE
+# =============================================================================
+
+_LIGHT_COLORS = {
+    "PRIMARY_900":  "#001f3d",
+    "PRIMARY_500":  "#88a9c3",
+    "PRIMARY_100":  "#e3ebf2",
+    "PRIMARY_0":    "#ffffff",
+    "ACCENT_500":   "#fa9939",
+    "ACCENT_100":   "#f8dcbf",
+    "TEXT_PRIMARY":     "#001f3d",
+    "TEXT_SECONDARY":   "#88a9c3",
+    "TEXT_DISABLED":    "#a0aec0",
+    "TEXT_INVERSE":     "#ffffff",
+    "BG_PRIMARY":       "#ffffff",
+    "BG_SECONDARY":     "#e3ebf2",
+    "BG_TERTIARY":      "#f8fafc",
+    "BORDER_DEFAULT":   "#e3ebf2",
+    "BORDER_STRONG":    "#88a9c3",
+    "BORDER_FOCUS":     "#fa9939",
+    "SIDEBAR_BG":       "#001f3d",
+    "SIDEBAR_TEXT":     "#ffffff",
+    "SIDEBAR_HOVER":    "rgba(136, 169, 195, 0.2)",
+    "SHADOW_SM": "0 1px 2px rgba(0, 0, 0, 0.05)",
+    "SHADOW_MD": "0 4px 6px rgba(0, 0, 0, 0.1)",
+    "SHADOW_LG": "0 10px 15px rgba(0, 0, 0, 0.1)",
+    "SUCCESS":       "#059669",
+    "SUCCESS_LIGHT": "#d1fae5",
+    "WARNING_LIGHT": "#f8dcbf",
+    "ERROR":         "#dc2626",
+    "ERROR_LIGHT":   "#fee2e2",
+    "INFO_LIGHT":    "#e3ebf2",
+    "CHART_BG":      "#ffffff",
+    "CHART_TEXT":    "#001f3d",
+    "CHART_GRID":    "#e3ebf2",
+    "TOOLTIP_BG":    "#fffdf5",
+    "TOOLTIP_TEXT":  "#1a1a1a",
+    "TABLE_ALT_BG":        "#f5f8fb",
+    "TABLE_BORDER":        "#b0c4d8",
+    "TABLE_GRID":          "#d5dfe8",
+    "TABLE_SELECTED_BG":   "#d0dfed",
+    "TABLE_HOVER_BG":      "#edf2f7",
+    "TABLE_HEADER_BG":     "#d0dcea",
+    "TABLE_HEADER_BORDER": "#98b3cb",
+    "TABLE_HEADER_HOVER":  "#bfcfdf",
+    "ACCENT_HOVER":   "#e88a2d",
+    "ACCENT_PRESSED": "#d97706",
+    "BORDER_SUBTLE":  "rgba(136, 169, 195, 0.15)",
+}
+
+_DARK_COLORS = {
+    "PRIMARY_900":  "#c9d8e6",
+    "PRIMARY_500":  "#6a8eab",
+    "PRIMARY_100":  "#1e2d3d",
+    "PRIMARY_0":    "#0d1117",
+    "ACCENT_500":   "#fa9939",
+    "ACCENT_100":   "#5c3a15",
+    "TEXT_PRIMARY":     "#e6edf3",
+    "TEXT_SECONDARY":   "#8b949e",
+    "TEXT_DISABLED":    "#484f58",
+    "TEXT_INVERSE":     "#0d1117",
+    "BG_PRIMARY":       "#0d1117",
+    "BG_SECONDARY":     "#161b22",
+    "BG_TERTIARY":      "#010409",
+    "BORDER_DEFAULT":   "#30363d",
+    "BORDER_STRONG":    "#484f58",
+    "BORDER_FOCUS":     "#fa9939",
+    "SIDEBAR_BG":       "#010409",
+    "SIDEBAR_TEXT":     "#e6edf3",
+    "SIDEBAR_HOVER":    "rgba(110, 118, 129, 0.25)",
+    "SHADOW_SM": "0 1px 3px rgba(0, 0, 0, 0.3)",
+    "SHADOW_MD": "0 4px 8px rgba(0, 0, 0, 0.4)",
+    "SHADOW_LG": "0 10px 20px rgba(0, 0, 0, 0.5)",
+    "SUCCESS":       "#3fb950",
+    "SUCCESS_LIGHT": "#0f2d16",
+    "WARNING_LIGHT": "#3d2004",
+    "ERROR":         "#f85149",
+    "ERROR_LIGHT":   "#3d0c0c",
+    "INFO_LIGHT":    "#0d2744",
+    "CHART_BG":      "#0d1117",
+    "CHART_TEXT":    "#e6edf3",
+    "CHART_GRID":    "#30363d",
+    "TOOLTIP_BG":    "#21262d",
+    "TOOLTIP_TEXT":  "#e6edf3",
+    "TABLE_ALT_BG":        "#161b22",
+    "TABLE_BORDER":        "#30363d",
+    "TABLE_GRID":          "#21262d",
+    "TABLE_SELECTED_BG":   "#1c3a5c",
+    "TABLE_HOVER_BG":      "#1c2533",
+    "TABLE_HEADER_BG":     "#1c2332",
+    "TABLE_HEADER_BORDER": "#344b63",
+    "TABLE_HEADER_HOVER":  "#243040",
+    "ACCENT_HOVER":   "#e88a2d",
+    "ACCENT_PRESSED": "#d97706",
+    "BORDER_SUBTLE":  "rgba(110, 118, 129, 0.15)",
+}
+
+_CURRENT_THEME = "light"
+
+
+def get_current_theme() -> str:
+    """Gibt das aktuell aktive Theme zurueck ('light' oder 'dark')."""
+    return _CURRENT_THEME
+
+
+def apply_theme(theme: str) -> None:
+    """Aktiviert 'light' oder 'dark' Theme und aktualisiert alle Modul-Variablen."""
+    global _CURRENT_THEME
+    global PRIMARY_900, PRIMARY_500, PRIMARY_100, PRIMARY_0
+    global ACCENT_500, ACCENT_100
+    global TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED, TEXT_INVERSE
+    global BG_PRIMARY, BG_SECONDARY, BG_TERTIARY
+    global BORDER_DEFAULT, BORDER_STRONG, BORDER_FOCUS
+    global SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_ACTIVE_BORDER
+    global SHADOW_SM, SHADOW_MD, SHADOW_LG
+    global SUCCESS, SUCCESS_500, SUCCESS_LIGHT
+    global WARNING, WARNING_500, WARNING_LIGHT
+    global ERROR, ERROR_500, ERROR_LIGHT, DANGER_500
+    global INFO, INFO_500, INFO_LIGHT
+    global CHART_BG_COLOR, CHART_TEXT_COLOR, CHART_GRID_COLOR
+    global TOOLTIP_BG, TOOLTIP_TEXT
+    global TABLE_ALT_BG, TABLE_BORDER, TABLE_GRID
+    global TABLE_SELECTED_BG, TABLE_HOVER_BG
+    global TABLE_HEADER_BG, TABLE_HEADER_BORDER, TABLE_HEADER_HOVER
+    global ACCENT_HOVER, ACCENT_PRESSED
+    global BORDER_SUBTLE
+
+    _CURRENT_THEME = theme
+    c = _DARK_COLORS if theme == "dark" else _LIGHT_COLORS
+
+    PRIMARY_900 = c["PRIMARY_900"]
+    PRIMARY_500 = c["PRIMARY_500"]
+    PRIMARY_100 = c["PRIMARY_100"]
+    PRIMARY_0   = c["PRIMARY_0"]
+    ACCENT_500  = c["ACCENT_500"]
+    ACCENT_100  = c["ACCENT_100"]
+
+    TEXT_PRIMARY   = c["TEXT_PRIMARY"]
+    TEXT_SECONDARY = c["TEXT_SECONDARY"]
+    TEXT_DISABLED  = c["TEXT_DISABLED"]
+    TEXT_INVERSE   = c["TEXT_INVERSE"]
+
+    BG_PRIMARY   = c["BG_PRIMARY"]
+    BG_SECONDARY = c["BG_SECONDARY"]
+    BG_TERTIARY  = c["BG_TERTIARY"]
+
+    BORDER_DEFAULT = c["BORDER_DEFAULT"]
+    BORDER_STRONG  = c["BORDER_STRONG"]
+    BORDER_FOCUS   = c["BORDER_FOCUS"]
+
+    SIDEBAR_BG    = c["SIDEBAR_BG"]
+    SIDEBAR_TEXT   = c["SIDEBAR_TEXT"]
+    SIDEBAR_HOVER  = c["SIDEBAR_HOVER"]
+
+    SHADOW_SM = c["SHADOW_SM"]
+    SHADOW_MD = c["SHADOW_MD"]
+    SHADOW_LG = c["SHADOW_LG"]
+
+    SUCCESS       = c["SUCCESS"]
+    SUCCESS_500   = SUCCESS
+    SUCCESS_LIGHT = c["SUCCESS_LIGHT"]
+    WARNING       = ACCENT_500
+    WARNING_500   = WARNING
+    WARNING_LIGHT = c["WARNING_LIGHT"]
+    ERROR         = c["ERROR"]
+    ERROR_500     = ERROR
+    ERROR_LIGHT   = c["ERROR_LIGHT"]
+    DANGER_500    = ERROR
+    INFO          = PRIMARY_500
+    INFO_500      = INFO
+    INFO_LIGHT    = c["INFO_LIGHT"]
+
+    CHART_BG_COLOR   = c["CHART_BG"]
+    CHART_TEXT_COLOR  = c["CHART_TEXT"]
+    CHART_GRID_COLOR = c["CHART_GRID"]
+
+    SIDEBAR_ACTIVE_BORDER = ACCENT_500
+
+    TOOLTIP_BG   = c["TOOLTIP_BG"]
+    TOOLTIP_TEXT  = c["TOOLTIP_TEXT"]
+
+    TABLE_ALT_BG        = c["TABLE_ALT_BG"]
+    TABLE_BORDER        = c["TABLE_BORDER"]
+    TABLE_GRID          = c["TABLE_GRID"]
+    TABLE_SELECTED_BG   = c["TABLE_SELECTED_BG"]
+    TABLE_HOVER_BG      = c["TABLE_HOVER_BG"]
+    TABLE_HEADER_BG     = c["TABLE_HEADER_BG"]
+    TABLE_HEADER_BORDER = c["TABLE_HEADER_BORDER"]
+    TABLE_HEADER_HOVER  = c["TABLE_HEADER_HOVER"]
+
+    ACCENT_HOVER   = c["ACCENT_HOVER"]
+    ACCENT_PRESSED = c["ACCENT_PRESSED"]
+
+    BORDER_SUBTLE = c["BORDER_SUBTLE"]
 
 
 # Font-Groessen (pt statt px: verhindert QFont::setPointSize(-1) Warnungen)
@@ -264,10 +526,10 @@ def get_provision_table_style() -> str:
     return f"""
         QTableView {{
             background-color: {BG_PRIMARY};
-            alternate-background-color: #f5f8fb;
-            border: 1.5px solid #b0c4d8;
+            alternate-background-color: {TABLE_ALT_BG};
+            border: 1.5px solid {TABLE_BORDER};
             border-radius: {RADIUS_LG};
-            gridline-color: #d5dfe8;
+            gridline-color: {TABLE_GRID};
             font-family: {FONT_BODY};
             font-size: 9.5pt;
             selection-background-color: {PRIMARY_100};
@@ -275,27 +537,27 @@ def get_provision_table_style() -> str:
         }}
         QTableView::item {{
             padding: 6px 10px;
-            border-bottom: 1px solid #d5dfe8;
+            border-bottom: 1px solid {TABLE_GRID};
         }}
         QTableView::item:selected {{
-            background-color: #d0dfed;
+            background-color: {TABLE_SELECTED_BG};
             color: {TEXT_PRIMARY};
         }}
         QTableView::item:hover {{
-            background-color: #edf2f7;
+            background-color: {TABLE_HOVER_BG};
         }}
         QHeaderView::section {{
-            background-color: #d0dcea;
+            background-color: {TABLE_HEADER_BG};
             color: {PRIMARY_900};
             padding: 7px 10px;
             border: none;
-            border-bottom: 2px solid #98b3cb;
+            border-bottom: 2px solid {TABLE_HEADER_BORDER};
             font-weight: {FONT_WEIGHT_BOLD};
             font-family: {FONT_BODY};
             font-size: 9pt;
         }}
         QHeaderView::section:hover {{
-            background-color: #bfcfdf;
+            background-color: {TABLE_HEADER_HOVER};
         }}
     """
 
@@ -318,10 +580,10 @@ def get_button_primary_style() -> str:
             font-weight: {FONT_WEIGHT_MEDIUM};
         }}
         QPushButton:hover {{
-            background-color: #e88a2d;
+            background-color: {ACCENT_HOVER};
         }}
         QPushButton:pressed {{
-            background-color: #d97706;
+            background-color: {ACCENT_PRESSED};
         }}
         QPushButton:disabled {{
             background-color: {PRIMARY_100};
@@ -681,8 +943,8 @@ def get_application_stylesheet() -> str:
         /* ================================================================== */
         
         QToolTip {{
-            background-color: #fffdf5;
-            color: #1a1a1a;
+            background-color: {TOOLTIP_BG};
+            color: {TOOLTIP_TEXT};
             border: 1px solid {ACCENT_500};
             border-radius: {RADIUS_SM};
             padding: 8px 12px;

@@ -22,8 +22,8 @@ import os
 from api.provision import ProvisionAPI
 from domain.provision.entities import BeraterAbrechnung
 from ui.styles.tokens import (
-    PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
-    BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
+    PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_HOVER,
+    BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT, TABLE_BORDER,
     SUCCESS, ERROR, WARNING,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     PILL_COLORS, ROLE_BADGE_COLORS,
@@ -134,7 +134,7 @@ class AuszahlungenPanel(QWidget):
         gen_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 8px 16px; font-weight: 500; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
         gen_btn.clicked.connect(self._generate)
         toolbar.addWidget(gen_btn)
@@ -245,7 +245,7 @@ class AuszahlungenPanel(QWidget):
         frame = QFrame()
         frame.setMinimumWidth(300)
         frame.setMaximumWidth(400)
-        frame.setStyleSheet(f"background: white; border: 1.5px solid #b0c4d8; border-radius: 8px;")
+        frame.setStyleSheet(f"background: {BG_PRIMARY}; border: 1.5px solid {TABLE_BORDER}; border-radius: 8px;")
 
         outer = QVBoxLayout(frame)
         outer.setContentsMargins(16, 16, 16, 16)

@@ -17,6 +17,7 @@ from PySide6.QtGui import QFont, QColor
 
 from api.auth import AuthAPI
 from workforce.api_client import WorkforceApiClient
+from ui.workforce.utils import format_date_de
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_100,
     FONT_HEADLINE, FONT_BODY, FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -348,9 +349,7 @@ class EmployersView(QWidget):
             cred_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, 3, cred_item)
 
-            last_sync = emp.get('last_sync_at', '-') or '-'
-            if last_sync != '-':
-                last_sync = last_sync[:19].replace('T', ' ')
+            last_sync = format_date_de(emp.get('last_sync_at', '-') or '-')
             self._table.setItem(row, 4, QTableWidgetItem(last_sync))
 
             actions_widget = QWidget()

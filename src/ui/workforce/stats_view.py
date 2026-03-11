@@ -33,18 +33,15 @@ from ui.styles.tokens import (
     SUCCESS, ERROR, TEXT_PRIMARY, TEXT_SECONDARY,
     FONT_WEIGHT_BOLD, FONT_WEIGHT_MEDIUM,
     get_button_primary_style, get_button_secondary_style,
+    CHART_PALETTE, CHART_BG_COLOR, CHART_TEXT_COLOR, CHART_GRID_COLOR,
 )
 from i18n import de as texts
 
 logger = logging.getLogger(__name__)
 
-CHART_PALETTE = [
-    "#001f3d", "#fa9939", "#88a9c3", "#059669", "#dc2626",
-    "#6366f1", "#06b6d4", "#8b5cf6", "#f59e0b", "#64748b",
-]
-CHART_BG = "#ffffff"
-CHART_TEXT = "#001f3d"
-CHART_GRID = "#e3ebf2"
+CHART_BG = CHART_BG_COLOR
+CHART_TEXT = CHART_TEXT_COLOR
+CHART_GRID = CHART_GRID_COLOR
 CHART_FONT = "Segoe UI"
 
 

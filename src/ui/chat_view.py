@@ -27,7 +27,7 @@ from ui.styles.tokens import (
     ACCENT_500, ACCENT_100,
     TEXT_PRIMARY, TEXT_SECONDARY, TEXT_INVERSE, TEXT_DISABLED,
     BG_PRIMARY, BG_SECONDARY, BG_TERTIARY,
-    BORDER_DEFAULT, BORDER_FOCUS,
+    BORDER_DEFAULT, BORDER_FOCUS, BORDER_SUBTLE,
     SUCCESS, ERROR,
     FONT_HEADLINE, FONT_BODY,
     FONT_SIZE_H2, FONT_SIZE_H3, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -383,7 +383,7 @@ class ChatView(QWidget):
             QPushButton {{
                 background-color: transparent;
                 border: none;
-                border-bottom: 1px solid rgba(136, 169, 195, 0.15);
+                border-bottom: 1px solid {BORDER_SUBTLE};
                 padding: 10px 16px;
                 text-align: left;
                 font-family: {FONT_BODY};

@@ -21,9 +21,9 @@ from api.admin import AdminAPI
 from api.provision import ProvisionAPI
 from domain.provision.entities import Employee, CommissionModel
 from ui.styles.tokens import (
-    PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
+    PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_HOVER,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
-    ERROR, SUCCESS,
+    ERROR, SUCCESS, INFO_LIGHT, TABLE_BORDER,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     ROLE_BADGE_COLORS, build_rich_tooltip, get_provision_table_style,
 )
@@ -110,7 +110,7 @@ class VerteilschluesselPanel(QWidget):
         self._formula_frame = QFrame()
         self._formula_frame.setStyleSheet(f"""
             QFrame {{
-                background-color: #eff6ff;
+                background-color: {INFO_LIGHT};
                 border: 1.5px solid {ACCENT_500};
                 border-radius: 10px;
             }}
@@ -161,7 +161,7 @@ class VerteilschluesselPanel(QWidget):
         add_model_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 8px 16px; font-weight: 500; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
         add_model_btn.clicked.connect(self._add_model)
         model_header.add_action(add_model_btn)
@@ -281,7 +281,7 @@ class VerteilschluesselPanel(QWidget):
             if not model.is_active:
                 continue
             card = QFrame()
-            card.setStyleSheet(f"background: white; border: 1.5px solid #b0c4d8; border-radius: 8px;")
+            card.setStyleSheet(f"background: {BG_PRIMARY}; border: 1.5px solid {TABLE_BORDER}; border-radius: 8px;")
             card.setContextMenuPolicy(Qt.CustomContextMenu)
             _m = model
             card.customContextMenuRequested.connect(lambda pos, m=_m, c=card: self._model_context_menu(pos, m, c))
@@ -805,7 +805,7 @@ class VerteilschluesselPanel(QWidget):
                 padding: 6px 16px;
                 font-weight: bold;
             }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
 
         status_label = QLabel()

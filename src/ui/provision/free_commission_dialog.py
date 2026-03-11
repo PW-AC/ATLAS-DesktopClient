@@ -17,7 +17,7 @@ from typing import List, Optional
 from domain.provision.entities import FreeCommission, Employee
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
-    BG_PRIMARY, ERROR, SUCCESS,
+    BG_PRIMARY, BG_SECONDARY, ERROR, ERROR_LIGHT, SUCCESS,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
 )
 from ui.provision.widgets import format_eur, get_secondary_button_style
@@ -147,7 +147,7 @@ class FreeCommissionDialog(QDialog):
                 padding: 4px 8px;
             }}
             QHeaderView::section {{
-                background-color: #e8eef4;
+                background-color: {BG_SECONDARY};
                 color: {PRIMARY_900};
                 padding: 6px 8px;
                 border: none;
@@ -207,8 +207,8 @@ class FreeCommissionDialog(QDialog):
                 font-size: {FONT_SIZE_BODY};
                 font-weight: 600;
             }}
-            QPushButton:hover {{ background-color: #1a6fb5; }}
-            QPushButton:pressed {{ background-color: #155a93; }}
+            QPushButton:hover {{ background-color: {PRIMARY_500}; }}
+            QPushButton:pressed {{ background-color: {PRIMARY_900}; }}
         """)
         self._save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(self._save_btn)
@@ -280,7 +280,7 @@ class FreeCommissionDialog(QDialog):
                 background: transparent; color: {ERROR}; border: none;
                 font-size: 12pt;
             }}
-            QPushButton:hover {{ background: #fde8e8; border-radius: 4px; }}
+            QPushButton:hover {{ background: {ERROR_LIGHT}; border-radius: 4px; }}
         """)
         remove_btn.clicked.connect(lambda _, r=row: self._remove_split_row(r))
 

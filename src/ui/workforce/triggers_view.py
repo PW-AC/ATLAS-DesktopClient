@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal
 
 from workforce.api_client import WorkforceApiClient
+from ui.workforce.utils import format_date_de
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500, FONT_BODY,
     FONT_SIZE_BODY, FONT_SIZE_CAPTION, FONT_SIZE_H2,
@@ -46,7 +47,7 @@ _ACTION_TYPES = [
 
 class _TriggerLoadThread(QThread):
     """Laedt Trigger-Daten im Hintergrund."""
-    finished = Signal(list)
+    finished = Signal(object)  # list; object verhindert Shiboken copy-convert Fehler
     error = Signal(str)
 
     def __init__(self, api: WorkforceApiClient):
@@ -592,7 +593,7 @@ class TriggersView(QWidget):
                 status_item.setForeground(Qt.GlobalColor.red)
             self._runs_table.setItem(row, 4, status_item)
 
-            self._runs_table.setItem(row, 5, QTableWidgetItem(run.get('created_at', '')))
+            self._runs_table.setItem(row, 5, QTableWidgetItem(format_date_de(run.get('created_at', '') or '')))
             self._runs_table.setItem(row, 6, QTableWidgetItem(run.get('executed_by', '')))
 
     def _prev_page(self):

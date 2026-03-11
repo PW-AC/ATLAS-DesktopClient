@@ -167,7 +167,7 @@ class BiPROProgressOverlay(QWidget):
         container.setObjectName("progressContainer")
         container.setStyleSheet(f"""
             QFrame#progressContainer {{
-                background-color: rgba(255, 255, 255, 0.98);
+                background-color: {BG_PRIMARY};
                 border-radius: {RADIUS_MD};
                 border: 2px solid {PRIMARY_500};
             }}

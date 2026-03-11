@@ -23,6 +23,7 @@ from ui.styles.tokens import (
     FONT_BODY, FONT_MONO,
     FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD,
+    SLATE,
 )
 
 __all__ = ['BoxSidebar']
@@ -309,7 +310,7 @@ class BoxSidebar(QWidget):
     
     def _set_item_color(self, item: QTreeWidgetItem, box_type: str):
         """Setzt die Farbe eines Items basierend auf dem Box-Typ."""
-        color = BOX_COLORS.get(box_type, "#9E9E9E")
+        color = BOX_COLORS.get(box_type, SLATE)
         item.setForeground(0, QBrush(QColor(color)))
     
     def _on_item_expanded(self, item: QTreeWidgetItem):

@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QUrl, QTimer
 from PySide6.QtGui import QAction, QFont, QColor
 
+from ui.styles.tokens import INFO, SUCCESS, ERROR, STATUS_SCAN, STATUS_MAIL
+
 logger = logging.getLogger(__name__)
 
 # PDF-Viewer: Versuche QPdfView zu importieren (Qt6 native PDF)
@@ -303,29 +305,29 @@ class ArchiveView(QWidget):
             # Quelle
             source_item = QTableWidgetItem(doc.source_type_display)
             if doc.source_type == 'bipro_auto':
-                source_item.setForeground(QColor("#2196F3"))
+                source_item.setForeground(QColor(INFO))
             elif doc.source_type == 'self_created':
-                source_item.setForeground(QColor("#4CAF50"))
+                source_item.setForeground(QColor(SUCCESS))
             elif doc.source_type == 'scan':
-                source_item.setForeground(QColor("#9C27B0"))
+                source_item.setForeground(QColor(STATUS_SCAN))
             elif doc.source_type == 'mail':
-                source_item.setForeground(QColor("#FF9800"))
+                source_item.setForeground(QColor(STATUS_MAIL))
             self.table.setItem(row, 2, source_item)
             
             # GDV
             gdv_item = QTableWidgetItem("Ja" if doc.is_gdv else "")
             if doc.is_gdv:
-                gdv_item.setForeground(QColor("#4CAF50"))
+                gdv_item.setForeground(QColor(SUCCESS))
             self.table.setItem(row, 3, gdv_item)
             
             # KI-Benennung Status
             if doc.ai_renamed:
                 ai_item = QTableWidgetItem("Ja")
-                ai_item.setForeground(QColor("#9C27B0"))  # Lila fuer KI
+                ai_item.setForeground(QColor(STATUS_SCAN))  # Lila fuer KI
                 ai_item.setToolTip("Durch KI umbenannt")
             elif doc.ai_processing_error:
                 ai_item = QTableWidgetItem("Fehler")
-                ai_item.setForeground(QColor("#F44336"))  # Rot fuer Fehler
+                ai_item.setForeground(QColor(ERROR))  # Rot fuer Fehler
                 ai_item.setToolTip(f"Fehler: {doc.ai_processing_error}")
             elif doc.is_pdf:
                 ai_item = QTableWidgetItem("-")

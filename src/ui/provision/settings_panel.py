@@ -17,6 +17,7 @@ from ui.styles.tokens import (
     PRIMARY_0, PRIMARY_500, PRIMARY_900, ACCENT_500,
     FONT_BODY, FONT_HEADLINE, FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     DANGER_500, SUCCESS_500,
+    ERROR, ERROR_LIGHT, BORDER_DEFAULT, BLUE_BRIGHT, INFO_LIGHT,
 )
 from i18n import de as texts
 
@@ -175,11 +176,11 @@ class ResetConfirmDialog(QDialog):
                 color: white;
             }}
             QPushButton:hover {{
-                background-color: #b91c1c;
+                background-color: {ERROR};
             }}
             QPushButton:disabled {{
-                background-color: #fca5a5;
-                color: #fef2f2;
+                background-color: {ERROR_LIGHT};
+                color: {ERROR_LIGHT};
             }}
         """)
         self._confirm_btn.clicked.connect(self.accept)
@@ -261,7 +262,7 @@ class SettingsPanel(QWidget):
         danger_frame = QFrame()
         danger_frame.setStyleSheet(f"""
             QFrame {{
-                background-color: #fef2f2;
+                background-color: {ERROR_LIGHT};
                 border: 2px solid {DANGER_500};
                 border-radius: 12px;
             }}
@@ -344,13 +345,13 @@ class SettingsPanel(QWidget):
                 color: white;
             }}
             QPushButton:hover {{
-                background-color: #b91c1c;
+                background-color: {ERROR};
             }}
             QPushButton:pressed {{
-                background-color: #991b1b;
+                background-color: {ERROR};
             }}
             QPushButton:disabled {{
-                background-color: #fca5a5;
+                background-color: {ERROR_LIGHT};
             }}
         """)
         self._reset_btn.clicked.connect(self._on_reset_clicked)
@@ -368,7 +369,7 @@ class SettingsPanel(QWidget):
         frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {PRIMARY_0};
-                border: 1px solid #e2e8f0;
+                border: 1px solid {BORDER_DEFAULT};
                 border-radius: 12px;
             }}
         """)
@@ -388,7 +389,7 @@ class SettingsPanel(QWidget):
 
         sep = QFrame()
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: #e2e8f0;")
+        sep.setStyleSheet("background-color: {BORDER_DEFAULT};")
         fl.addWidget(sep)
 
         row = QHBoxLayout()
@@ -429,7 +430,7 @@ class SettingsPanel(QWidget):
                 font-family: {FONT_BODY};
                 font-size: {FONT_SIZE_BODY};
                 padding: 6px 12px;
-                border: 1px solid #cbd5e1;
+                border: 1px solid {BORDER_DEFAULT};
                 border-radius: 6px;
                 background-color: white;
                 color: {PRIMARY_900};
@@ -460,10 +461,10 @@ class SettingsPanel(QWidget):
                 color: white;
             }}
             QPushButton:hover {{
-                background-color: #2563eb;
+                background-color: {BLUE_BRIGHT};
             }}
             QPushButton:disabled {{
-                background-color: #93c5fd;
+                background-color: {INFO_LIGHT};
             }}
         """)
         self._save_settings_btn.clicked.connect(self._on_save_settings)
@@ -481,7 +482,7 @@ class SettingsPanel(QWidget):
         frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {PRIMARY_0};
-                border: 1px solid #e2e8f0;
+                border: 1px solid {BORDER_DEFAULT};
                 border-radius: 12px;
             }}
         """)
@@ -501,7 +502,7 @@ class SettingsPanel(QWidget):
 
         sep = QFrame()
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: #e2e8f0;")
+        sep.setStyleSheet("background-color: {BORDER_DEFAULT};")
         fl.addWidget(sep)
 
         formula_lbl = QLabel(texts.PM_SETTINGS_FACTOR_FORMULA)
@@ -511,7 +512,7 @@ class SettingsPanel(QWidget):
             color: {ACCENT_500};
             font-weight: 600;
             padding: 8px 12px;
-            background-color: #eff6ff;
+            background-color: {INFO_LIGHT};
             border-radius: 6px;
         """)
         fl.addWidget(formula_lbl)
@@ -548,7 +549,7 @@ class SettingsPanel(QWidget):
                 font-family: {FONT_BODY};
                 font-size: {FONT_SIZE_BODY};
                 padding: 6px 12px;
-                border: 1px solid #cbd5e1;
+                border: 1px solid {BORDER_DEFAULT};
                 border-radius: 6px;
                 background-color: white;
                 color: {PRIMARY_900};
@@ -587,7 +588,7 @@ class SettingsPanel(QWidget):
                 font-family: {FONT_BODY};
                 font-size: {FONT_SIZE_BODY};
                 padding: 6px 12px;
-                border: 1px solid #cbd5e1;
+                border: 1px solid {BORDER_DEFAULT};
                 border-radius: 6px;
                 background-color: white;
                 color: {PRIMARY_900};
@@ -601,7 +602,7 @@ class SettingsPanel(QWidget):
 
         tl_sep = QFrame()
         tl_sep.setFixedHeight(1)
-        tl_sep.setStyleSheet("background-color: #e2e8f0;")
+        tl_sep.setStyleSheet("background-color: {BORDER_DEFAULT};")
         fl.addWidget(tl_sep)
 
         tl_row = QHBoxLayout()

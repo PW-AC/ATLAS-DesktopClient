@@ -17,8 +17,9 @@ from PySide6.QtGui import QPainter, QColor, QFont, QPen, QFontMetrics
 
 from ui.styles.tokens import (
     PRIMARY_0, PRIMARY_100, PRIMARY_500, PRIMARY_900,
-    ACCENT_500, BG_PRIMARY, BG_SECONDARY, BG_TERTIARY,
+    ACCENT_500, ACCENT_HOVER, BG_PRIMARY, BG_SECONDARY, BG_TERTIARY,
     BORDER_DEFAULT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED,
+    BLUE_BRIGHT, VIOLET,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     FONT_WEIGHT_MEDIUM, FONT_WEIGHT_BOLD,
     RADIUS_MD, RADIUS_LG, SPACING_SM, SPACING_MD, SPACING_LG, SPACING_XL,
@@ -361,7 +362,7 @@ class KpiCard(QFrame):
         self.setStyleSheet(f"""
             KpiCard {{
                 background-color: white;
-                border: 1px solid #e0e0e0;
+                border: 1px solid {BORDER_DEFAULT};
                 border-radius: 8px;
                 border-top: 3px solid {accent_color};
             }}
@@ -432,7 +433,7 @@ class KpiCard(QFrame):
                 font-size: {FONT_SIZE_CAPTION};
                 font-weight: 500;
             }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
         """)
         if callback:
             btn.clicked.connect(callback)
@@ -479,10 +480,10 @@ class PaginationBar(QWidget):
                 min-height: 32px;
             }}
             QPushButton:hover {{
-                background-color: #0a3460;
+                background-color: {PRIMARY_900};
             }}
             QPushButton:disabled {{
-                background-color: #c8d3de;
+                background-color: {PRIMARY_100};
                 color: white;
             }}
         """
@@ -563,7 +564,7 @@ class StatementCard(QFrame):
         self.setStyleSheet(f"""
             StatementCard {{
                 background-color: white;
-                border: 1px solid #e0e0e0;
+                border: 1px solid {BORDER_DEFAULT};
                 border-radius: 8px;
             }}
         """)
@@ -624,11 +625,11 @@ class ActivityFeedWidget(QWidget):
 
     COLORS = {
         "created":  SUCCESS,
-        "changed":  "#3b82f6",
+        "changed":  BLUE_BRIGHT,
         "deleted":  ERROR,
         "import":   ACCENT_500,
         "matched":  SUCCESS,
-        "status":   "#8b5cf6",
+        "status":   VIOLET,
         "default":  PRIMARY_500,
     }
 
@@ -711,12 +712,12 @@ def get_secondary_button_style() -> str:
             border-color: {PRIMARY_900};
         }}
         QPushButton:pressed {{
-            background-color: #c8d6e5;
+            background-color: {PRIMARY_100};
         }}
         QPushButton:disabled {{
-            color: #b0b0b0;
-            border-color: #d0d0d0;
-            background-color: #f5f5f5;
+            color: {TEXT_DISABLED};
+            border-color: {BORDER_DEFAULT};
+            background-color: {BG_TERTIARY};
         }}
     """
 

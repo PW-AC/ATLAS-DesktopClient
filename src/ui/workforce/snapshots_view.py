@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QRunnable, QObject, Signal, QThreadPool
 
 from workforce.api_client import WorkforceApiClient
+from ui.workforce.utils import format_date_de
 from ui.styles.tokens import (
     PRIMARY_900, ACCENT_500, ACCENT_100,
     FONT_HEADLINE, FONT_BODY, FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -348,9 +349,7 @@ class SnapshotsView(QWidget):
         self._snapshot_table.setRowCount(len(self._snapshots))
 
         for row, snap in enumerate(self._snapshots):
-            ts = snap.get('snapshot_ts', '-')
-            if ts != '-':
-                ts = ts[:19].replace('T', ' ')
+            ts = format_date_de(snap.get('snapshot_ts', '-'))
             self._snapshot_table.setItem(row, 0, QTableWidgetItem(ts))
 
             count = snap.get('employee_count', 0)
@@ -389,9 +388,7 @@ class SnapshotsView(QWidget):
         self._snap_a_combo.clear()
         self._snap_b_combo.clear()
         for snap in self._snapshots:
-            ts = snap.get('snapshot_ts', '-')
-            if ts != '-':
-                ts = ts[:19].replace('T', ' ')
+            ts = format_date_de(snap.get('snapshot_ts', '-'))
             count = snap.get('employee_count', 0)
             label = f"{ts}  ({count} MA)"
             self._snap_a_combo.addItem(label, snap.get('id'))
@@ -429,8 +426,8 @@ class SnapshotsView(QWidget):
 
         snap_a = result.get('snap_a', {})
         snap_b = result.get('snap_b', {})
-        ts_a = snap_a.get('snapshot_ts', '?')[:19].replace('T', ' ')
-        ts_b = snap_b.get('snapshot_ts', '?')[:19].replace('T', ' ')
+        ts_a = format_date_de(snap_a.get('snapshot_ts', '?'))
+        ts_b = format_date_de(snap_b.get('snapshot_ts', '?'))
         self._diff_header.setText(texts.WF_SNAPSHOT_DIFF_HEADER.format(ts_a=ts_a, ts_b=ts_b))
 
         self._added_badge.setText(texts.WF_DIFF_ADDED_BADGE.format(count=len(added)))
@@ -494,7 +491,7 @@ class SnapshotsView(QWidget):
         accent_bg: str, subtitle: str, field_changes: dict | None = None,
     ) -> QFrame:
         name = person_info.get('name', person_info.get('pid', '?'))
-        geburtsdatum = person_info.get('geburtsdatum', '')
+        geburtsdatum = format_date_de(person_info.get('geburtsdatum', '')) if person_info.get('geburtsdatum') else ''
         personalnummer = person_info.get('personalnummer', '')
 
         card = QFrame()
@@ -603,8 +600,10 @@ class SnapshotsView(QWidget):
             grid.addWidget(arrow_hdr, 0, 2)
 
             for row_idx, (field, vals) in enumerate(field_changes.items(), start=1):
-                old_val = str(vals.get('old', '-')) if vals.get('old', '') != '' else '-'
-                new_val = str(vals.get('new', '-')) if vals.get('new', '') != '' else '-'
+                old_raw = vals.get('old', '')
+                new_raw = vals.get('new', '')
+                old_val = format_date_de(str(old_raw)) if old_raw != '' else '-'
+                new_val = format_date_de(str(new_raw)) if new_raw != '' else '-'
 
                 bg = "transparent" if row_idx % 2 == 0 else BG_TERTIARY
                 cell_base = f"""
@@ -655,7 +654,7 @@ class SnapshotsView(QWidget):
 
     def _on_delete_snapshot(self, snapshot: dict):
         snap_id = snapshot.get('id')
-        ts = snapshot.get('snapshot_ts', '?')[:19].replace('T', ' ')
+        ts = format_date_de(snapshot.get('snapshot_ts', '?'))
 
         reply = QMessageBox.question(
             self, texts.WARNING,

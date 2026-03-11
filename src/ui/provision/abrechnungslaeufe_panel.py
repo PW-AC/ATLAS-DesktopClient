@@ -19,8 +19,9 @@ import os
 from api.provision import ProvisionAPI
 from domain.provision.entities import ImportBatch, ImportResult
 from ui.styles.tokens import (
-    PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
-    BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
+    PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_HOVER,
+    BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT, TABLE_BORDER,
+    TEXT_DISABLED,
     SUCCESS, ERROR, WARNING,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     PILL_COLORS, get_provision_table_style,
@@ -101,7 +102,7 @@ class AbrechnungslaeufPanel(QWidget):
 
         # Import-Bereich
         import_frame = QFrame()
-        import_frame.setStyleSheet(f"background: white; border: 1.5px solid #b0c4d8; border-radius: 8px;")
+        import_frame.setStyleSheet(f"background: {BG_PRIMARY}; border: 1.5px solid {TABLE_BORDER}; border-radius: 8px;")
         import_layout = QVBoxLayout(import_frame)
         import_layout.setContentsMargins(20, 16, 20, 16)
         import_layout.setSpacing(10)
@@ -145,8 +146,8 @@ class AbrechnungslaeufPanel(QWidget):
         self._import_btn.setStyleSheet(f"""
             QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
                 border-radius: 6px; padding: 8px 16px; font-weight: 500; }}
-            QPushButton:hover {{ background-color: #e88a2d; }}
-            QPushButton:disabled {{ background-color: {PRIMARY_100}; color: #a0a0a0; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
+            QPushButton:disabled {{ background-color: {PRIMARY_100}; color: {TEXT_DISABLED}; }}
         """)
         self._import_btn.clicked.connect(self._start_import)
         btn_row.addWidget(self._import_btn)

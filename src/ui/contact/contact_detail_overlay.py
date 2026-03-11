@@ -25,6 +25,7 @@ from ui.styles.tokens import (
     FONT_SIZE_BODY, FONT_SIZE_CAPTION, FONT_SIZE_H2,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT, RADIUS_MD,
     PRIMARY_0, PRIMARY_100, FONT_WEIGHT_BOLD,
+    ERROR, SUCCESS, TEXT_INVERSE, WARNING_LIGHT,
     get_button_primary_style, get_button_secondary_style,
 )
 from i18n import de as texts
@@ -177,7 +178,7 @@ class MergeConflictDialog(QDialog):
             root.addWidget(transfer_lbl)
 
         warn = QLabel(f"\u26A0  {texts.CONTACT_MERGE_DELETE_INFO}")
-        warn.setStyleSheet(f"font-family: {FONT_BODY}; font-size: {FONT_SIZE_BODY}; color: #D32F2F; font-weight: bold;")
+        warn.setStyleSheet(f"font-family: {FONT_BODY}; font-size: {FONT_SIZE_BODY}; color: {ERROR}; font-weight: bold;")
         warn.setWordWrap(True)
         root.addWidget(warn)
 
@@ -316,7 +317,7 @@ class ContactDetailOverlay(QWidget):
         self._merge_frame = QFrame()
         self._merge_frame.setStyleSheet(f"""
             QFrame {{
-                background-color: #FFF8E1; border: 1px solid #FFD54F;
+                background-color: {WARNING_LIGHT}; border: 1px solid {ACCENT_500};
                 border-radius: 6px; padding: 10px;
             }}
         """)
@@ -478,7 +479,7 @@ class ContactDetailOverlay(QWidget):
             QFrame#cdCbPanel {{
                 background-color: {PRIMARY_0};
                 border-radius: {RADIUS_MD};
-                border: 1px solid #D32F2F;
+                border: 1px solid {ERROR};
             }}
         """)
         cb_layout = QVBoxLayout(self._cb_panel)
@@ -487,7 +488,7 @@ class ContactDetailOverlay(QWidget):
         cb_title = QLabel(f"\U0001F514 {texts.CONTACT_CALLBACK_OPEN}")
         cb_title.setStyleSheet(
             f"font-family: {FONT_BODY}; font-size: 11pt; font-weight: {FONT_WEIGHT_BOLD}; "
-            f"color: #D32F2F; background: transparent; border: none;"
+            f"color: {ERROR}; background: transparent; border: none;"
         )
         cb_layout.addWidget(cb_title)
         self._cb_scroll = QScrollArea()
@@ -850,7 +851,7 @@ class ContactDetailOverlay(QWidget):
             lbl = QLabel(txt)
             lbl.setStyleSheet(
                 f"font-family: {FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
-                f"color: #D32F2F; border: none; background: transparent;"
+                f"color: {ERROR}; border: none; background: transparent;"
             )
             lbl.setWordWrap(True)
             r.addWidget(lbl)
@@ -858,10 +859,10 @@ class ContactDetailOverlay(QWidget):
             done_btn = QPushButton(f"\u2714 {texts.CONTACT_CALLBACK_MARK_DONE}")
             done_btn.setCursor(Qt.PointingHandCursor)
             done_btn.setStyleSheet(
-                f"QPushButton {{ background: transparent; border: 1px solid #4CAF50; "
-                f"border-radius: 4px; padding: 4px 8px; color: #4CAF50; "
+                f"QPushButton {{ background: transparent; border: 1px solid {SUCCESS}; "
+                f"border-radius: 4px; padding: 4px 8px; color: {SUCCESS}; "
                 f"font-family: {FONT_BODY}; font-size: {FONT_SIZE_CAPTION}; }} "
-                f"QPushButton:hover {{ background: #4CAF50; color: white; }}"
+                f"QPushButton:hover {{ background: {SUCCESS}; color: {TEXT_INVERSE}; }}"
             )
             done_btn.clicked.connect(lambda chk=False, i=cid: self._mark_done(i))
             r.addWidget(done_btn)

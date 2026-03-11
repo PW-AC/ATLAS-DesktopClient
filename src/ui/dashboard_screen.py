@@ -25,8 +25,8 @@ from ui.styles.tokens import (
     FONT_SIZE_H1, FONT_SIZE_H2, FONT_SIZE_H3, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     FONT_WEIGHT_BOLD, FONT_WEIGHT_MEDIUM,
     PRIMARY_900, PRIMARY_500, PRIMARY_100, PRIMARY_0,
-    ACCENT_500, ACCENT_100,
-    TEXT_INVERSE,
+    ACCENT_500, ACCENT_100, ACCENT_HOVER,
+    TEXT_INVERSE, TEXT_SECONDARY,
     BG_PRIMARY, BG_TERTIARY,
     BORDER_DEFAULT,
     RADIUS_LG, RADIUS_MD,
@@ -34,6 +34,8 @@ from ui.styles.tokens import (
     WARNING, WARNING_LIGHT,
     ERROR, ERROR_LIGHT,
     INFO, INFO_LIGHT,
+    CRITICAL, CRITICAL_LIGHT,
+    INDIGO,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +46,7 @@ _SEVERITY_COLORS = {
     'info': (INFO, INFO_LIGHT),
     'warning': (WARNING, WARNING_LIGHT),
     'error': (ERROR, ERROR_LIGHT),
-    'critical': ('#7c2d12', '#fef2f2'),
+    'critical': (CRITICAL, CRITICAL_LIGHT),
 }
 
 _SEVERITY_LABELS = {
@@ -170,7 +172,7 @@ class _SettingsOverlay(QWidget):
     """Modales Einstellungs-Overlay mit Backdrop und Fade-Animation."""
 
     close_requested = Signal()
-    save_requested = Signal(str, str)
+    save_requested = Signal(str, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -182,7 +184,7 @@ class _SettingsOverlay(QWidget):
         outer.setAlignment(Qt.AlignCenter)
 
         self._panel = QFrame()
-        self._panel.setFixedSize(560, 680)
+        self._panel.setFixedSize(560, 820)
         self._panel.setStyleSheet(f"""
             QFrame {{
                 background-color: {PRIMARY_0};
@@ -320,6 +322,66 @@ class _SettingsOverlay(QWidget):
 
         a_layout.addSpacing(8)
 
+        # ── Theme (Dark/Light) ─────────────────────────────────────
+        theme_header = QLabel(texts.SETTINGS_THEME_SECTION)
+        theme_header.setStyleSheet(
+            f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H3}; "
+            f"font-weight: {FONT_WEIGHT_BOLD}; color: {PRIMARY_900}; border: none;"
+        )
+        a_layout.addWidget(theme_header)
+
+        current_theme = _tokens.get_current_theme()
+        self._theme_group = QButtonGroup(self)
+        self._theme_cards: dict[str, tuple[QFrame, QRadioButton]] = {}
+
+        _themes = [
+            ("light", texts.SETTINGS_THEME_LIGHT, texts.SETTINGS_THEME_LIGHT_DESC),
+            ("dark", texts.SETTINGS_THEME_DARK, texts.SETTINGS_THEME_DARK_DESC),
+        ]
+
+        for theme_id, title, desc in _themes:
+            tcard = _ClickableFrame()
+            tcard.setCursor(Qt.PointingHandCursor)
+            tc_lay = QHBoxLayout(tcard)
+            tc_lay.setContentsMargins(16, 10, 16, 10)
+            tc_lay.setSpacing(12)
+
+            tradio = QRadioButton()
+            tradio.setChecked(theme_id == current_theme)
+            tradio.setProperty("theme_id", theme_id)
+            tradio.setStyleSheet("QRadioButton { border: none; }")
+            tcard.clicked.connect(lambda r=tradio: r.setChecked(True))
+            tc_lay.addWidget(tradio)
+
+            t_text_col = QVBoxLayout()
+            t_text_col.setSpacing(2)
+            t_name = QLabel(title)
+            t_name.setStyleSheet(
+                f"font-family: {_tokens.FONT_BODY}; font-weight: {FONT_WEIGHT_BOLD}; "
+                f"color: {PRIMARY_900}; border: none;"
+            )
+            t_name.setAttribute(Qt.WA_TransparentForMouseEvents)
+            t_text_col.addWidget(t_name)
+
+            t_desc = QLabel(desc)
+            t_desc.setStyleSheet(
+                f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION}; "
+                f"color: {PRIMARY_500}; border: none;"
+            )
+            t_desc.setAttribute(Qt.WA_TransparentForMouseEvents)
+            t_text_col.addWidget(t_desc)
+
+            tc_lay.addLayout(t_text_col, 1)
+
+            self._theme_group.addButton(tradio)
+            self._theme_cards[theme_id] = (tcard, tradio)
+            a_layout.addWidget(tcard)
+
+        self._update_theme_card_styles()
+        self._theme_group.buttonClicked.connect(self._on_theme_changed)
+
+        a_layout.addSpacing(8)
+
         import i18n as _i18n_mod
         lang_header = QLabel(texts.SETTINGS_LANGUAGE_SECTION)
         lang_header.setStyleSheet(
@@ -376,7 +438,7 @@ class _SettingsOverlay(QWidget):
                 font-weight: {FONT_WEIGHT_MEDIUM};
             }}
             QPushButton:hover {{
-                background-color: #e88a2d;
+                background-color: {ACCENT_HOVER};
             }}
         """)
         save_btn.clicked.connect(self._on_save)
@@ -400,12 +462,17 @@ class _SettingsOverlay(QWidget):
     def _on_lang_changed(self, _button):
         self._update_lang_card_styles()
 
+    def _on_theme_changed(self, _button):
+        self._update_theme_card_styles()
+
     def _on_save(self):
         font_btn = self._font_group.checkedButton()
         lang_btn = self._lang_group.checkedButton()
+        theme_btn = self._theme_group.checkedButton()
         font_preset = font_btn.property("preset_id") if font_btn else "classic"
         lang_code = lang_btn.property("lang_code") if lang_btn else "de"
-        self.save_requested.emit(font_preset, lang_code)
+        theme_id = theme_btn.property("theme_id") if theme_btn else "light"
+        self.save_requested.emit(font_preset, lang_code, theme_id)
 
     def reset_to_current(self):
         """Setzt die Radio-Buttons auf den aktuell gespeicherten Wert."""
@@ -415,6 +482,11 @@ class _SettingsOverlay(QWidget):
         for _pid, (card, radio) in self._font_cards.items():
             radio.setChecked(_pid == current)
         self._update_font_card_styles()
+
+        current_theme = _tokens.get_current_theme()
+        for _tid, (card, radio) in self._theme_cards.items():
+            radio.setChecked(_tid == current_theme)
+        self._update_theme_card_styles()
 
         import i18n as _i18n_mod
         current_lang = _i18n_mod.get_language()
@@ -443,6 +515,25 @@ class _SettingsOverlay(QWidget):
 
     def _update_lang_card_styles(self):
         for lid, (card, radio) in self._lang_cards.items():
+            if radio.isChecked():
+                card.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {PRIMARY_0};
+                        border: 2px solid {ACCENT_500};
+                        border-radius: {RADIUS_LG};
+                    }}
+                """)
+            else:
+                card.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {PRIMARY_0};
+                        border: 1px solid {BORDER_DEFAULT};
+                        border-radius: {RADIUS_LG};
+                    }}
+                """)
+
+    def _update_theme_card_styles(self):
+        for tid, (card, radio) in self._theme_cards.items():
             if radio.isChecked():
                 card.setStyleSheet(f"""
                     QFrame {{
@@ -563,7 +654,7 @@ class DashboardScreen(QWidget):
         self._tenant_label = QLabel()
         self._tenant_label.setStyleSheet(
             f"font-family: {_tokens.FONT_BODY}; font-size: 10pt; "
-            f"color: #6b7280; background: transparent;"
+            f"color: {TEXT_SECONDARY}; background: transparent;"
         )
         if self._tenant_name:
             self._tenant_label.setText(self._tenant_name)
@@ -820,7 +911,7 @@ class DashboardScreen(QWidget):
         contact_group = QVBoxLayout()
         contact_group.setSpacing(6)
         tile_contact = _ModuleTile(
-            texts.CONTACT_DASHBOARD_TILE, texts.CONTACT_DASHBOARD_TILE_DESC, "#5C6BC0",
+            texts.CONTACT_DASHBOARD_TILE, texts.CONTACT_DASHBOARD_TILE_DESC, INDIGO,
         )
         tile_contact.clicked.connect(lambda: self.module_requested.emit("contact"))
         contact_group.addWidget(tile_contact)
@@ -879,7 +970,7 @@ class DashboardScreen(QWidget):
             callback=lambda: self._content.setGraphicsEffect(None)
         )
 
-    def _on_settings_saved(self, preset_id: str, lang_code: str):
+    def _on_settings_saved(self, preset_id: str, lang_code: str, theme_id: str):
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QFont, QFontDatabase
         import ui.styles.tokens as _tok
@@ -888,7 +979,11 @@ class DashboardScreen(QWidget):
         QSettings("ACENCIA GmbH", "ACENCIA ATLAS").setValue(
             "appearance/font_preset", preset_id
         )
+        QSettings("ACENCIA GmbH", "ACENCIA ATLAS").setValue(
+            "appearance/theme", theme_id
+        )
         _tok.apply_font_preset(preset_id)
+        _tok.apply_theme(theme_id)
         _i18n_mod.set_language(lang_code)
 
         app = QApplication.instance()

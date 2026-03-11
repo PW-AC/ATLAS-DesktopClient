@@ -20,6 +20,7 @@ from domain.provision.entities import (
 )
 from ui.styles.tokens import (
     PRIMARY_500, SUCCESS, ERROR, WARNING,
+    AMBER, BLUE_BRIGHT,
     ROLE_BADGE_COLORS, build_rich_tooltip,
 )
 from ui.provision.widgets import format_eur
@@ -542,7 +543,7 @@ class PositionsModel(QAbstractTableModel):
         if role == Qt.ForegroundRole:
             if col == self.COL_BETRAG:
                 if c.is_overridden:
-                    return QColor("#b45309")
+                    return QColor(AMBER)
                 if c.effective_amount < 0:
                     return QColor(ERROR)
 
@@ -1301,7 +1302,7 @@ class XempusContractsModel(QAbstractTableModel):
         if role == Qt.ForegroundRole:
             if col == self.COL_STATUS:
                 key = xempus_status_key(c)
-                colors = {'zugeordnet': SUCCESS, 'offen': WARNING, 'beantragt': '#5b8def'}
+                colors = {'zugeordnet': SUCCESS, 'offen': WARNING, 'beantragt': BLUE_BRIGHT}
                 color = colors.get(key, PRIMARY_500)
                 return QColor(color)
 

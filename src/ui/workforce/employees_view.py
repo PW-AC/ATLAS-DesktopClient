@@ -19,6 +19,7 @@ from PySide6.QtGui import QFont, QColor, QAction, QGuiApplication
 
 from workforce.api_client import WorkforceApiClient
 from workforce.workers import SyncWorker
+from ui.workforce.utils import format_date_de
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_100,
     FONT_HEADLINE, FONT_BODY, FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -242,9 +243,9 @@ class EmployeeDetailDialog(QDialog):
         if self._emp.get('data_hash'):
             meta_fields.append({'label': 'Daten-Hash', 'value': self._emp['data_hash'][:16] + '...'})
         if self._emp.get('last_synced_at'):
-            meta_fields.append({'label': 'Letzte Sync', 'value': self._emp['last_synced_at']})
+            meta_fields.append({'label': 'Letzte Sync', 'value': format_date_de(self._emp['last_synced_at'])})
         if self._emp.get('created_at'):
-            meta_fields.append({'label': 'Erstellt', 'value': self._emp['created_at']})
+            meta_fields.append({'label': 'Erstellt', 'value': format_date_de(self._emp['created_at'])})
 
         if meta_fields:
             card = self._build_group_card("Systeminformationen (ATLAS)", meta_fields)
@@ -644,8 +645,8 @@ class EmployeesView(QWidget):
             (texts.WF_DETAIL_POSITION, emp.get('position')),
             (texts.WF_DETAIL_STATUS, emp.get('status')),
             (texts.WF_DETAIL_PERSON_ID, emp.get('provider_pid')),
-            (texts.WF_DETAIL_JOIN_DATE, emp.get('join_date')),
-            (texts.WF_DETAIL_LEAVE_DATE, emp.get('leave_date')),
+            (texts.WF_DETAIL_JOIN_DATE, format_date_de(v) if (v := emp.get('join_date')) else None),
+            (texts.WF_DETAIL_LEAVE_DATE, format_date_de(v) if (v := emp.get('leave_date')) else None),
         ]
         for label_text, value in fallback_fields:
             if value:
@@ -657,7 +658,7 @@ class EmployeesView(QWidget):
         if emp.get('provider_pid'):
             meta.append((texts.WF_DETAIL_PERSON_ID, emp['provider_pid']))
         if emp.get('last_synced_at'):
-            meta.append((texts.WF_DETAIL_LAST_SYNCED, emp['last_synced_at']))
+            meta.append((texts.WF_DETAIL_LAST_SYNCED, format_date_de(emp['last_synced_at'])))
         if not meta:
             return
 
