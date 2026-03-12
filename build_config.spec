@@ -30,6 +30,10 @@ tiktoken_datas = collect_data_files('tiktoken')
 # certifi: CA-Zertifikatbundle (HTTPS-Verbindungen via requests/urllib3)
 certifi_datas = collect_data_files('certifi')
 
+# matplotlib: Chart-Rendering fuer Workforce-Statistiken
+matplotlib_datas = collect_data_files('matplotlib')
+matplotlib_imports = collect_submodules('matplotlib')
+
 # keyring: Backend-Module dynamisch geladen
 keyring_imports = collect_submodules('keyring.backends')
 
@@ -52,6 +56,7 @@ a = Analysis(
         *pyside6_datas,
         *tiktoken_datas,
         *certifi_datas,
+        *matplotlib_datas,
     ],
     hiddenimports=[
         # ---- PySide6 ----
@@ -159,13 +164,23 @@ a = Analysis(
 
         # ---- Logging ----
         'logging.handlers',
+
+        # ---- Matplotlib (Workforce-Statistik-Charts) ----
+        'matplotlib',
+        'matplotlib.pyplot',
+        'matplotlib.figure',
+        'matplotlib.backends.backend_qtagg',
+        'matplotlib.backends.backend_agg',
+        'matplotlib.ticker',
+        'numpy',
+        'numpy.core',
+        'numpy.core._multiarray_umath',
+        *matplotlib_imports,
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'matplotlib',
-        'numpy',
         'scipy',
         'pandas',
         'tkinter',

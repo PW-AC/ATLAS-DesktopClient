@@ -36,6 +36,7 @@ def _cors_origin(origin: str, allowed: str) -> str:
 class _CallPopSignals(QObject):
     call_pop_requested = Signal(str)
     call_pop_refocus = Signal()
+    call_pop_event_v2 = Signal(dict)
 
 
 class _CallPopHandler(BaseHTTPRequestHandler):
@@ -55,6 +56,11 @@ class _CallPopHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.send_header("Access-Control-Max-Age", "86400")
+        # Private Network Access (PNA): Chrome/Edge senden diesen Header wenn eine
+        # oeffentliche HTTPS-Seite auf localhost zugreift. Ohne diese Antwort
+        # blockiert der Browser den Haupt-Request bevor er die App erreicht.
+        if self.headers.get("Access-Control-Request-Private-Network"):
+            self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -70,7 +76,11 @@ class _CallPopHandler(BaseHTTPRequestHandler):
             return
 
         params = parse_qs(parsed.query)
+        schema_version = int((params.get("schema_version", ["1"])[0] or "1"))
         phone = (params.get("phone", [""])[0] or "").strip()
+
+        if schema_version >= 2:
+            phone = phone or (params.get("phone_raw", [""])[0] or "").strip()
 
         if not phone or not PHONE_RE.match(phone):
             self._json(400, {"success": False, "error": "Invalid phone"})
@@ -93,8 +103,19 @@ class _CallPopHandler(BaseHTTPRequestHandler):
             logger.info("[CALL-POP] Duplikat (15s): %s → refocus", phone)
             self.server.signals.call_pop_refocus.emit()
         else:
-            logger.info("[CALL-POP] Neuer Anruf: %s", phone)
+            logger.info("[CALL-POP] Neuer Anruf: %s (v%d)", phone, schema_version)
             self.server.signals.call_pop_requested.emit(phone)
+            if schema_version >= 2:
+                v2_payload = {
+                    "schema_version": schema_version,
+                    "phone_raw": phone,
+                    "source": (params.get("source", ["core"])[0] or "core"),
+                    "external_call_id": (params.get("external_call_id", [None])[0]),
+                    "provider_event_ts_utc": (params.get("provider_event_ts_utc", [None])[0]),
+                    "received_at_utc": (params.get("received_at_utc", [None])[0]),
+                    "payload_id": (params.get("payload_id", [None])[0]),
+                }
+                self.server.signals.call_pop_event_v2.emit(v2_payload)
 
         self._json(200, {"success": True, "phone": phone, "duplicate": is_dedup})
 
@@ -107,6 +128,8 @@ class _CallPopHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         if allowed:
             self.send_header("Access-Control-Allow-Origin", allowed)
+        # Private Network Access: Antwort-Header damit Chrome/Edge localhost erlaubt
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
         self.wfile.write(payload)
 
@@ -145,6 +168,10 @@ class CallPopListener:
     @property
     def call_pop_refocus(self) -> Signal:
         return self._signals.call_pop_refocus
+
+    @property
+    def call_pop_event_v2(self) -> Signal:
+        return self._signals.call_pop_event_v2
 
     def start(self) -> bool:
         if self._server is not None:

@@ -4,7 +4,7 @@ Contact Card Widget - QFrame-basierte Karte zur Darstellung eines Kontakts.
 Zeigt Anzeigename, Geburtsdatum, Telefon, Tags und Mini-Historie.
 """
 
-import urllib.parse
+import logging
 
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
@@ -12,6 +12,12 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
+
+from services.contact.call_runtime_service import CallRuntimeService
+from domain.contact.runtime_models import TeamsLaunchStatus
+
+_logger = logging.getLogger(__name__)
+_teams_service = CallRuntimeService()
 
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500,
@@ -113,12 +119,14 @@ def _phone_for_teams(phone: str, default_country: str = '+49') -> str:
 
 
 def call_with_teams(number: str) -> None:
-    """Startet einen Teams-PSTN-Anruf fuer die uebergebene E.164-Nummer."""
+    """Startet einen Teams-PSTN-Anruf ueber den zentralen TeamsCallGuard."""
     if not number:
         return
-    users_value = f"4:{number}"
-    uri = f"https://teams.microsoft.com/l/call/0/0?users={urllib.parse.quote(users_value, safe='')}"
-    QDesktopServices.openUrl(QUrl(uri))
+    result = _teams_service.launch_teams_call(phone=number)
+    if result.status == TeamsLaunchStatus.OK and result.url:
+        QDesktopServices.openUrl(QUrl(result.url))
+    elif result.status != TeamsLaunchStatus.OK:
+        _logger.warning("[TEAMS-CALL] Abgelehnt: %s", result.error_message)
 
 
 def copy_phone_to_clipboard(number: str) -> None:

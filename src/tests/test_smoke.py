@@ -448,6 +448,64 @@ class TestAPIIntegration:
 
 
 # ==============================================================================
+# 9. Contact / Call Runtime Smoke Tests
+# ==============================================================================
+
+class TestContactCallSmoke:
+    """Smoke-Tests fuer Contact-/Call-/Teams-Laufzeitlogik."""
+
+    def test_domain_models_importable(self):
+        from domain.contact.runtime_models import (
+            IncomingCallEvent, CallValidationStatus,
+            TeamsCallTarget, TeamsLaunchStatus,
+            normalize_phone, normalize_call_payload,
+        )
+        assert hasattr(CallValidationStatus, 'OK')
+        assert hasattr(TeamsLaunchStatus, 'OK')
+
+    def test_guards_importable(self):
+        from domain.contact.runtime_checks import CallRuntimeGuard, TeamsCallGuard
+        guard = CallRuntimeGuard()
+        teams = TeamsCallGuard()
+        assert guard is not None
+        assert teams is not None
+
+    def test_service_importable(self):
+        from services.contact.call_runtime_service import CallRuntimeService
+        svc = CallRuntimeService()
+        assert svc is not None
+
+    def test_normalize_phone_smoke(self):
+        from domain.contact.runtime_models import normalize_phone
+        assert normalize_phone("+4917612345678") == "+4917612345678"
+        assert normalize_phone("") is None
+        assert normalize_phone("abc") is None
+
+    def test_call_guard_does_not_crash(self):
+        from domain.contact.runtime_checks import CallRuntimeGuard
+        from domain.contact.runtime_models import IncomingCallEvent, CallValidationStatus
+        from datetime import datetime, timezone
+        guard = CallRuntimeGuard()
+        event = IncomingCallEvent(
+            schema_version=1, source="core",
+            phone_raw="+4917612345678", external_call_id=None,
+            provider_event_ts_utc=None,
+            received_at_utc=datetime.now(timezone.utc),
+        )
+        result = guard.validate(event)
+        assert result.status == CallValidationStatus.OK
+
+    def test_teams_guard_does_not_crash(self):
+        from domain.contact.runtime_checks import TeamsCallGuard
+        from domain.contact.runtime_models import TeamsCallTarget, TeamsLaunchStatus
+        guard = TeamsCallGuard()
+        target = TeamsCallTarget(phone_normalized="+4917612345678")
+        result = guard.validate_and_build(target)
+        assert result.status == TeamsLaunchStatus.OK
+        assert "msteams://" in result.url
+
+
+# ==============================================================================
 # Main
 # ==============================================================================
 

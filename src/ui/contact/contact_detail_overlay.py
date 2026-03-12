@@ -1171,7 +1171,7 @@ class ContactDetailOverlay(QWidget):
         if not self._cid:
             return
         from ui.contact.contact_call_dialog import ContactCallDialog
-        dlg = ContactCallDialog(self._api, self._cid, self)
+        dlg = ContactCallDialog(self._api, self._cid, self, contact_data=self._data)
         dlg.call_saved.connect(self._on_call_saved)
         dlg.exec()
 

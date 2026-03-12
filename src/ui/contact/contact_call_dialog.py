@@ -8,19 +8,51 @@ import logging
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QComboBox, QLineEdit,
     QTextEdit, QCheckBox, QDateEdit, QTimeEdit, QPushButton,
-    QHBoxLayout,
+    QHBoxLayout, QLabel, QFrame,
 )
 from PySide6.QtCore import Signal, Qt, QDate, QTime
 
 from contact.api_client import ContactApiClient
 from ui.styles.tokens import (
     FONT_BODY, FONT_SIZE_BODY,
-    BG_PRIMARY, BORDER_DEFAULT, RADIUS_MD, PRIMARY_900,
+    BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT, RADIUS_MD,
+    PRIMARY_900, PRIMARY_500, TEXT_SECONDARY,
     get_button_primary_style, get_button_secondary_style,
 )
 from i18n import de as texts
 
 logger = logging.getLogger(__name__)
+
+
+def _build_caller_display(contact_data: dict | None) -> str:
+    """Gibt 'Vorname Nachname' oder 'Unbekannter Anrufer' zurueck."""
+    if not contact_data:
+        return texts.CONTACT_UNKNOWN_CALLER
+    name = (
+        contact_data.get("display_name")
+        or (
+            f"{contact_data.get('first_name', '') or ''} "
+            f"{contact_data.get('last_name', '') or ''}"
+        ).strip()
+    )
+    return name or texts.CONTACT_UNKNOWN_CALLER
+
+
+def _build_dob_display(contact_data: dict | None) -> str:
+    """Gibt '*TT.MM.JJJJ' zurueck oder leer wenn kein Datum vorhanden."""
+    if not contact_data:
+        return ""
+    dob = contact_data.get("date_of_birth") or contact_data.get("birth_date")
+    if not dob:
+        return ""
+    try:
+        parts = str(dob)[:10].split("-")
+        if len(parts) == 3:
+            return f"\u2217 {parts[2]}.{parts[1]}.{parts[0]}"
+    except Exception:
+        pass
+    return ""
+
 
 _INPUT = (
     f"background-color: {BG_PRIMARY}; border: 1px solid {BORDER_DEFAULT}; "
@@ -34,7 +66,13 @@ class ContactCallDialog(QDialog):
 
     call_saved = Signal()
 
-    def __init__(self, contact_api: ContactApiClient, contact_id: int, parent=None):
+    def __init__(
+        self,
+        contact_api: ContactApiClient,
+        contact_id: int,
+        parent=None,
+        contact_data: dict | None = None,
+    ):
         super().__init__(parent)
         self._api = contact_api
         self._cid = contact_id
@@ -49,6 +87,42 @@ class ContactCallDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
+
+        # Caller-Info-Header
+        caller_frame = QFrame()
+        caller_frame.setStyleSheet(
+            f"QFrame {{ background-color: {BG_SECONDARY}; border: 1px solid {BORDER_DEFAULT}; "
+            f"border-radius: {RADIUS_MD}; }}"
+        )
+        caller_layout = QVBoxLayout(caller_frame)
+        caller_layout.setContentsMargins(16, 12, 16, 12)
+        caller_layout.setSpacing(2)
+
+        caption = QLabel(texts.CONTACT_CALL_CALLER)
+        caption.setStyleSheet(
+            f"font-family: {FONT_BODY}; font-size: 10pt; color: {TEXT_SECONDARY}; "
+            f"border: none; background: transparent;"
+        )
+        caller_layout.addWidget(caption)
+
+        name_lbl = QLabel(_build_caller_display(contact_data))
+        name_lbl.setStyleSheet(
+            f"font-family: {FONT_BODY}; font-size: 13pt; font-weight: bold; "
+            f"color: {PRIMARY_900}; border: none; background: transparent;"
+        )
+        name_lbl.setWordWrap(True)
+        caller_layout.addWidget(name_lbl)
+
+        dob = _build_dob_display(contact_data)
+        if dob:
+            dob_lbl = QLabel(dob)
+            dob_lbl.setStyleSheet(
+                f"font-family: {FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
+                f"color: {TEXT_SECONDARY}; border: none; background: transparent;"
+            )
+            caller_layout.addWidget(dob_lbl)
+
+        layout.addWidget(caller_frame)
 
         form = QFormLayout()
         form.setSpacing(8)

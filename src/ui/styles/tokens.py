@@ -674,6 +674,32 @@ def get_button_danger_style() -> str:
         }}
     """
 
+def get_button_success_style() -> str:
+    """Success Button-Style (Grün Border) - für positive Aktionen wie Aktualisieren."""
+    return f"""
+        QPushButton {{
+            background-color: transparent;
+            color: {SUCCESS};
+            border: 1px solid {SUCCESS};
+            border-radius: {RADIUS_MD};
+            padding: {SPACING_SM} {SPACING_MD};
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+            font-weight: {FONT_WEIGHT_MEDIUM};
+        }}
+        QPushButton:hover {{
+            background-color: {SUCCESS_LIGHT};
+        }}
+        QPushButton:pressed {{
+            background-color: {SUCCESS};
+            color: {TEXT_INVERSE};
+        }}
+        QPushButton:disabled {{
+            border-color: {PRIMARY_100};
+            color: {TEXT_DISABLED};
+        }}
+    """
+
 def get_table_style() -> str:
     """Einheitliches Tabellen-Styling."""
     return f"""

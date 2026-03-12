@@ -40,7 +40,7 @@ from ui.styles.tokens import (
     FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD,
     get_button_primary_style, get_button_secondary_style, get_button_ghost_style,
-    get_button_danger_style,
+    get_button_danger_style, get_button_success_style,
 )
 
 
@@ -1763,13 +1763,6 @@ class BiPROView(QWidget):
         """)
         header_row.addWidget(header)
 
-        self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
-        self._refresh_btn.setFixedHeight(28)
-        self._refresh_btn.setStyleSheet(get_button_ghost_style())
-        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s)")
-        self._refresh_btn.clicked.connect(self._on_manual_refresh)
-        header_row.addWidget(self._refresh_btn)
-
         header_row.addStretch()
 
         self._admin_toggle = QPushButton(BIPRO_VIEW_TOGGLE_STANDARD)
@@ -1834,6 +1827,13 @@ class BiPROView(QWidget):
         self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
         self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
         action_bar.addWidget(self.fetch_single_vu_btn)
+
+        self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
+        self._refresh_btn.setFixedHeight(30)
+        self._refresh_btn.setStyleSheet(get_button_success_style())
+        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s)")
+        self._refresh_btn.clicked.connect(self._on_manual_refresh)
+        action_bar.addWidget(self._refresh_btn)
 
         action_bar.addStretch()
 

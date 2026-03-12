@@ -26,6 +26,8 @@ from ui.components.module_sidebar import ModuleSidebar
 from ui.components.fade_stacked_widget import FadeStackedWidget
 from ui.toast import ToastManager
 from services.global_heartbeat import GlobalHeartbeat
+from services.contact.call_runtime_service import CallRuntimeService
+from domain.contact.runtime_models import CallValidationStatus
 from ui.styles.tokens import (
     FONT_BODY, FONT_SIZE_BODY, PRIMARY_500, BG_PRIMARY,
 )
@@ -155,6 +157,8 @@ class AppRouter(QMainWindow):
 
         self._toast_manager = ToastManager(self)
         self._active_module: str | None = None
+
+        self._call_runtime = CallRuntimeService()
 
         self._heartbeat = GlobalHeartbeat(api_client, auth_api, parent=self)
         self._heartbeat.session_invalid.connect(self._on_session_invalid)
@@ -728,17 +732,20 @@ class AppRouter(QMainWindow):
         if not user or not user.has_module('contact'):
             logger.warning("[CALL-POP] Contact-Modul nicht freigeschaltet")
             return
+
+        result = self._call_runtime.validate_call_pop(phone, source="core")
+        if result.status != CallValidationStatus.OK:
+            return
+
         self._stop_active_module_heartbeat()
         self._reset_leaving_module()
         self._ensure_contact()
 
-        # ModuleSidebar in unsichtbaren Zustand versetzen bevor View sichtbar wird
         if self._contact_widget:
             cs = getattr(self._contact_widget, '_sidebar', None) or getattr(self._contact_widget, '_sidebar_frame', None)
             if isinstance(cs, ModuleSidebar):
                 cs.reset_animation_state()
 
-        # Call-Pop: Sofort wechseln ohne Fade (Geschwindigkeit vor Aesthetik)
         self._stack.set_animated(False)
         self._stack.setCurrentIndex(_IDX_CONTACT)
         self._stack.set_animated(True)
@@ -751,7 +758,7 @@ class AppRouter(QMainWindow):
 
         QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._contact_widget, "contact"))
         if hasattr(self._contact_widget, 'handle_call_pop'):
-            self._contact_widget.handle_call_pop(phone)
+            self._contact_widget.handle_call_pop(result.phone_normalized or phone)
         self._bring_window_to_front()
 
     def handle_call_pop_refocus(self):
