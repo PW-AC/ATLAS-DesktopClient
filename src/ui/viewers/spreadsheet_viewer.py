@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QToolBar, QTableWidget, QTableWidgetItem, QHeaderView,
     QComboBox, QMessageBox, QApplication, QWidget, QSizePolicy,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont, QAction
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,97 @@ try:
     HAS_OPENPYXL = True
 except ImportError:
     pass
+
+
+class _SpreadsheetLoadWorker(QThread):
+    """Laedt CSV/XLSX-Daten im Hintergrund."""
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, file_path: str, max_rows: int, parent=None):
+        super().__init__(parent)
+        self._file_path = file_path
+        self._max_rows = max_rows
+
+    def run(self):
+        import csv
+        ext = os.path.splitext(self._file_path)[1].lower()
+        try:
+            sheets: dict = {}
+            if ext == '.csv':
+                self._load_csv(sheets)
+            elif ext == '.tsv':
+                self._load_csv(sheets, delimiter='\t')
+            elif ext == '.xlsx':
+                self._load_xlsx(sheets)
+            elif ext == '.xls':
+                self.finished.emit({"__xls__": True})
+                return
+            else:
+                self._load_csv(sheets)
+            self.finished.emit(sheets)
+        except Exception as e:
+            self.error.emit(str(e))
+
+    def _load_csv(self, sheets: dict, delimiter: str = None):
+        import csv
+        encodings = ['utf-8-sig', 'utf-8', 'cp1252', 'latin-1']
+        content = None
+        for enc in encodings:
+            try:
+                with open(self._file_path, 'r', encoding=enc) as f:
+                    content = f.read()
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        if content is None:
+            raise ValueError("Encoding nicht erkannt")
+        if delimiter is None:
+            sniffer = csv.Sniffer()
+            try:
+                dialect = sniffer.sniff(content[:8192], delimiters=',;\t|')
+                delimiter = dialect.delimiter
+            except csv.Error:
+                delimiter = ';' if ';' in content[:2000] else ','
+        lines = content.splitlines()
+        reader = csv.reader(lines, delimiter=delimiter)
+        rows, headers = [], []
+        for i, row in enumerate(reader):
+            if i == 0:
+                headers = [str(h).strip() for h in row]
+            else:
+                rows.append([str(cell) for cell in row])
+            if i >= self._max_rows:
+                break
+        if not headers and rows:
+            max_cols = max(len(r) for r in rows) if rows else 0
+            headers = [f"Spalte {i+1}" for i in range(max_cols)]
+        sheet_name = os.path.basename(self._file_path)
+        sheets[sheet_name] = (headers, rows, len(lines) - 1)
+
+    def _load_xlsx(self, sheets: dict):
+        if not HAS_OPENPYXL:
+            sheets["__no_openpyxl__"] = True
+            return
+        wb = openpyxl.load_workbook(self._file_path, read_only=True, data_only=True)
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            headers, rows, total_rows = [], [], 0
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                if i == 0:
+                    headers = [str(c) if c is not None else "" for c in row]
+                else:
+                    rows.append([str(c) if c is not None else "" for c in row])
+                total_rows = i
+                if i >= self._max_rows:
+                    break
+            if not headers and not rows:
+                headers = ["(leer)"]
+            if not headers and rows:
+                max_cols = max(len(r) for r in rows) if rows else 0
+                headers = [f"Spalte {i+1}" for i in range(max_cols)]
+            sheets[sheet_name] = (headers, rows, total_rows)
+        wb.close()
 
 
 class SpreadsheetViewerDialog(QDialog):
@@ -56,8 +147,9 @@ class SpreadsheetViewerDialog(QDialog):
         self.setMinimumSize(900, 600)
         self.resize(1100, 750)
         
+        self._load_worker = None
         self._setup_ui()
-        self._load_data()
+        self._load_data_async()
     
     def _setup_ui(self):
         """Erstellt die UI-Elemente."""
@@ -160,156 +252,50 @@ class SpreadsheetViewerDialog(QDialog):
         self._status_label.setWordWrap(True)
         layout.addWidget(self._status_label)
     
-    def _load_data(self):
-        """Laedt die Daten basierend auf Dateiendung."""
-        ext = os.path.splitext(self.file_path)[1].lower()
-        
-        try:
-            if ext == '.csv':
-                self._load_csv()
-            elif ext == '.tsv':
-                self._load_csv(delimiter='\t')
-            elif ext == '.xlsx':
-                self._load_xlsx()
-            elif ext == '.xls':
+    def _load_data_async(self):
+        """Startet das Laden der Daten im Hintergrund."""
+        from i18n.de import SPREADSHEET_LOAD_ERROR
+
+        self._info_label.setText("  Laden...")
+
+        self._load_worker = _SpreadsheetLoadWorker(
+            self.file_path, self.MAX_PREVIEW_ROWS, parent=self,
+        )
+
+        def _on_loaded(sheets: dict):
+            if "__xls__" in sheets:
                 self._show_xls_message()
                 return
-            else:
-                # Versuche als CSV (z.B. fuer .txt mit Tabulator-Trennung)
-                self._load_csv()
-        except Exception as e:
-            from i18n.de import SPREADSHEET_LOAD_ERROR
-            logger.error(f"Fehler beim Laden der Tabelle: {e}")
-            self._status_label.setText(SPREADSHEET_LOAD_ERROR.format(error=str(e)))
+            if "__no_openpyxl__" in sheets:
+                from i18n.de import SPREADSHEET_XLSX_NOT_AVAILABLE
+                self._status_label.setText(SPREADSHEET_XLSX_NOT_AVAILABLE)
+                self._status_label.setStyleSheet(
+                    "color: #1e40af; background: #eff6ff; padding: 6px 12px; border-radius: 4px;"
+                )
+                self._status_label.setVisible(True)
+                self._open_external()
+                return
+
+            self._sheets_data = sheets
+            if self._sheets_data:
+                sheet_names = list(self._sheets_data.keys())
+                if len(sheet_names) > 1:
+                    self._sheet_label.setVisible(True)
+                    self._sheet_combo.setVisible(True)
+                    self._sheet_combo.addItems(sheet_names)
+                self._display_sheet(sheet_names[0])
+
+        def _on_error(msg: str):
+            logger.error(f"Fehler beim Laden der Tabelle: {msg}")
+            self._status_label.setText(SPREADSHEET_LOAD_ERROR.format(error=msg))
             self._status_label.setStyleSheet(
                 "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
             )
             self._status_label.setVisible(True)
-            return
-        
-        # Erstes Sheet anzeigen
-        if self._sheets_data:
-            sheet_names = list(self._sheets_data.keys())
-            
-            # Sheet-Auswahl nur bei mehreren Blaettern anzeigen
-            if len(sheet_names) > 1:
-                self._sheet_label.setVisible(True)
-                self._sheet_combo.setVisible(True)
-                self._sheet_combo.addItems(sheet_names)
-            
-            self._display_sheet(sheet_names[0])
-    
-    def _load_csv(self, delimiter: str = None):
-        """
-        Laedt CSV-Datei mit automatischer Delimiter- und Encoding-Erkennung.
-        
-        Args:
-            delimiter: Optionaler Delimiter. Wenn None, wird automatisch erkannt.
-        """
-        import csv
-        
-        # Encoding-Reihenfolge (wie beim GDV-Parser)
-        encodings = ['utf-8-sig', 'utf-8', 'cp1252', 'latin-1']
-        content = None
-        used_encoding = None
-        
-        for enc in encodings:
-            try:
-                with open(self.file_path, 'r', encoding=enc) as f:
-                    content = f.read()
-                    used_encoding = enc
-                    break
-            except (UnicodeDecodeError, UnicodeError):
-                continue
-        
-        if content is None:
-            from i18n.de import SPREADSHEET_ENCODING_ERROR
-            raise ValueError(SPREADSHEET_ENCODING_ERROR)
-        
-        # Delimiter automatisch erkennen wenn nicht vorgegeben
-        if delimiter is None:
-            sniffer = csv.Sniffer()
-            try:
-                # Erste 8KB fuer Erkennung verwenden
-                sample = content[:8192]
-                dialect = sniffer.sniff(sample, delimiters=',;\t|')
-                delimiter = dialect.delimiter
-            except csv.Error:
-                # Fallback: Semikolon (deutsch) oder Komma
-                delimiter = ';' if ';' in content[:2000] else ','
-        
-        # CSV parsen
-        lines = content.splitlines()
-        reader = csv.reader(lines, delimiter=delimiter)
-        
-        rows = []
-        headers = []
-        
-        for i, row in enumerate(reader):
-            if i == 0:
-                # Erste Zeile als Header verwenden
-                headers = [str(h).strip() for h in row]
-            else:
-                rows.append([str(cell) for cell in row])
-            
-            if i >= self.MAX_PREVIEW_ROWS:
-                break
-        
-        # Falls keine Header erkannt (z.B. nur Daten)
-        if not headers and rows:
-            # Generische Header
-            max_cols = max(len(r) for r in rows) if rows else 0
-            headers = [f"Spalte {i+1}" for i in range(max_cols)]
-        
-        sheet_name = os.path.basename(self.file_path)
-        self._sheets_data[sheet_name] = (headers, rows, len(lines) - 1)
-    
-    def _load_xlsx(self):
-        """Laedt Excel-Datei (.xlsx) via openpyxl."""
-        if not HAS_OPENPYXL:
-            from i18n.de import SPREADSHEET_XLSX_NOT_AVAILABLE
-            self._status_label.setText(SPREADSHEET_XLSX_NOT_AVAILABLE)
-            self._status_label.setStyleSheet(
-                "color: #1e40af; background: #eff6ff; padding: 6px 12px; border-radius: 4px;"
-            )
-            self._status_label.setVisible(True)
-            self._open_external()
-            return
-        
-        wb = openpyxl.load_workbook(self.file_path, read_only=True, data_only=True)
-        
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            headers = []
-            rows = []
-            total_rows = 0
-            
-            for i, row in enumerate(ws.iter_rows(values_only=True)):
-                if i == 0:
-                    # Erste Zeile als Header
-                    headers = [str(cell) if cell is not None else "" for cell in row]
-                else:
-                    rows.append([
-                        str(cell) if cell is not None else "" for cell in row
-                    ])
-                
-                total_rows = i
-                
-                if i >= self.MAX_PREVIEW_ROWS:
-                    break
-            
-            # Falls Sheet leer ist
-            if not headers and not rows:
-                headers = ["(leer)"]
-            
-            # Falls keine Header erkannt
-            if not headers and rows:
-                max_cols = max(len(r) for r in rows) if rows else 0
-                headers = [f"Spalte {i+1}" for i in range(max_cols)]
-            
-            self._sheets_data[sheet_name] = (headers, rows, total_rows)
-        
-        wb.close()
+
+        self._load_worker.finished.connect(_on_loaded)
+        self._load_worker.error.connect(_on_error)
+        self._load_worker.start()
     
     def _show_xls_message(self):
         """Zeigt Hinweis fuer alte .xls Dateien."""
@@ -379,7 +365,7 @@ class SpreadsheetViewerDialog(QDialog):
             self._display_sheet(sheet_name)
     
     def _open_external(self):
-        """Oeffnet die Datei mit der System-Anwendung."""
+        """Oeffnet die Datei mit der System-Anwendung (non-blocking)."""
         import subprocess
         import sys
         
@@ -387,9 +373,9 @@ class SpreadsheetViewerDialog(QDialog):
             if sys.platform == 'win32':
                 os.startfile(self.file_path)
             elif sys.platform == 'darwin':
-                subprocess.run(['open', self.file_path])
+                subprocess.Popen(['open', self.file_path])
             else:
-                subprocess.run(['xdg-open', self.file_path])
+                subprocess.Popen(['xdg-open', self.file_path])
         except Exception as e:
             self._status_label.setText(f"Konnte Datei nicht oeffnen: {e}")
             self._status_label.setStyleSheet(

@@ -11,13 +11,15 @@ import logging
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QPushButton,
-    QStackedWidget, QLabel,
+    QLabel,
 )
+from ui.components.fade_stacked_widget import FadeStackedWidget
 from PySide6.QtCore import Signal, Qt, QTimer, QThreadPool, QObject, QRunnable
 
 from api.client import APIClient
 from api.auth import AuthAPI
 from workforce.api_client import WorkforceApiClient
+from ui.components.module_sidebar import ModuleSidebar, ModuleNavButton
 from ui.styles.tokens import (
     SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_WIDTH_INT,
     ACCENT_500, PRIMARY_500, PRIMARY_0, PRIMARY_900,
@@ -58,46 +60,7 @@ class _DataFingerprintWorker(QRunnable):
             self.signals.result.emit("")
 
 
-class _WfNavButton(QPushButton):
-    """Navigations-Button fuer die Workforce-Sidebar."""
-
-    def __init__(self, icon: str, text: str, subtitle: str = "", parent=None):
-        super().__init__(parent)
-        self.setCheckable(True)
-        self.setCursor(Qt.PointingHandCursor)
-
-        if subtitle:
-            display = f"   {icon}  {text}\n        {subtitle}"
-            self.setMinimumHeight(56)
-        else:
-            display = f"   {icon}  {text}"
-            self.setMinimumHeight(40)
-
-        self.setText(display)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-left: 3px solid transparent;
-                border-radius: 0px;
-                padding: 8px 20px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_CAPTION};
-                color: {PRIMARY_500};
-                line-height: 1.4;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-                color: {SIDEBAR_TEXT};
-            }}
-            QPushButton:checked {{
-                background-color: {SIDEBAR_HOVER};
-                border-left: 3px solid {ACCENT_500};
-                color: {SIDEBAR_TEXT};
-                font-weight: 500;
-            }}
-        """)
+_WfNavButton = ModuleNavButton
 
 
 class WorkforceHub(QWidget):
@@ -150,121 +113,39 @@ class WorkforceHub(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        sidebar = QFrame()
-        sidebar.setObjectName("wf_sidebar")
-        sidebar.setFixedWidth(SIDEBAR_WIDTH_INT)
-        sidebar.setStyleSheet(f"""
-            QFrame#wf_sidebar {{
-                background-color: {SIDEBAR_BG};
-                border-right: 1px solid rgba(136, 169, 195, 0.15);
-            }}
-        """)
+        self._sidebar = ModuleSidebar("wf_sidebar", parent=self)
+        self._sidebar.back_requested.connect(self.back_requested.emit)
 
-        sb = QVBoxLayout(sidebar)
-        sb.setContentsMargins(0, 8, 0, 8)
-        sb.setSpacing(0)
+        self._sidebar.add_section_label(texts.WF_SECTION_DATA)
 
-        back_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
-        back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.setMinimumHeight(44)
-        back_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-bottom: 1px solid rgba(136, 169, 195, 0.15);
-                padding: 10px 16px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_BODY};
-                color: {ACCENT_500};
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-            }}
-        """)
-        back_btn.clicked.connect(self.back_requested.emit)
-        sb.addWidget(back_btn)
-        sb.addSpacing(12)
-
-        def add_nav(icon: str, title: str, subtitle: str, index: int) -> _WfNavButton:
-            btn = _WfNavButton(icon, title, subtitle)
-            btn.clicked.connect(lambda checked, i=index: self._navigate_to(i))
-            sb.addWidget(btn)
-            self._nav_buttons.append(btn)
-            return btn
-
-        section_data = QLabel(f"  {texts.WF_SECTION_DATA}")
-        section_data.setStyleSheet(f"""
-            color: {ACCENT_500}; font-family: {FONT_BODY};
-            font-size: 9pt; font-weight: 700; letter-spacing: 1px;
-            padding: 4px 16px 4px 16px;
-        """)
-        sb.addWidget(section_data)
-
-        add_nav("\u203A", texts.WF_NAV_EMPLOYERS, texts.WF_NAV_EMPLOYERS_DESC, self.PANEL_EMPLOYERS)
-        add_nav("\u203A", texts.WF_NAV_EMPLOYEES, texts.WF_NAV_EMPLOYEES_DESC, self.PANEL_EMPLOYEES)
-        add_nav("\u203A", texts.WF_NAV_EXPORTS, texts.WF_NAV_EXPORTS_DESC, self.PANEL_EXPORTS)
-        add_nav("\u203A", texts.WF_NAV_SNAPSHOTS, texts.WF_NAV_SNAPSHOTS_DESC, self.PANEL_SNAPSHOTS)
-        add_nav("\u203A", texts.WF_NAV_STATS, texts.WF_NAV_STATS_DESC, self.PANEL_STATS)
+        self._sidebar.add_nav("\u203A", texts.WF_NAV_EMPLOYERS, texts.WF_NAV_EMPLOYERS_DESC, self.PANEL_EMPLOYERS, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.WF_NAV_EMPLOYEES, texts.WF_NAV_EMPLOYEES_DESC, self.PANEL_EMPLOYEES, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.WF_NAV_EXPORTS, texts.WF_NAV_EXPORTS_DESC, self.PANEL_EXPORTS, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.WF_NAV_SNAPSHOTS, texts.WF_NAV_SNAPSHOTS_DESC, self.PANEL_SNAPSHOTS, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.WF_NAV_STATS, texts.WF_NAV_STATS_DESC, self.PANEL_STATS, self._navigate_to)
 
         user = self._auth_api.current_user
         has_trigger_perm = user and (user.has_permission('hr.triggers') or user.is_module_admin('workforce'))
 
         if has_trigger_perm:
-            sep = QFrame()
-            sep.setFixedHeight(1)
-            sep.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
-            sb.addWidget(sep)
-
-            section_admin = QLabel(f"  {texts.WF_SECTION_ADMIN}")
-            section_admin.setStyleSheet(f"""
-                color: {ACCENT_500}; font-family: {FONT_BODY};
-                font-size: 9pt; font-weight: 700; letter-spacing: 1px;
-                padding: 8px 16px 4px 16px;
-            """)
-            sb.addWidget(section_admin)
-
-            add_nav("\u203A", texts.WF_NAV_TRIGGERS, texts.WF_NAV_TRIGGERS_DESC, self.PANEL_TRIGGERS)
-            add_nav("\u203A", texts.WF_NAV_SMTP, texts.WF_NAV_SMTP_DESC, self.PANEL_SMTP)
+            self._sidebar.add_separator()
+            self._sidebar.add_section_label(texts.WF_SECTION_ADMIN)
+            self._sidebar.add_nav("\u203A", texts.WF_NAV_TRIGGERS, texts.WF_NAV_TRIGGERS_DESC, self.PANEL_TRIGGERS, self._navigate_to)
+            self._sidebar.add_nav("\u203A", texts.WF_NAV_SMTP, texts.WF_NAV_SMTP_DESC, self.PANEL_SMTP, self._navigate_to)
 
         if user and user.is_module_admin('workforce'):
-            sep_ma = QFrame()
-            sep_ma.setFixedHeight(1)
-            sep_ma.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
-            sb.addWidget(sep_ma)
-
-            ma_btn = _WfNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
+            self._sidebar.add_separator()
+            ma_btn = ModuleNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
             ma_btn.clicked.connect(self._show_workforce_module_admin)
-            sb.addWidget(ma_btn)
+            self._sidebar.add_widget(ma_btn)
 
-        sb.addStretch()
+        self._sidebar.add_stretch()
+        self._sidebar.add_refresh_button(texts.WF_REFRESH, lambda: self._refresh_all(show_toast=True))
 
-        refresh_btn = QPushButton(f"  \u21BB  {texts.WF_REFRESH}")
-        refresh_btn.setCursor(Qt.PointingHandCursor)
-        refresh_btn.setMinimumHeight(44)
-        refresh_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-top: 1px solid rgba(136, 169, 195, 0.15);
-                padding: 10px 16px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_CAPTION};
-                color: {ACCENT_500};
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-            }}
-        """)
-        refresh_btn.clicked.connect(lambda: self._refresh_all(show_toast=True))
-        sb.addWidget(refresh_btn)
+        self._nav_buttons = self._sidebar.nav_buttons
+        root.addWidget(self._sidebar)
 
-        root.addWidget(sidebar)
-
-        self._content_stack = QStackedWidget()
+        self._content_stack = FadeStackedWidget(fade_out_ms=80, fade_in_ms=120)
         for i in range(self._TOTAL_PANELS):
             self._content_stack.addWidget(self._create_placeholder())
         root.addWidget(self._content_stack)
@@ -368,19 +249,36 @@ class WorkforceHub(QWidget):
         hb_logger.info("[WORKFORCE] STOP")
 
     def _initial_load_all_panels(self):
-        """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
+        """Laedt das Default-Panel sofort, Rest gestaffelt (1 pro Frame)."""
         user = self._auth_api.current_user
         has_trigger_perm = user and (user.has_permission('hr.triggers') or user.is_module_admin('workforce'))
         max_panel = self._TOTAL_PANELS if has_trigger_perm else self.PANEL_STATS + 1
-        for i in range(max_panel):
-            self._ensure_panel_loaded(i)
-            panel = self._content_stack.widget(i)
-            if panel and hasattr(panel, 'refresh'):
-                try:
-                    panel.refresh()
-                except Exception as e:
-                    logger.debug(f"Initial refresh Panel {i}: {e}")
-        self._navigate_to(self.PANEL_EMPLOYERS)
+
+        default_idx = self.PANEL_EMPLOYERS
+        self._ensure_panel_loaded(default_idx)
+        panel = self._content_stack.widget(default_idx)
+        if panel and hasattr(panel, 'refresh'):
+            try:
+                panel.refresh()
+            except Exception as e:
+                logger.debug(f"Initial refresh Panel {default_idx}: {e}")
+        self._navigate_to(default_idx)
+        remaining = [i for i in range(max_panel) if i != default_idx]
+        self._load_panels_staggered(remaining, 0)
+
+    def _load_panels_staggered(self, indices: list, pos: int):
+        """Laedt jeweils ein Panel pro Event-Loop-Durchlauf."""
+        if pos >= len(indices):
+            return
+        idx = indices[pos]
+        self._ensure_panel_loaded(idx)
+        panel = self._content_stack.widget(idx)
+        if panel and hasattr(panel, 'refresh'):
+            try:
+                panel.refresh()
+            except Exception as e:
+                logger.debug(f"Staggered refresh Panel {idx}: {e}")
+        QTimer.singleShot(0, lambda: self._load_panels_staggered(indices, pos + 1))
 
     def _on_module_heartbeat_tick(self):
         """Prueft im Hintergrund ob sich Daten geaendert haben."""

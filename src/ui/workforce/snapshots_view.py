@@ -30,6 +30,44 @@ from i18n import de as texts
 logger = logging.getLogger(__name__)
 
 
+class _EmployerSignals(QObject):
+    finished = Signal(list)
+
+
+class _LoadEmployersWorker(QRunnable):
+    def __init__(self, wf_api):
+        super().__init__()
+        self.signals = _EmployerSignals()
+        self._wf_api = wf_api
+
+    def run(self):
+        try:
+            data = self._wf_api.get_employers()
+        except Exception:
+            data = []
+        self.signals.finished.emit(data)
+
+
+class _SnapshotsSignals(QObject):
+    finished = Signal(list)
+    error = Signal(str)
+
+
+class _LoadSnapshotsWorker(QRunnable):
+    def __init__(self, wf_api, employer_id):
+        super().__init__()
+        self.signals = _SnapshotsSignals()
+        self._wf_api = wf_api
+        self._employer_id = employer_id
+
+    def run(self):
+        try:
+            data = self._wf_api.get_snapshots(self._employer_id)
+            self.signals.finished.emit(data)
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
 class _SnapshotDiffSignals(QObject):
     finished = Signal(dict)
     error = Signal(str)
@@ -304,25 +342,27 @@ class SnapshotsView(QWidget):
         self._load_employers()
 
     def _load_employers(self):
-        try:
-            self._employers = self._wf_api.get_employers()
-            current_data = self._employer_combo.currentData()
-            self._employer_combo.blockSignals(True)
-            self._employer_combo.clear()
-            if not self._employers:
-                self._employer_combo.addItem(texts.WF_NO_EMPLOYERS, None)
-            else:
-                for emp in self._employers:
-                    self._employer_combo.addItem(emp.get('name', '?'), emp.get('id'))
-                if current_data:
-                    idx = next(
-                        (i for i, e in enumerate(self._employers) if e.get('id') == current_data), 0
-                    )
-                    self._employer_combo.setCurrentIndex(idx)
-            self._employer_combo.blockSignals(False)
-            self._load_snapshots()
-        except Exception as e:
-            logger.error(f"Arbeitgeber laden: {e}")
+        worker = _LoadEmployersWorker(self._wf_api)
+        worker.signals.finished.connect(self._on_employers_loaded)
+        self._thread_pool.start(worker)
+
+    def _on_employers_loaded(self, employers: list):
+        self._employers = employers
+        current_data = self._employer_combo.currentData()
+        self._employer_combo.blockSignals(True)
+        self._employer_combo.clear()
+        if not self._employers:
+            self._employer_combo.addItem(texts.WF_NO_EMPLOYERS, None)
+        else:
+            for emp in self._employers:
+                self._employer_combo.addItem(emp.get('name', '?'), emp.get('id'))
+            if current_data:
+                idx = next(
+                    (i for i, e in enumerate(self._employers) if e.get('id') == current_data), 0
+                )
+                self._employer_combo.setCurrentIndex(idx)
+        self._employer_combo.blockSignals(False)
+        self._load_snapshots()
 
     def _on_employer_changed(self):
         self._diff_frame.setVisible(False)
@@ -335,14 +375,20 @@ class SnapshotsView(QWidget):
             self._snapshot_table.setRowCount(0)
             self._update_snap_combos()
             return
-        try:
-            self._snapshots = self._wf_api.get_snapshots(employer_id)
-            self._populate_snapshot_table()
-            self._update_snap_combos()
-        except Exception as e:
-            logger.error(f"Snapshots laden: {e}")
-            if self._toast_manager:
-                self._toast_manager.show_error(texts.WF_SNAPSHOTS_LOAD_ERROR.format(error=str(e)))
+        worker = _LoadSnapshotsWorker(self._wf_api, employer_id)
+        worker.signals.finished.connect(self._on_snapshots_loaded)
+        worker.signals.error.connect(self._on_snapshots_error)
+        self._thread_pool.start(worker)
+
+    def _on_snapshots_loaded(self, data: list):
+        self._snapshots = data
+        self._populate_snapshot_table()
+        self._update_snap_combos()
+
+    def _on_snapshots_error(self, msg: str):
+        logger.error(f"Snapshots laden: {msg}")
+        if self._toast_manager:
+            self._toast_manager.show_error(texts.WF_SNAPSHOTS_LOAD_ERROR.format(error=msg))
 
     def _populate_snapshot_table(self):
         self._snapshot_table.setSortingEnabled(False)

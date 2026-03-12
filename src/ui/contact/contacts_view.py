@@ -111,8 +111,8 @@ class ContactsView(QWidget):
     create_temp_note_requested = Signal(str)
     quick_call_note_requested = Signal()
 
-    def __init__(self, contact_api: ContactApiClient, auth_api: AuthAPI, filter_mode: str = 'all'):
-        super().__init__()
+    def __init__(self, contact_api: ContactApiClient, auth_api: AuthAPI, filter_mode: str = 'all', parent=None):
+        super().__init__(parent)
         self._contact_api = contact_api
         self._auth_api = auth_api
         self._filter_mode = filter_mode

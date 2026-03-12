@@ -258,8 +258,8 @@ class _CreateCompanyDialog(QDialog):
 class ContactCompanyView(QWidget):
     contact_selected = Signal(int)
 
-    def __init__(self, contact_api: ContactApiClient, auth_api=None):
-        super().__init__()
+    def __init__(self, contact_api: ContactApiClient, auth_api=None, parent=None):
+        super().__init__(parent)
         self._contact_api = contact_api
         self._auth_api = auth_api
         self._toast_manager = None

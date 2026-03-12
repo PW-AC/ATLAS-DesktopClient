@@ -34,6 +34,55 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════
+# Async Data Workers
+# ═══════════════════════════════════════════════════════════════
+
+class _EmployerSignals(QObject):
+    finished = Signal(list)
+
+
+class _LoadEmployersWorker(QRunnable):
+    def __init__(self, wf_api):
+        super().__init__()
+        self.signals = _EmployerSignals()
+        self._wf_api = wf_api
+
+    def run(self):
+        try:
+            data = self._wf_api.get_employers()
+        except Exception:
+            data = []
+        self.signals.finished.emit(data)
+
+
+class _EmployeesSignals(QObject):
+    finished = Signal(dict)
+    error = Signal(str)
+
+
+class _LoadEmployeesWorker(QRunnable):
+    def __init__(self, wf_api, employer_id, page, per_page, status, search):
+        super().__init__()
+        self.signals = _EmployeesSignals()
+        self._wf_api = wf_api
+        self._employer_id = employer_id
+        self._page = page
+        self._per_page = per_page
+        self._status = status
+        self._search = search
+
+    def run(self):
+        try:
+            result = self._wf_api.get_employees(
+                self._employer_id, page=self._page,
+                per_page=self._per_page, status=self._status, search=self._search,
+            )
+            self.signals.finished.emit(result)
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
+# ═══════════════════════════════════════════════════════════════
 # Detail-Fetch Worker
 # ═══════════════════════════════════════════════════════════════
 
@@ -432,25 +481,27 @@ class EmployeesView(QWidget):
         self._load_employers()
 
     def _load_employers(self):
-        try:
-            self._employers = self._wf_api.get_employers()
-            current_data = self._employer_combo.currentData()
-            self._employer_combo.blockSignals(True)
-            self._employer_combo.clear()
-            if not self._employers:
-                self._employer_combo.addItem(texts.WF_NO_EMPLOYERS, None)
-            else:
-                for emp in self._employers:
-                    self._employer_combo.addItem(emp.get('name', '?'), emp.get('id'))
-                if current_data:
-                    idx = next(
-                        (i for i, e in enumerate(self._employers) if e.get('id') == current_data), 0
-                    )
-                    self._employer_combo.setCurrentIndex(idx)
-            self._employer_combo.blockSignals(False)
-            self._load_employees_reset()
-        except Exception as e:
-            logger.error(f"Arbeitgeber laden: {e}")
+        worker = _LoadEmployersWorker(self._wf_api)
+        worker.signals.finished.connect(self._on_employers_loaded)
+        self._thread_pool.start(worker)
+
+    def _on_employers_loaded(self, employers: list):
+        self._employers = employers
+        current_data = self._employer_combo.currentData()
+        self._employer_combo.blockSignals(True)
+        self._employer_combo.clear()
+        if not self._employers:
+            self._employer_combo.addItem(texts.WF_NO_EMPLOYERS, None)
+        else:
+            for emp in self._employers:
+                self._employer_combo.addItem(emp.get('name', '?'), emp.get('id'))
+            if current_data:
+                idx = next(
+                    (i for i, e in enumerate(self._employers) if e.get('id') == current_data), 0
+                )
+                self._employer_combo.setCurrentIndex(idx)
+        self._employer_combo.blockSignals(False)
+        self._load_employees_reset()
 
     def _on_employer_changed(self):
         self._load_employees_reset()
@@ -480,26 +531,30 @@ class EmployeesView(QWidget):
         status_param = status_val if status_val != 'all' else None
         search = self._search_input.text().strip() or None
 
-        try:
-            result = self._wf_api.get_employees(
-                employer_id, page=self._current_page,
-                per_page=self.PAGE_SIZE, status=status_param, search=search,
-            )
-            employees = result.get('employees', [])
-            pagination = result.get('pagination', {})
-            self._total_pages = pagination.get('pages', 1)
-            self._total_count = pagination.get('total', 0)
+        worker = _LoadEmployeesWorker(
+            self._wf_api, employer_id, self._current_page,
+            self.PAGE_SIZE, status_param, search,
+        )
+        worker.signals.finished.connect(self._on_employees_loaded)
+        worker.signals.error.connect(self._on_employees_error)
+        self._thread_pool.start(worker)
 
-            self._append_rows(employees)
-            self._count_label.setText(
-                texts.WF_EMPLOYEES_COUNT.format(count=self._total_count)
-            )
-        except Exception as e:
-            logger.error(f"Mitarbeiter laden: {e}")
-            if self._toast_manager:
-                self._toast_manager.show_error(texts.WF_EMPLOYEES_LOAD_ERROR.format(error=str(e)))
-        finally:
-            self._is_loading = False
+    def _on_employees_loaded(self, result: dict):
+        employees = result.get('employees', [])
+        pagination = result.get('pagination', {})
+        self._total_pages = pagination.get('pages', 1)
+        self._total_count = pagination.get('total', 0)
+        self._append_rows(employees)
+        self._count_label.setText(
+            texts.WF_EMPLOYEES_COUNT.format(count=self._total_count)
+        )
+        self._is_loading = False
+
+    def _on_employees_error(self, msg: str):
+        logger.error(f"Mitarbeiter laden: {msg}")
+        if self._toast_manager:
+            self._toast_manager.show_error(texts.WF_EMPLOYEES_LOAD_ERROR.format(error=msg))
+        self._is_loading = False
 
     def _append_rows(self, employees: list):
         """Zeilen an bestehende Tabelle anhaengen (Lazy Load)."""

@@ -52,6 +52,7 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
+Name: "autostarticon"; Description: "Beim Windows-Start automatisch starten (minimiert)"; GroupDescription: "Autostart:"
 
 [Files]
 Source: "dist\ACENCIA-ATLAS\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
@@ -71,6 +72,7 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: quicklaunchicon
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--minimized"; IconFilename: "{app}\icon.ico"; Tasks: autostarticon
 
 [Registry]
 ; Hintergrund-Updater als Autostart-Fallback (Scheduled Task ist primaer)
@@ -87,6 +89,7 @@ Filename: "schtasks"; Parameters: "/Create /TN ""ACENCIA ATLAS Updater"" /TR """
 Filename: "schtasks"; Parameters: "/Delete /TN ""ACENCIA ATLAS Updater"" /F"; Flags: runhidden nowait
 
 [UninstallDelete]
+Type: files; Name: "{userstartup}\{#MyAppName}.lnk"
 Type: filesandordirs; Name: "{app}"
 
 [Code]

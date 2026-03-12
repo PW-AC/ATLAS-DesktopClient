@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFrame, QProgressBar, QScrollArea, QFileDialog,
     QGridLayout,
 )
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import Qt, QThreadPool, QThread, QRunnable, QObject, Signal
 
 from workforce.api_client import WorkforceApiClient
 from workforce.workers import StatsWorker
@@ -45,6 +45,24 @@ CHART_GRID = CHART_GRID_COLOR
 CHART_FONT = "Segoe UI"
 
 
+class _EmployerSignals(QObject):
+    finished = Signal(list)
+
+
+class _LoadEmployersWorker(QRunnable):
+    def __init__(self, wf_api):
+        super().__init__()
+        self.signals = _EmployerSignals()
+        self._wf_api = wf_api
+
+    def run(self):
+        try:
+            data = self._wf_api.get_employers()
+        except Exception:
+            data = []
+        self.signals.finished.emit(data)
+
+
 class _ChartCanvas(FigureCanvasQTAgg):
     """Wiederverwendbares Matplotlib-Canvas mit ACENCIA-Styling."""
 
@@ -66,6 +84,7 @@ class StatsView(QWidget):
         self._employers: list[dict] = []
         self._current_stats: dict = {}
         self._loading = False
+        self._prev_employer_id = None
         self._setup_ui()
         self._load_employers()
 
@@ -159,15 +178,9 @@ class StatsView(QWidget):
     # ── Data loading ────────────────────────────────────────────
 
     def _load_employers(self):
-        try:
-            self._employers = self._wf_api.get_employers()
-            self._employer_combo.clear()
-            for emp in self._employers:
-                self._employer_combo.addItem(emp.get('name', '?'), emp.get('id'))
-        except Exception as e:
-            logger.error(f"Fehler beim Laden der Arbeitgeber: {e}")
-            if self._toast_manager:
-                self._toast_manager.show_error(texts.WF_STATS_EMPLOYER_LOAD_ERROR)
+        worker = _LoadEmployersWorker(self._wf_api)
+        worker.signals.finished.connect(self._on_employers_loaded)
+        self._thread_pool.start(worker)
 
     def _on_employer_changed(self, _index: int):
         self._clear_results()
@@ -568,24 +581,53 @@ class StatsView(QWidget):
                     for i, lbl in enumerate(ee['labels']):
                         lines.append(f"  {lbl}: +{ee['entries'][i]} / -{ee['exits'][i]}")
 
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(lines))
+            content = '\n'.join(lines)
 
-            if self._toast_manager:
-                self._toast_manager.show_success(texts.WF_STATS_EXPORTED)
+            class _W(QThread):
+                ok = Signal()
+                failed = Signal(str)
+                def __init__(self, dest, text, parent=None):
+                    super().__init__(parent)
+                    self._dest, self._text = dest, text
+                def run(self):
+                    try:
+                        with open(self._dest, 'w', encoding='utf-8') as f:
+                            f.write(self._text)
+                        self.ok.emit()
+                    except Exception as e:
+                        self.failed.emit(str(e))
+
+            self._export_worker = _W(path, content, parent=self)
+            self._export_worker.ok.connect(
+                lambda: self._toast_manager.show_success(texts.WF_STATS_EXPORTED) if self._toast_manager else None
+            )
+            self._export_worker.failed.connect(
+                lambda e: (
+                    logger.error(f"Export-Fehler: {e}"),
+                    self._toast_manager.show_error(f"{texts.WF_STATS_EXPORT_ERROR}: {e}") if self._toast_manager else None,
+                )
+            )
+            self._export_worker.start()
         except Exception as e:
             logger.error(f"Export-Fehler: {e}")
             if self._toast_manager:
                 self._toast_manager.show_error(f"{texts.WF_STATS_EXPORT_ERROR}: {e}")
 
     def refresh(self):
-        prev_employer_id = self._employer_combo.currentData()
+        self._prev_employer_id = self._employer_combo.currentData()
         self._employer_combo.blockSignals(True)
         self._load_employers()
 
-        if prev_employer_id is not None:
+    def _on_employers_loaded(self, employers: list):
+        self._employers = employers
+        self._employer_combo.clear()
+        for emp in self._employers:
+            self._employer_combo.addItem(emp.get('name', '?'), emp.get('id'))
+
+        if self._prev_employer_id is not None:
             for i in range(self._employer_combo.count()):
-                if self._employer_combo.itemData(i) == prev_employer_id:
+                if self._employer_combo.itemData(i) == self._prev_employer_id:
                     self._employer_combo.setCurrentIndex(i)
                     break
+        self._prev_employer_id = None
         self._employer_combo.blockSignals(False)

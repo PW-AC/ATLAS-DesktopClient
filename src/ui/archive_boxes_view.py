@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QStackedWidget
 )
 from PySide6.QtCore import (
-    Qt, Signal, QMimeData, QTimer, QSize,
+    Qt, Signal, QMimeData, QTimer, QSize, QObject, QRunnable, QThreadPool,
     QAbstractTableModel, QModelIndex, QSortFilterProxyModel
 )
 from shiboken6 import isValid
@@ -209,10 +209,11 @@ class ArchiveBoxesView(QWidget):
         
         # SmartScan-Enabled Status cachen (fuer Kontextmenue- und Button-Sichtbarkeit)
         self._smartscan_enabled = False
-        self._load_smartscan_status()
         self.sidebar._smartscan_enabled = self._smartscan_enabled
         if hasattr(self, '_smartscan_btn'):
             self._smartscan_btn.setVisible(self._smartscan_enabled)
+        # SmartScan-Status DEFERRED laden – kein synchroner API-Call im Konstruktor
+        QTimer.singleShot(0, self._load_smartscan_status_async)
         
         # Historie-Toggle-Button: Nur sichtbar wenn Berechtigung vorhanden
         self._history_enabled = self._has_history_permission()
@@ -237,10 +238,40 @@ class ArchiveBoxesView(QWidget):
         return self._presenter
     
     def _load_smartscan_status(self):
-        """Laedt den SmartScan-Enabled-Status ueber den Presenter."""
+        """Laedt den SmartScan-Enabled-Status ueber den Presenter (synchron).
+        DEPRECATED: Nur noch fuer Legacy-Aufrufe. Neue Aufrufe nutzen _load_smartscan_status_async()."""
         self._smartscan_enabled = self._presenter.load_smartscan_status()
-    
-    
+
+    def _load_smartscan_status_async(self):
+        """Laedt den SmartScan-Enabled-Status asynchron im ThreadPool."""
+        class _SmartScanSignals(QObject):
+            finished = Signal(bool)
+
+        class _SmartScanWorker(QRunnable):
+            def __init__(self, presenter):
+                super().__init__()
+                self.signals = _SmartScanSignals()
+                self._presenter = presenter
+
+            def run(self):
+                try:
+                    result = self._presenter.load_smartscan_status()
+                except Exception:
+                    result = False
+                self.signals.finished.emit(result)
+
+        worker = _SmartScanWorker(self._presenter)
+        worker.signals.finished.connect(self._on_smartscan_status_loaded)
+        worker.setAutoDelete(True)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_smartscan_status_loaded(self, enabled: bool):
+        """Callback nach asynchronem SmartScan-Status-Laden."""
+        self._smartscan_enabled = enabled
+        self.sidebar._smartscan_enabled = enabled
+        if hasattr(self, '_smartscan_btn'):
+            self._smartscan_btn.setVisible(enabled)
+
     def _is_worker_running(self, attr_name: str) -> bool:
         """Prueft sicher ob ein Worker noch laeuft (C++-Objekt kann bereits geloescht sein)."""
         worker = getattr(self, attr_name, None)
@@ -293,8 +324,6 @@ class ArchiveBoxesView(QWidget):
             self._loading_overlay.setGeometry(self.rect())
             self._loading_overlay.raise_()
             self._loading_overlay.setVisible(True)
-            # Event-Loop kurz verarbeiten damit Overlay sofort sichtbar ist
-            QApplication.processEvents()
     
     def _hide_loading(self):
         """Versteckt das Loading-Overlay."""
@@ -792,17 +821,12 @@ class ArchiveBoxesView(QWidget):
         logger.debug("Auto-Refresh beendet")
         self._initial_load_done = True
         
-        # SmartScan-Status nur alle 5 Minuten aktualisieren (statt bei jedem
-        # 20-Sekunden-Refresh). _load_smartscan_status() ist ein SYNCHRONER
-        # API-Call auf dem Main Thread - zu haeufig verursacht UI-Haenger.
+        # SmartScan-Status alle 5 Minuten ASYNCHRON aktualisieren.
         now = datetime.now()
         last_ss_check = getattr(self, '_last_smartscan_check', None)
         if last_ss_check is None or (now - last_ss_check).total_seconds() > 300:
             self._last_smartscan_check = now
-            self._load_smartscan_status()
-            self.sidebar._smartscan_enabled = self._smartscan_enabled
-            if hasattr(self, '_smartscan_btn'):
-                self._smartscan_btn.setVisible(self._smartscan_enabled)
+            self._load_smartscan_status_async()
         
         # Einmalig: Dokumente ohne Text-Extraktion pruefen (Scan-Uploads etc.)
         if not self._missing_ai_data_checked:
@@ -1919,37 +1943,34 @@ class ArchiveBoxesView(QWidget):
         """Handler fuer Klick auf Rückgängig-Button im Toast."""
         from i18n.de import MOVE_UNDONE
         
+        from ui.async_worker import AsyncWorker
+
         # Archivierungs-Undo pruefen
         if hasattr(self, '_last_archive_data') and self._last_archive_data:
             data = self._last_archive_data
             self._last_archive_data = None
-            
             documents = data['documents']
             action = data['action']
-            
-            if action == 'archive':
-                self._presenter.unarchive_documents(documents)
-            else:
-                self._presenter.archive_documents(documents)
-            
-            # Cache invalidieren
-            self._cache.invalidate_documents()
-            
-            # Refresh
-            self._refresh_stats()
-            self._refresh_documents(force_refresh=True)
-            self._toast_manager.show_success(MOVE_UNDONE)
+            fn = (self._presenter.unarchive_documents if action == 'archive'
+                  else self._presenter.archive_documents)
+
+            self._undo_arc_worker = AsyncWorker(lambda: fn(documents), parent=self)
+            self._undo_arc_worker.finished.connect(lambda _: (
+                self._cache.invalidate_documents(),
+                self._refresh_stats(),
+                self._refresh_documents(force_refresh=True),
+                self._toast_manager.show_success(MOVE_UNDONE),
+            ))
+            self._undo_arc_worker.start()
             return
-        
+
         # Move-Undo pruefen
         if not self._last_move_data:
             return
-        
+
         doc_ids, original_boxes, _ = self._last_move_data
-        self._last_move_data = None  # Nur einmal Undo moeglich
-        
-        # Dokumente zurueck in ihre urspruenglichen Boxen verschieben
-        # Gruppieren nach Ziel-Box
+        self._last_move_data = None
+
         boxes_to_docs: Dict[str, List[int]] = {}
         for doc_id in doc_ids:
             original_box = original_boxes.get(doc_id)
@@ -1957,17 +1978,20 @@ class ArchiveBoxesView(QWidget):
                 if original_box not in boxes_to_docs:
                     boxes_to_docs[original_box] = []
                 boxes_to_docs[original_box].append(doc_id)
-        
-        # Jede Gruppe zurueck verschieben
-        for box_type, ids in boxes_to_docs.items():
-            try:
-                self._presenter.move_documents_sync(ids, box_type)
-            except Exception as e:
-                logger.error(f"Undo fehlgeschlagen: {e}")
-        
-        # Leichtgewichtiger Refresh
-        self._refresh_after_move()
-        self._toast_manager.show_success(MOVE_UNDONE)
+
+        def _do_move_undo():
+            for box_type, ids in boxes_to_docs.items():
+                try:
+                    self._presenter.move_documents_sync(ids, box_type)
+                except Exception as e:
+                    logger.error(f"Undo fehlgeschlagen: {e}")
+
+        self._undo_move_worker = AsyncWorker(_do_move_undo, parent=self)
+        self._undo_move_worker.finished.connect(lambda _: (
+            self._refresh_after_move(),
+            self._toast_manager.show_success(MOVE_UNDONE),
+        ))
+        self._undo_move_worker.start()
     
     def _preview_selected(self):
         """Zeigt Vorschau fuer ausgewaehltes Dokument."""
@@ -2565,106 +2589,116 @@ class ArchiveBoxesView(QWidget):
                 self._toast_manager.show_success(PROCESSING_INCLUDED_MULTI.format(count=result.changed_count))
     
     def _archive_documents(self, documents: List[Document]):
-        """Archiviert die ausgewaehlten Dokumente (Bulk-API)."""
+        """Archiviert die ausgewaehlten Dokumente (async Bulk-API)."""
         from i18n.de import ARCHIVE_SUCCESS_SINGLE, ARCHIVE_SUCCESS_MULTI, MOVE_UNDO
-        
         if not documents:
             return
-        
-        result = self._presenter.archive_documents(documents)
-        
-        if result.changed_count > 0:
-            self._last_archive_data = {
-                'documents': documents,
-                'action': 'archive',
-            }
-            
-            self._cache.invalidate_documents()
-            self._refresh_stats()
-            self._refresh_documents(force_refresh=True)
-            
-            if result.changed_count == 1:
-                self._toast_manager.show_success(ARCHIVE_SUCCESS_SINGLE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
-            else:
-                self._toast_manager.show_success(
-                    ARCHIVE_SUCCESS_MULTI.format(count=result.changed_count),
-                    action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked
-                )
+
+        from ui.async_worker import AsyncWorker
+        self._archive_worker = AsyncWorker(
+            lambda: self._presenter.archive_documents(documents), parent=self,
+        )
+
+        def _on_done(result):
+            if result.changed_count > 0:
+                self._last_archive_data = {'documents': documents, 'action': 'archive'}
+                self._cache.invalidate_documents()
+                self._refresh_stats()
+                self._refresh_documents(force_refresh=True)
+                if result.changed_count == 1:
+                    self._toast_manager.show_success(ARCHIVE_SUCCESS_SINGLE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
+                else:
+                    self._toast_manager.show_success(
+                        ARCHIVE_SUCCESS_MULTI.format(count=result.changed_count),
+                        action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
+
+        self._archive_worker.finished.connect(_on_done)
+        self._archive_worker.error.connect(lambda msg: self._toast_manager.show_error(f"Archivierung fehlgeschlagen: {msg}"))
+        self._archive_worker.start()
     
     def _unarchive_documents(self, documents: List[Document]):
-        """Entarchiviert die ausgewaehlten Dokumente (Bulk-API)."""
+        """Entarchiviert die ausgewaehlten Dokumente (async Bulk-API)."""
         from i18n.de import UNARCHIVE_SUCCESS_SINGLE, UNARCHIVE_SUCCESS_MULTI, MOVE_UNDO
-        
         if not documents:
             return
-        
-        result = self._presenter.unarchive_documents(documents)
-        
-        if result.changed_count > 0:
-            self._last_archive_data = {
-                'documents': documents,
-                'action': 'unarchive',
-            }
-            
-            self._cache.invalidate_documents()
-            self._refresh_stats()
-            self._refresh_documents(force_refresh=True)
-            
-            if result.changed_count == 1:
-                self._toast_manager.show_success(UNARCHIVE_SUCCESS_SINGLE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
-            else:
-                self._toast_manager.show_success(
-                    UNARCHIVE_SUCCESS_MULTI.format(count=result.changed_count),
-                    action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked
-                )
+
+        from ui.async_worker import AsyncWorker
+        self._unarchive_worker = AsyncWorker(
+            lambda: self._presenter.unarchive_documents(documents), parent=self,
+        )
+
+        def _on_done(result):
+            if result.changed_count > 0:
+                self._last_archive_data = {'documents': documents, 'action': 'unarchive'}
+                self._cache.invalidate_documents()
+                self._refresh_stats()
+                self._refresh_documents(force_refresh=True)
+                if result.changed_count == 1:
+                    self._toast_manager.show_success(UNARCHIVE_SUCCESS_SINGLE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
+                else:
+                    self._toast_manager.show_success(
+                        UNARCHIVE_SUCCESS_MULTI.format(count=result.changed_count),
+                        action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
+
+        self._unarchive_worker.finished.connect(_on_done)
+        self._unarchive_worker.error.connect(lambda msg: self._toast_manager.show_error(f"Entarchivierung fehlgeschlagen: {msg}"))
+        self._unarchive_worker.start()
     
     def _delete_document(self, doc: Document):
-        """Loescht ein Dokument."""
+        """Loescht ein Dokument (async)."""
         reply = QMessageBox.question(
-            self,
-            "Loeschen bestaetigen",
+            self, "Loeschen bestaetigen",
             f"Dokument '{doc.original_filename}' wirklich loeschen?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            result = self._presenter.delete_document(doc)
-            if result.deleted_count > 0:
-                self._refresh_all()
-            else:
-                self._toast_manager.show_error("Loeschen fehlgeschlagen.")
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from ui.async_worker import AsyncWorker
+        self._del_doc_worker = AsyncWorker(
+            lambda: self._presenter.delete_document(doc), parent=self,
+        )
+        self._del_doc_worker.finished.connect(
+            lambda r: self._refresh_all() if r.deleted_count > 0
+            else self._toast_manager.show_error("Loeschen fehlgeschlagen.")
+        )
+        self._del_doc_worker.error.connect(lambda msg: self._toast_manager.show_error(f"Loeschen fehlgeschlagen: {msg}"))
+        self._del_doc_worker.start()
     
     def _delete_selected(self):
-        """Loescht ausgewaehlte Dokumente (Bulk-API: 1 Request statt N)."""
+        """Loescht ausgewaehlte Dokumente (async Bulk-API)."""
         from i18n import de as texts
         selected_docs = self._get_selected_documents()
-        
         if not selected_docs:
             return
-        
+
         reply = QMessageBox.question(
-            self,
-            texts.CONFIRM_DELETE_TITLE,
+            self, texts.CONFIRM_DELETE_TITLE,
             texts.CONFIRM_DELETE_MESSAGE.format(count=len(selected_docs)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
         if reply != QMessageBox.StandardButton.Yes:
             return
-        
-        # Auto-Refresh pausieren
+
         self._cache.pause_auto_refresh()
-        
-        try:
-            result = self._presenter.delete_documents(selected_docs)
+
+        from ui.async_worker import AsyncWorker
+        self._bulk_del_worker = AsyncWorker(
+            lambda: self._presenter.delete_documents(selected_docs), parent=self,
+        )
+
+        def _on_done(result):
             logger.info(f"Bulk-Delete: {result.deleted_count}/{result.total_requested} Dokument(e) geloescht")
-            
-            # Daten neu laden
             self._refresh_all()
-        
-        finally:
-            # Auto-Refresh wieder aktivieren
             self._cache.resume_auto_refresh()
+
+        def _on_err(msg):
+            logger.error(f"Bulk-Delete fehlgeschlagen: {msg}")
+            self._cache.resume_auto_refresh()
+
+        self._bulk_del_worker.finished.connect(_on_done)
+        self._bulk_del_worker.error.connect(_on_err)
+        self._bulk_del_worker.start()
     
     # ========================================
     # Umbenennen

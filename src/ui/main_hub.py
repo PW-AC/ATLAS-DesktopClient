@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import Optional, List
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QMessageBox, QSizePolicy, QSpacerItem,
     QProgressDialog
 )
 from ui.toast import ToastManager
 from PySide6.QtCore import Qt, Signal, QTimer, QThread
-from PySide6.QtGui import QFont, QIcon, QPixmap, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QFont, QIcon, QDragEnterEvent, QDropEvent
 
 logger = logging.getLogger(__name__)
 hb_logger = logging.getLogger('heartbeat.core')
@@ -31,8 +31,9 @@ hb_logger = logging.getLogger('heartbeat.core')
 from api.client import APIClient
 from api.auth import AuthAPI
 from i18n import de as texts
+from ui.components.module_sidebar import ModuleSidebar
+from ui.components.fade_stacked_widget import FadeStackedWidget
 
-# ACENCIA Design Tokens
 from ui.styles.tokens import (
     PRIMARY_900, PRIMARY_500, PRIMARY_100, PRIMARY_0,
     ACCENT_500, ACCENT_100,
@@ -348,9 +349,35 @@ class MainHub(QMainWindow):
         """Oeffentliche Methode: Admin-Ansicht oeffnen (vom AppRouter aufrufbar)."""
         self._show_admin()
 
+    def navigate_to_inbox(self):
+        """Oeffentliche Methode: Archiv oeffnen und zur Eingangsbox navigieren."""
+        self._show_archive()
+        if self._archive_view is not None:
+            self._archive_view.sidebar.select_box('eingang')
+
+    def open_upload_dialog(self):
+        """Oeffentliche Methode: Upload-Dialog im Archiv oeffnen."""
+        if self._archive_view is not None:
+            self._archive_view._upload_document()
+
+    def navigate_to_bipro(self):
+        """Oeffentliche Methode: BiPRO-Bereich oeffnen."""
+        self._show_bipro()
+
+    def _restore_sidebar(self):
+        """Stellt die ModuleSidebar vollstaendig in den sichtbaren Zustand her.
+
+        Stoppt laufende Animationen und setzt Opacity/Margins zurueck,
+        damit der AppRouter die Sidebar korrekt animieren kann.
+        """
+        self._sidebar._stop_running()
+        self._sidebar.setContentsMargins(0, 0, 0, 0)
+        self._sidebar._opacity_effect.setOpacity(1.0)
+        self._sidebar.show()
+
     def reset_to_default_view(self):
         """Setzt MainHub auf Standard-Ansicht zurueck (Sidebar sichtbar, Mitteilungszentrale)."""
-        self._sidebar.show()
+        self._restore_sidebar()
         self._show_message_center()
 
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
@@ -425,100 +452,25 @@ class MainHub(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # === Sidebar (Dunkel - ACENCIA Design) ===
-        self._sidebar = QFrame()
-        sidebar = self._sidebar  # Kurzreferenz fuer Setup
-        sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(SIDEBAR_WIDTH_INT)
-        sidebar.setStyleSheet(f"""
-            QFrame#sidebar {{
-                background-color: {SIDEBAR_BG};
-                border: none;
-            }}
-        """)
-        
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(0, 0, 0, 20)
-        sidebar_layout.setSpacing(4)
+        self._sidebar = ModuleSidebar("sidebar", parent=central)
+        self._sidebar.back_requested.connect(self.back_to_dashboard_requested.emit)
 
-        home_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
-        home_btn.setCursor(Qt.PointingHandCursor)
-        home_btn.setMinimumHeight(44)
-        home_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-bottom: 1px solid {BORDER_SUBTLE};
-                padding: 10px 16px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_BODY};
-                color: {ACCENT_500};
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-            }}
-        """)
-        home_btn.clicked.connect(self.back_to_dashboard_requested.emit)
-        sidebar_layout.addWidget(home_btn)
+        self._sidebar.add_spacing(8)
 
-        # Logo/Titel Container
-        logo_container = QWidget()
-        logo_layout = QVBoxLayout(logo_container)
-        logo_layout.setContentsMargins(20, 0, 20, 16)
-        logo_layout.setSpacing(8)
-        logo_layout.setAlignment(Qt.AlignHCenter)
-        
-        # App-Logo (Bild)
-        logo_image = QLabel()
-        logo_image.setAlignment(Qt.AlignCenter)
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
-        if os.path.exists(logo_path):
-            pixmap = QPixmap(logo_path)
-            scaled = pixmap.scaled(140, 140, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            logo_image.setPixmap(scaled)
-        logo_layout.addWidget(logo_image)
-        
-        # Titel (ACENCIA Style)
-        title = QLabel("ACENCIA ATLAS")
-        title.setAlignment(Qt.AlignCenter)
-        title.setFont(QFont("Tenor Sans", 14))
-        title.setStyleSheet(f"""
-            color: {SIDEBAR_TEXT};
-            font-family: {FONT_HEADLINE};
-            padding: 0;
-        """)
-        logo_layout.addWidget(title)
-        
-        # Untertitel
-        subtitle = QLabel("Der Datenkern.")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet(f"""
-            color: {PRIMARY_500};
-            font-size: {FONT_SIZE_CAPTION};
-            padding: 0;
-        """)
-        logo_layout.addWidget(subtitle)
-        
-        sidebar_layout.addWidget(logo_container)
-        
-        # Benutzer-Info
         if self.auth_api.current_user:
             user_container = QWidget()
             user_layout = QHBoxLayout(user_container)
             user_layout.setContentsMargins(20, 8, 20, 16)
-            
-            user_label = QLabel(f"● {self.auth_api.current_user.username}")
+
+            user_label = QLabel(f"\u25CF {self.auth_api.current_user.username}")
             user_label.setStyleSheet(f"""
                 color: {PRIMARY_500};
                 font-size: {FONT_SIZE_CAPTION};
             """)
             user_layout.addWidget(user_label)
             user_layout.addStretch()
-            sidebar_layout.addWidget(user_container)
-        
-        # Navigation Label
+            self._sidebar.add_widget(user_container)
+
         nav_label = QLabel("BEREICHE")
         nav_label.setStyleSheet(f"""
             color: {PRIMARY_500};
@@ -526,14 +478,12 @@ class MainHub(QMainWindow):
             padding: 16px 20px 8px 20px;
             letter-spacing: 1px;
         """)
-        sidebar_layout.addWidget(nav_label)
-        
-        # Mitteilungszentrale Button (mit Badge)
-        self.btn_center = NavButton("🔔", texts.NAV_MESSAGE_CENTER)
+        self._sidebar.add_widget(nav_label)
+
+        self.btn_center = NavButton("\U0001F514", texts.NAV_MESSAGE_CENTER)
         self.btn_center.clicked.connect(self._show_message_center)
-        sidebar_layout.addWidget(self.btn_center)
-        
-        # Notification Badge (roter Kreis mit Zahl)
+        self._sidebar.add_widget(self.btn_center)
+
         self._notification_badge = QLabel("", self.btn_center)
         self._notification_badge.setStyleSheet(f"""
             QLabel {{
@@ -550,27 +500,24 @@ class MainHub(QMainWindow):
         self._notification_badge.setFixedHeight(18)
         self._notification_badge.move(self.btn_center.width() - 36, 6)
         self._notification_badge.hide()
-        
-        # Datenabruf Button
-        self.btn_bipro = NavButton("🔄", texts.NAV_BIPRO)
+
+        self.btn_bipro = NavButton("\U0001F504", texts.NAV_BIPRO)
         self.btn_bipro.clicked.connect(self._show_bipro)
-        sidebar_layout.addWidget(self.btn_bipro)
-        
-        # Archiv Button
-        self.btn_archive = NavButton("📁", "Dokumentenarchiv")
+        self._sidebar.add_widget(self.btn_bipro)
+
+        self.btn_archive = NavButton("\U0001F4C1", "Dokumentenarchiv")
         self.btn_archive.clicked.connect(self._show_archive)
-        sidebar_layout.addWidget(self.btn_archive)
-        
-        # GDV Editor Button
-        self.btn_gdv = NavButton("📄", "GDV Editor")
+        self._sidebar.add_widget(self.btn_archive)
+
+        self.btn_gdv = NavButton("\U0001F4C4", "GDV Editor")
         self.btn_gdv.clicked.connect(self._show_gdv)
-        sidebar_layout.addWidget(self.btn_gdv)
-        
+        self._sidebar.add_widget(self.btn_gdv)
+
         user_core = self.auth_api.current_user
         if user_core and user_core.is_module_admin('core'):
             self.btn_core_admin = NavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN)
             self.btn_core_admin.clicked.connect(self._show_core_module_admin)
-            sidebar_layout.addWidget(self.btn_core_admin)
+            self._sidebar.add_widget(self.btn_core_admin)
         else:
             self.btn_core_admin = None
 
@@ -581,22 +528,20 @@ class MainHub(QMainWindow):
         else:
             self.btn_provision = None
 
-        sidebar_layout.addStretch()
-        
-        # Admin-Flag (Sidebar-Eintrag entfernt -- Admin wird ueber Dashboard gestartet)
+        self._sidebar.add_stretch()
+
         self._admin_nav_widgets = []
         user = self.auth_api.current_user
         if user and user.is_admin:
-            self.btn_admin = NavButton("👥", texts.NAV_ADMIN_VIEW)
+            self.btn_admin = NavButton("\U0001F465", texts.NAV_ADMIN_VIEW)
             self.btn_admin.clicked.connect(self._show_admin)
         else:
             self.btn_admin = None
+
+        main_layout.addWidget(self._sidebar)
         
-        
-        main_layout.addWidget(sidebar)
-        
-        # === Content Area ===
-        self.content_stack = QStackedWidget()
+        # === Content Area (Fade-Through bei Sub-View-Wechsel) ===
+        self.content_stack = FadeStackedWidget(fade_out_ms=80, fade_in_ms=120)
         self.content_stack.setStyleSheet(f"background-color: {PRIMARY_0};")
         main_layout.addWidget(self.content_stack)
         
@@ -803,7 +748,7 @@ class MainHub(QMainWindow):
     
     def _leave_provision(self):
         """Verlaesst das Provisionsmanagement."""
-        self._sidebar.show()
+        self._restore_sidebar()
         self._show_archive()
     
     def _show_admin(self):
@@ -853,15 +798,14 @@ class MainHub(QMainWindow):
         """Verlaesst den Chat und zeigt die Mitteilungszentrale."""
         if self._chat_view:
             self._chat_view.stop_auto_refresh()
-        self._sidebar.show()
+        self._restore_sidebar()
         self._show_message_center()
     
     def _leave_admin(self):
         """Verlässt den Admin-Bereich und kehrt zum Dashboard zurueck."""
-        self._sidebar.show()
-        if self._archive_view and hasattr(self._archive_view, '_load_smartscan_status'):
-            self._archive_view._load_smartscan_status()
-            self._archive_view.sidebar._smartscan_enabled = self._archive_view._smartscan_enabled
+        self._restore_sidebar()
+        if self._archive_view and hasattr(self._archive_view, '_load_smartscan_status_async'):
+            self._archive_view._load_smartscan_status_async()
         self.back_to_dashboard_requested.emit()
 
     def _show_core_module_admin(self):
@@ -884,7 +828,7 @@ class MainHub(QMainWindow):
         self._core_module_admin_view.load_data()
 
     def _leave_core_module_admin(self):
-        self._sidebar.show()
+        self._restore_sidebar()
         self._show_message_center()
 
     def _get_core_config_panels(self):
@@ -1542,26 +1486,32 @@ class MainHub(QMainWindow):
             )
 
     def _on_drop_undo_clicked(self):
-        """Rückgängig: Hochgeladene Dokumente wieder entfernen (Bulk-API)."""
+        """Rueckgaengig: Hochgeladene Dokumente wieder entfernen (async Bulk-API)."""
         doc_ids = self._drop_results.get('doc_ids', [])
         if not doc_ids:
             return
 
-        from api.documents import DocumentsAPI
-        docs_api = DocumentsAPI(self.api_client)
-
-        deleted = docs_api.delete_documents(doc_ids)
-
-        # Ergebnis-Toast (ohne Undo-Button)
-        self._toast_manager.show_success(texts.DROP_UPLOAD_UNDONE.format(count=deleted))
-
-        # IDs leeren damit kein doppeltes Undo moeglich
         self._drop_results['doc_ids'] = []
 
-        # Archiv aktualisieren
-        self._on_documents_uploaded()
+        from api.documents import DocumentsAPI
+        from ui.async_worker import AsyncWorker
+        docs_api = DocumentsAPI(self.api_client)
+        total = len(doc_ids)
 
-        logger.info(f"Drag & Drop Undo: {deleted}/{len(doc_ids)} Dokument(e) entfernt")
+        self._drop_undo_worker = AsyncWorker(
+            lambda: docs_api.delete_documents(doc_ids), parent=self,
+        )
+
+        def _on_done(deleted):
+            self._toast_manager.show_success(texts.DROP_UPLOAD_UNDONE.format(count=deleted))
+            self._on_documents_uploaded()
+            logger.info(f"Drag & Drop Undo: {deleted}/{total} Dokument(e) entfernt")
+
+        self._drop_undo_worker.finished.connect(_on_done)
+        self._drop_undo_worker.error.connect(
+            lambda msg: logger.error(f"Drop-Undo fehlgeschlagen: {msg}")
+        )
+        self._drop_undo_worker.start()
 
     # ------------------------------------------------------------------
     # System-Status (Legacy-Compat fuer Maintenance-Overlay)

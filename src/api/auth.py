@@ -471,7 +471,47 @@ class AuthAPI:
         except APIError:
             pass
         return None
-    
+
+    def verify_current_password(self, current_password: str) -> None:
+        """
+        Prueft ob das angegebene Passwort das aktuelle Passwort des Nutzers ist.
+
+        Args:
+            current_password: Das zu pruefende Passwort
+
+        Raises:
+            APIError: Bei falschem Passwort (401) oder Serverfehler
+        """
+        if not self.is_authenticated:
+            raise APIError("Nicht authentifiziert", 401)
+
+        self.client.post('/auth/verify-password', json_data={
+            'current_password': current_password,
+        })
+
+    def change_password(self, current_password: str, new_password: str) -> None:
+        """
+        Aendert das Passwort des aktuell eingeloggten Nutzers.
+
+        Verifiziert das aktuelle Passwort serverseitig, aktualisiert beide
+        Datenbanken und invalidiert alle Sessions des Nutzers.
+
+        Args:
+            current_password: Aktuelles Passwort zur Verifikation
+            new_password: Neues Passwort (mind. 8 Zeichen)
+
+        Raises:
+            APIError: Bei falschem Passwort (401), Validierungsfehler (400)
+                      oder Serverfehler
+        """
+        if not self.is_authenticated:
+            raise APIError("Nicht authentifiziert", 401)
+
+        self.client.put('/auth/change-password', {
+            'current_password': current_password,
+            'new_password': new_password,
+        })
+
     def try_auto_login(self) -> AuthState:
         """
         Versucht automatischen Login mit gespeichertem Token.

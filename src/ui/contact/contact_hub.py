@@ -11,13 +11,15 @@ import logging
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QPushButton,
-    QStackedWidget, QLabel, QApplication,
+    QLabel, QApplication,
 )
+from ui.components.fade_stacked_widget import FadeStackedWidget
 from PySide6.QtCore import Signal, Qt, QTimer, QThreadPool, QObject, QRunnable
 
 from api.client import APIClient
 from api.auth import AuthAPI
 from contact.api_client import ContactApiClient
+from ui.components.module_sidebar import ModuleSidebar, ModuleNavButton
 from ui.styles.tokens import (
     SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_WIDTH_INT,
     ACCENT_500, PRIMARY_500, PRIMARY_0, PRIMARY_900,
@@ -60,46 +62,7 @@ class _ContactDataFingerprintWorker(QRunnable):
             self.signals.result.emit("")
 
 
-class _ContactNavButton(QPushButton):
-    """Navigations-Button fuer die Contact-Sidebar."""
-
-    def __init__(self, icon: str, text: str, subtitle: str = "", parent=None):
-        super().__init__(parent)
-        self.setCheckable(True)
-        self.setCursor(Qt.PointingHandCursor)
-
-        if subtitle:
-            display = f"   {icon}  {text}\n        {subtitle}"
-            self.setMinimumHeight(56)
-        else:
-            display = f"   {icon}  {text}"
-            self.setMinimumHeight(40)
-
-        self.setText(display)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-left: 3px solid transparent;
-                border-radius: 0px;
-                padding: 8px 20px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_CAPTION};
-                color: {PRIMARY_500};
-                line-height: 1.4;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-                color: {SIDEBAR_TEXT};
-            }}
-            QPushButton:checked {{
-                background-color: {SIDEBAR_HOVER};
-                border-left: 3px solid {ACCENT_500};
-                color: {SIDEBAR_TEXT};
-                font-weight: 500;
-            }}
-        """)
+_ContactNavButton = ModuleNavButton
 
 
 class ContactHub(QWidget):
@@ -121,6 +84,10 @@ class ContactHub(QWidget):
     }
 
     _MODULE_HEARTBEAT_INTERVAL = 15_000
+
+    def open_quick_call_note(self):
+        """Oeffentliche Methode: Schnelle Gespraechsnotiz-Dialog oeffnen."""
+        self._on_quick_call_note()
 
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
         super().__init__()
@@ -153,117 +120,37 @@ class ContactHub(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        sidebar = QFrame()
-        sidebar.setObjectName("contact_sidebar")
-        sidebar.setFixedWidth(SIDEBAR_WIDTH_INT)
-        sidebar.setStyleSheet(f"""
-            QFrame#contact_sidebar {{
-                background-color: {SIDEBAR_BG};
-                border-right: 1px solid {BORDER_SUBTLE};
-            }}
-        """)
+        self._sidebar = ModuleSidebar("contact_sidebar", parent=self)
+        self._sidebar.back_requested.connect(self.back_requested.emit)
 
-        sb = QVBoxLayout(sidebar)
-        sb.setContentsMargins(0, 8, 0, 8)
-        sb.setSpacing(0)
+        self._sidebar.add_section_label(texts.CONTACT_SECTION_CONTACTS)
 
-        back_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
-        back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.setMinimumHeight(44)
-        back_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-bottom: 1px solid {BORDER_SUBTLE};
-                padding: 10px 16px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_BODY};
-                color: {ACCENT_500};
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-            }}
-        """)
-        back_btn.clicked.connect(self.back_requested.emit)
-        sb.addWidget(back_btn)
-        sb.addSpacing(12)
+        self._sidebar.add_nav("\u203A", texts.CONTACT_NAV_ALL, "", self.PANEL_ALL, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.CONTACT_NAV_FAVORITES, "", self.PANEL_FAVORITES, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.CONTACT_NAV_RECENT_VIEWED, "", self.PANEL_RECENT_VIEWED, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.CONTACT_NAV_RECENT_CALLED, "", self.PANEL_RECENT_CALLED, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.CONTACT_NAV_CALLBACKS, "", self.PANEL_CALLBACKS, self._navigate_to)
 
-        def add_nav(icon: str, title: str, subtitle: str, index: int) -> _ContactNavButton:
-            btn = _ContactNavButton(icon, title, subtitle)
-            btn.clicked.connect(lambda checked, i=index: self._navigate_to(i))
-            sb.addWidget(btn)
-            self._nav_buttons.append(btn)
-            return btn
+        self._sidebar.add_separator()
 
-        section_contacts = QLabel(f"  {texts.CONTACT_SECTION_CONTACTS}")
-        section_contacts.setStyleSheet(f"""
-            color: {ACCENT_500}; font-family: {FONT_BODY};
-            font-size: 9pt; font-weight: 700; letter-spacing: 1px;
-            padding: 4px 16px 4px 16px;
-        """)
-        sb.addWidget(section_contacts)
+        self._sidebar.add_section_label(texts.CONTACT_SECTION_EXTRA)
 
-        add_nav("\u203A", texts.CONTACT_NAV_ALL, "", self.PANEL_ALL)
-        add_nav("\u203A", texts.CONTACT_NAV_FAVORITES, "", self.PANEL_FAVORITES)
-        add_nav("\u203A", texts.CONTACT_NAV_RECENT_VIEWED, "", self.PANEL_RECENT_VIEWED)
-        add_nav("\u203A", texts.CONTACT_NAV_RECENT_CALLED, "", self.PANEL_RECENT_CALLED)
-        add_nav("\u203A", texts.CONTACT_NAV_CALLBACKS, "", self.PANEL_CALLBACKS)
-
-        sep = QFrame()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
-        sb.addWidget(sep)
-
-        section_extra = QLabel(f"  {texts.CONTACT_SECTION_EXTRA}")
-        section_extra.setStyleSheet(f"""
-            color: {ACCENT_500}; font-family: {FONT_BODY};
-            font-size: 9pt; font-weight: 700; letter-spacing: 1px;
-            padding: 8px 16px 4px 16px;
-        """)
-        sb.addWidget(section_extra)
-
-        add_nav("\u203A", texts.CONTACT_NAV_COMPANIES, "", self.PANEL_COMPANIES)
+        self._sidebar.add_nav("\u203A", texts.CONTACT_NAV_COMPANIES, "", self.PANEL_COMPANIES, self._navigate_to)
 
         user = self._auth_api.current_user
         if user and user.is_module_admin('contact'):
-            sep_ma = QFrame()
-            sep_ma.setFixedHeight(1)
-            sep_ma.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
-            sb.addWidget(sep_ma)
-
-            ma_btn = _ContactNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
+            self._sidebar.add_separator()
+            ma_btn = ModuleNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
             ma_btn.clicked.connect(self._show_contact_module_admin)
-            sb.addWidget(ma_btn)
+            self._sidebar.add_widget(ma_btn)
 
-        sb.addStretch()
+        self._sidebar.add_stretch()
+        self._sidebar.add_refresh_button(texts.CONTACT_REFRESH, lambda: self._refresh_all(show_toast=True))
 
-        refresh_btn = QPushButton(f"  \u21BB  {texts.CONTACT_REFRESH}")
-        refresh_btn.setCursor(Qt.PointingHandCursor)
-        refresh_btn.setMinimumHeight(44)
-        refresh_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-top: 1px solid {BORDER_SUBTLE};
-                padding: 10px 16px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_CAPTION};
-                color: {ACCENT_500};
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-            }}
-        """)
-        refresh_btn.clicked.connect(lambda: self._refresh_all(show_toast=True))
-        sb.addWidget(refresh_btn)
+        self._nav_buttons = self._sidebar.nav_buttons
+        root.addWidget(self._sidebar)
 
-        root.addWidget(sidebar)
-
-        self._content_stack = QStackedWidget()
+        self._content_stack = FadeStackedWidget(fade_out_ms=80, fade_in_ms=120)
         for i in range(self._TOTAL_PANELS):
             self._content_stack.addWidget(self._create_placeholder())
         root.addWidget(self._content_stack)
@@ -296,22 +183,22 @@ class ContactHub(QWidget):
         try:
             if index == self.PANEL_ALL:
                 from ui.contact.contacts_view import ContactsView
-                panel = ContactsView(self._contact_api, self._auth_api, 'all')
+                panel = ContactsView(self._contact_api, self._auth_api, 'all', parent=self)
             elif index == self.PANEL_FAVORITES:
                 from ui.contact.contacts_view import ContactsView
-                panel = ContactsView(self._contact_api, self._auth_api, 'favorites')
+                panel = ContactsView(self._contact_api, self._auth_api, 'favorites', parent=self)
             elif index == self.PANEL_RECENT_VIEWED:
                 from ui.contact.contacts_view import ContactsView
-                panel = ContactsView(self._contact_api, self._auth_api, 'recent_viewed')
+                panel = ContactsView(self._contact_api, self._auth_api, 'recent_viewed', parent=self)
             elif index == self.PANEL_RECENT_CALLED:
                 from ui.contact.contacts_view import ContactsView
-                panel = ContactsView(self._contact_api, self._auth_api, 'recent_called')
+                panel = ContactsView(self._contact_api, self._auth_api, 'recent_called', parent=self)
             elif index == self.PANEL_CALLBACKS:
                 from ui.contact.contacts_view import ContactsView
-                panel = ContactsView(self._contact_api, self._auth_api, 'callbacks')
+                panel = ContactsView(self._contact_api, self._auth_api, 'callbacks', parent=self)
             elif index == self.PANEL_COMPANIES:
                 from ui.contact.contact_company_view import ContactCompanyView
-                panel = ContactCompanyView(self._contact_api, self._auth_api)
+                panel = ContactCompanyView(self._contact_api, self._auth_api, parent=self)
         except Exception as e:
             logger.error("Fehler beim Laden eines Contact-Panels: %s", e)
             self._panels_loaded.discard(index)
@@ -334,7 +221,6 @@ class ContactHub(QWidget):
             self._content_stack.removeWidget(old)
             old.deleteLater()
             self._content_stack.insertWidget(index, panel)
-            self._content_stack.setCurrentIndex(index)
 
     def _refresh_all(self, show_toast: bool = True):
         if self._refresh_guard:
@@ -374,18 +260,34 @@ class ContactHub(QWidget):
         hb_logger.info("[CONTACT] STOP")
 
     def _initial_load_all_panels(self):
-        """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
+        """Laedt das Default-Panel sofort, Rest gestaffelt (1 pro Frame)."""
         if not self._content_stack:
             return
-        for i in range(self._TOTAL_PANELS):
-            self._ensure_panel_loaded(i)
-            panel = self._content_stack.widget(i)
-            if panel and hasattr(panel, 'refresh'):
-                try:
-                    panel.refresh()
-                except Exception as e:
-                    logger.debug("Initial refresh Panel %s: %s", i, e)
-        self._navigate_to(self.PANEL_ALL)
+        default_idx = self.PANEL_ALL
+        self._ensure_panel_loaded(default_idx)
+        panel = self._content_stack.widget(default_idx)
+        if panel and hasattr(panel, 'refresh'):
+            try:
+                panel.refresh()
+            except Exception as e:
+                logger.debug("Initial refresh Panel %s: %s", default_idx, e)
+        self._navigate_to(default_idx)
+        remaining = [i for i in range(self._TOTAL_PANELS) if i != default_idx]
+        self._load_panels_staggered(remaining, 0)
+
+    def _load_panels_staggered(self, indices: list, pos: int):
+        """Laedt jeweils ein Panel pro Event-Loop-Durchlauf."""
+        if pos >= len(indices):
+            return
+        idx = indices[pos]
+        self._ensure_panel_loaded(idx)
+        panel = self._content_stack.widget(idx)
+        if panel and hasattr(panel, 'refresh'):
+            try:
+                panel.refresh()
+            except Exception as e:
+                logger.debug("Staggered refresh Panel %s: %s", idx, e)
+        QTimer.singleShot(0, lambda: self._load_panels_staggered(indices, pos + 1))
 
     def _on_module_heartbeat_tick(self):
         """Prueft im Hintergrund ob sich Daten geaendert haben."""

@@ -10,8 +10,9 @@ import hashlib
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QPushButton,
-    QStackedWidget, QLabel, QSizePolicy,
+    QLabel, QSizePolicy,
 )
+from ui.components.fade_stacked_widget import FadeStackedWidget
 from PySide6.QtCore import Signal, Qt, QTimer, QObject, QRunnable, QThreadPool
 
 from api.client import APIClient
@@ -28,6 +29,7 @@ from presenters.provision.distribution_presenter import DistributionPresenter
 from presenters.provision.payouts_presenter import PayoutsPresenter
 from presenters.provision.free_commission_presenter import FreeCommissionPresenter
 from presenters.provision.performance_presenter import PerformancePresenter
+from ui.components.module_sidebar import ModuleSidebar, ModuleNavButton
 from ui.styles.tokens import (
     SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_WIDTH_INT,
     ACCENT_500, PRIMARY_500, PRIMARY_0, PRIMARY_900,
@@ -74,48 +76,7 @@ class _ProvDataFingerprintWorker(QRunnable):
                 pass
 
 
-class ProvisionNavButton(QPushButton):
-    """Navigations-Button mit optionalem Subtext fuer die Provisions-Sidebar."""
-
-    def __init__(self, icon: str, text: str, subtitle: str = "", parent=None):
-        super().__init__(parent)
-        self._title = text
-        self._subtitle = subtitle
-        self.setCheckable(True)
-        self.setCursor(Qt.PointingHandCursor)
-
-        if subtitle:
-            display = f"   {icon}  {text}\n        {subtitle}"
-            self.setMinimumHeight(56)
-        else:
-            display = f"   {icon}  {text}"
-            self.setMinimumHeight(40)
-
-        self.setText(display)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-left: 3px solid transparent;
-                border-radius: 0px;
-                padding: 8px 20px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_CAPTION};
-                color: {PRIMARY_500};
-                line-height: 1.4;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-                color: {SIDEBAR_TEXT};
-            }}
-            QPushButton:checked {{
-                background-color: {SIDEBAR_HOVER};
-                border-left: 3px solid {ACCENT_500};
-                color: {SIDEBAR_TEXT};
-                font-weight: 500;
-            }}
-        """)
+ProvisionNavButton = ModuleNavButton
 
 
 class ProvisionHub(QWidget):
@@ -185,129 +146,47 @@ class ProvisionHub(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        sidebar = QFrame()
-        sidebar.setObjectName("provision_sidebar")
-        sidebar.setFixedWidth(SIDEBAR_WIDTH_INT)
-        sidebar.setStyleSheet(f"""
-            QFrame#provision_sidebar {{
-                background-color: {SIDEBAR_BG};
-                border-right: 1px solid {BORDER_SUBTLE};
-            }}
-        """)
+        self._sidebar = ModuleSidebar("provision_sidebar", parent=self)
+        self._sidebar.back_requested.connect(self.back_requested.emit)
 
-        sb_layout = QVBoxLayout(sidebar)
-        sb_layout.setContentsMargins(0, 8, 0, 8)
-        sb_layout.setSpacing(0)
+        self._sidebar.add_nav("\u203A", texts.PROVISION_PANEL_OVERVIEW, texts.PROVISION_PANEL_OVERVIEW_DESC, self.PANEL_OVERVIEW, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.PM_PERF_PANEL_TITLE, texts.PM_PERF_PANEL_DESC, self.PANEL_PERFORMANCE, self._navigate_to)
 
-        back_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
-        back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.setMinimumHeight(44)
-        back_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-bottom: 1px solid {BORDER_SUBTLE};
-                padding: 10px 16px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_BODY};
-                color: {ACCENT_500};
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-            }}
-        """)
-        back_btn.clicked.connect(self.back_requested.emit)
-        sb_layout.addWidget(back_btn)
-        sb_layout.addSpacing(12)
+        self._sidebar.add_section_label_padded(texts.PROVISION_SECTION_DATA)
 
-        def add_nav(icon: str, title: str, subtitle: str, index: int) -> ProvisionNavButton:
-            btn = ProvisionNavButton(icon, title, subtitle)
-            btn.clicked.connect(lambda checked, i=index: self._navigate_to(i))
-            sb_layout.addWidget(btn)
-            self._nav_buttons.append(btn)
-            return btn
+        self._sidebar.add_nav("\u203A", texts.PROVISION_PANEL_IMPORT, texts.PROVISION_PANEL_IMPORT_DESC, self.PANEL_IMPORT, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.PROVISION_PANEL_VU, texts.PROVISION_PANEL_VU_DESC, self.PANEL_VU, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.PROVISION_PANEL_XEMPUS, texts.PROVISION_PANEL_XEMPUS_DESC, self.PANEL_XEMPUS, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.PM_FREE_PANEL_TITLE, texts.PM_FREE_PANEL_DESC, self.PANEL_FREE, self._navigate_to)
 
-        add_nav("\u203A", texts.PROVISION_PANEL_OVERVIEW, texts.PROVISION_PANEL_OVERVIEW_DESC, self.PANEL_OVERVIEW)
-        add_nav("\u203A", texts.PM_PERF_PANEL_TITLE, texts.PM_PERF_PANEL_DESC, self.PANEL_PERFORMANCE)
+        self._sidebar.add_separator()
+        self._sidebar.add_section_label(texts.PROVISION_SECTION_ADMIN)
 
-        section_daten = QLabel(f"  {texts.PROVISION_SECTION_DATA}")
-        section_daten.setStyleSheet(f"""
-            color: {ACCENT_500}; font-family: {FONT_BODY};
-            font-size: 9pt; font-weight: 700; letter-spacing: 1px;
-            padding: 12px 16px 4px 16px;
-        """)
-        sb_layout.addWidget(section_daten)
+        self._sidebar.add_nav("\u203A", texts.PROVISION_PANEL_CLEARANCE, texts.PROVISION_PANEL_CLEARANCE_DESC, self.PANEL_CLEARANCE, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.PROVISION_PANEL_DISTRIBUTION, texts.PROVISION_PANEL_DISTRIBUTION_DESC, self.PANEL_DISTRIBUTION, self._navigate_to)
+        self._sidebar.add_nav("\u203A", texts.PROVISION_PANEL_PAYOUTS, texts.PROVISION_PANEL_PAYOUTS_DESC, self.PANEL_PAYOUTS, self._navigate_to)
 
-        add_nav("\u203A", texts.PROVISION_PANEL_IMPORT, texts.PROVISION_PANEL_IMPORT_DESC, self.PANEL_IMPORT)
-        add_nav("\u203A", texts.PROVISION_PANEL_VU, texts.PROVISION_PANEL_VU_DESC, self.PANEL_VU)
-        add_nav("\u203A", texts.PROVISION_PANEL_XEMPUS, texts.PROVISION_PANEL_XEMPUS_DESC, self.PANEL_XEMPUS)
-        add_nav("\u203A", texts.PM_FREE_PANEL_TITLE, texts.PM_FREE_PANEL_DESC, self.PANEL_FREE)
-
-        sep = QFrame()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
-        sb_layout.addWidget(sep)
-
-        section_admin = QLabel(f"  {texts.PROVISION_SECTION_ADMIN}")
-        section_admin.setStyleSheet(f"""
-            color: {ACCENT_500}; font-family: {FONT_BODY};
-            font-size: 9pt; font-weight: 700; letter-spacing: 1px;
-            padding: 8px 16px 4px 16px;
-        """)
-        sb_layout.addWidget(section_admin)
-
-        add_nav("\u203A", texts.PROVISION_PANEL_CLEARANCE, texts.PROVISION_PANEL_CLEARANCE_DESC, self.PANEL_CLEARANCE)
-        add_nav("\u203A", texts.PROVISION_PANEL_DISTRIBUTION, texts.PROVISION_PANEL_DISTRIBUTION_DESC, self.PANEL_DISTRIBUTION)
-        add_nav("\u203A", texts.PROVISION_PANEL_PAYOUTS, texts.PROVISION_PANEL_PAYOUTS_DESC, self.PANEL_PAYOUTS)
-
-        sep2 = QFrame()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
-        sb_layout.addWidget(sep2)
-
-        add_nav("\u26A0\uFE0F", texts.PROVISION_PANEL_SETTINGS, texts.PROVISION_PANEL_SETTINGS_DESC, self.PANEL_SETTINGS)
+        self._sidebar.add_separator()
+        self._sidebar.add_nav("\u26A0\uFE0F", texts.PROVISION_PANEL_SETTINGS, texts.PROVISION_PANEL_SETTINGS_DESC, self.PANEL_SETTINGS, self._navigate_to)
 
         user_pm = self._auth_api.current_user
         if user_pm and user_pm.is_module_admin('provision'):
-            sep_admin = QFrame()
-            sep_admin.setFixedHeight(1)
-            sep_admin.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
-            sb_layout.addWidget(sep_admin)
-
-            admin_btn = ProvisionNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
+            self._sidebar.add_separator()
+            admin_btn = ModuleNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
             admin_btn.clicked.connect(self._show_provision_module_admin)
-            sb_layout.addWidget(admin_btn)
+            self._sidebar.add_widget(admin_btn)
 
-        sb_layout.addStretch()
+        self._sidebar.add_stretch()
+        self._sidebar.add_refresh_button(
+            texts.PROVISION_HUB_REFRESH,
+            lambda: self._refresh_all(show_toast=True),
+            tooltip=texts.PROVISION_HUB_REFRESH_TIP,
+        )
 
-        refresh_btn = QPushButton(f"  \u21BB  {texts.PROVISION_HUB_REFRESH}")
-        refresh_btn.setToolTip(texts.PROVISION_HUB_REFRESH_TIP)
-        refresh_btn.setCursor(Qt.PointingHandCursor)
-        refresh_btn.setMinimumHeight(44)
-        refresh_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-top: 1px solid {BORDER_SUBTLE};
-                padding: 10px 16px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_CAPTION};
-                color: {ACCENT_500};
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-            }}
-        """)
-        refresh_btn.clicked.connect(lambda: self._refresh_all(show_toast=True))
-        sb_layout.addWidget(refresh_btn)
+        self._nav_buttons = self._sidebar.nav_buttons
+        root.addWidget(self._sidebar)
 
-        root.addWidget(sidebar)
-
-        self._content_stack = QStackedWidget()
+        self._content_stack = FadeStackedWidget(fade_out_ms=80, fade_in_ms=120)
         for i in range(self._TOTAL_PANELS):
             self._content_stack.addWidget(self._create_panel_placeholder(i))
         root.addWidget(self._content_stack)
@@ -452,16 +331,32 @@ class ProvisionHub(QWidget):
         hb_logger.info("[LEDGER] STOP")
 
     def _initial_load_all_panels(self):
-        """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
-        for i in range(self._TOTAL_PANELS):
-            self._ensure_panel_loaded(i)
-            panel = self._content_stack.widget(i)
-            if panel and hasattr(panel, 'refresh'):
-                try:
-                    panel.refresh()
-                except Exception as e:
-                    logger.debug(f"Initial refresh Panel {i}: {e}")
-        self._navigate_to(self.PANEL_OVERVIEW)
+        """Laedt das Default-Panel sofort, Rest gestaffelt (1 pro Frame)."""
+        default_idx = self.PANEL_OVERVIEW
+        self._ensure_panel_loaded(default_idx)
+        panel = self._content_stack.widget(default_idx)
+        if panel and hasattr(panel, 'refresh'):
+            try:
+                panel.refresh()
+            except Exception as e:
+                logger.debug(f"Initial refresh Panel {default_idx}: {e}")
+        self._navigate_to(default_idx)
+        remaining = [i for i in range(self._TOTAL_PANELS) if i != default_idx]
+        self._load_panels_staggered(remaining, 0)
+
+    def _load_panels_staggered(self, indices: list, pos: int):
+        """Laedt jeweils ein Panel pro Event-Loop-Durchlauf."""
+        if pos >= len(indices):
+            return
+        idx = indices[pos]
+        self._ensure_panel_loaded(idx)
+        panel = self._content_stack.widget(idx)
+        if panel and hasattr(panel, 'refresh'):
+            try:
+                panel.refresh()
+            except Exception as e:
+                logger.debug(f"Staggered refresh Panel {idx}: {e}")
+        QTimer.singleShot(0, lambda: self._load_panels_staggered(indices, pos + 1))
 
     def _on_module_heartbeat_tick(self):
         """Prueft im Hintergrund ob sich Daten geaendert haben."""

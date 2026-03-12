@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QCheckBox, QFrame, QProgressBar,
     QScrollArea, QGridLayout,
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSettings
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSettings, QObject, QRunnable, QThreadPool
 from PySide6.QtGui import QFont, QColor, QPainter, QShortcut, QKeySequence
 
 from api.client import APIClient
@@ -34,7 +34,7 @@ from ui.styles.tokens import (
     PRIMARY_900, PRIMARY_500, PRIMARY_100, PRIMARY_0,
     ACCENT_500,
     TEXT_PRIMARY, TEXT_SECONDARY,
-    BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
+    BG_PRIMARY, BG_SECONDARY, BG_TERTIARY, BORDER_DEFAULT,
     SUCCESS, WARNING, ERROR, INFO,
     FONT_HEADLINE, FONT_BODY,
     FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -1984,18 +1984,59 @@ class BiPROView(QWidget):
         self._preview_summary.setVisible(False)
         std_layout.addWidget(self._preview_summary)
 
-        self._preview_scroll = QScrollArea()
-        self._preview_scroll.setWidgetResizable(True)
-        self._preview_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._preview_scroll.setMinimumHeight(120)
-
-        self._preview_cards_widget = QWidget()
-        self._preview_cards_layout = QGridLayout(self._preview_cards_widget)
-        self._preview_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self._preview_cards_layout.setHorizontalSpacing(6)
-        self._preview_cards_layout.setVerticalSpacing(6)
-        self._preview_scroll.setWidget(self._preview_cards_widget)
-        std_layout.addWidget(self._preview_scroll, 1)
+        from i18n.de import (
+            BIPRO_PREVIEW_COL_VU, BIPRO_PREVIEW_COL_CATEGORY,
+            BIPRO_PREVIEW_COL_DATE, BIPRO_PREVIEW_COL_AVAILABLE_UNTIL,
+            BIPRO_PREVIEW_COL_TRANSFERS, BIPRO_PREVIEW_COL_DATA_ONLY,
+        )
+        self._preview_table = QTableWidget()
+        self._preview_table.setColumnCount(6)
+        self._preview_table.setHorizontalHeaderLabels([
+            BIPRO_PREVIEW_COL_VU,
+            BIPRO_PREVIEW_COL_CATEGORY,
+            BIPRO_PREVIEW_COL_DATE,
+            BIPRO_PREVIEW_COL_AVAILABLE_UNTIL,
+            BIPRO_PREVIEW_COL_TRANSFERS,
+            BIPRO_PREVIEW_COL_DATA_ONLY,
+        ])
+        self._preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._preview_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._preview_table.setAlternatingRowColors(True)
+        self._preview_table.verticalHeader().setVisible(False)
+        self._preview_table.setMinimumHeight(120)
+        self._preview_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {BG_PRIMARY};
+                alternate-background-color: {BG_TERTIARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 6px;
+                gridline-color: {BORDER_DEFAULT};
+                font-size: {FONT_SIZE_CAPTION};
+                color: {TEXT_PRIMARY};
+            }}
+            QTableWidget::item {{
+                padding: 4px 8px;
+                border-bottom: 1px solid {BORDER_DEFAULT};
+            }}
+            QHeaderView::section {{
+                background-color: {BG_SECONDARY};
+                border: none;
+                border-bottom: 2px solid {ACCENT_500};
+                font-family: {FONT_HEADLINE};
+                font-weight: 600;
+                font-size: {FONT_SIZE_CAPTION};
+                color: {TEXT_PRIMARY};
+                padding: 6px 8px;
+            }}
+        """)
+        ptbl_header = self._preview_table.horizontalHeader()
+        ptbl_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        ptbl_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        ptbl_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        ptbl_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        ptbl_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        ptbl_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        std_layout.addWidget(self._preview_table, 1)
 
         layout.addWidget(self._standard_container)
 
@@ -2308,21 +2349,17 @@ class BiPROView(QWidget):
         logger.warning(BIPRO_PREVIEW_ERROR.format(vu_name=vu_name) + f": {error_msg}")
 
     def _clear_preview_cards(self):
-        """Entfernt alle Karten aus dem Preview-Grid."""
-        while self._preview_cards_layout.count():
-            item = self._preview_cards_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        """Leert die Preview-Tabelle."""
+        self._preview_table.setRowCount(0)
 
     def _render_preview_cards(self, results: list):
-        """Baut Zusammenfassung + Vorschau-Karten aus den Preview-Ergebnissen."""
+        """Baut Zusammenfassung + Vorschau-Tabelle aus den Preview-Ergebnissen."""
         from i18n.de import BIPRO_PREVIEW_COUNT, BIPRO_PREVIEW_EMPTY
         self._clear_preview_cards()
         self._clear_preview_summary()
 
         vu_stats: dict = {}
-        cards = []
+        rows = []
         for vu_name, shipments in results:
             if vu_name not in vu_stats:
                 vu_stats[vu_name] = {'count': 0, 'categories': set()}
@@ -2332,7 +2369,7 @@ class BiPROView(QWidget):
                     vu_stats[vu_name]['categories'].add(
                         get_category_short_name(ship.category) or ship.category
                     )
-                cards.append((vu_name, ship))
+                rows.append((vu_name, ship))
 
         total_shipments = sum(v['count'] for v in vu_stats.values())
 
@@ -2347,12 +2384,34 @@ class BiPROView(QWidget):
         )
         self._build_preview_summary(vu_stats, total_shipments)
 
-        available_w = self._preview_scroll.viewport().width() or self.width() - 40
-        cols = max(1, available_w // 180)
-        for i, (vu_name, ship) in enumerate(cards):
-            card = self._build_shipment_card(vu_name, ship)
-            row, col = divmod(i, cols)
-            self._preview_cards_layout.addWidget(card, row, col)
+        self._preview_table.setRowCount(len(rows))
+        for row_idx, (vu_name, ship) in enumerate(rows):
+            cat_code = ship.category or ""
+            cat_icon = get_category_icon(cat_code) if cat_code else ""
+            cat_full = get_category_name(cat_code) if cat_code else ""
+
+            vu_item = QTableWidgetItem(vu_name)
+            self._preview_table.setItem(row_idx, 0, vu_item)
+
+            cat_item = QTableWidgetItem(f"{cat_icon} {cat_full}")
+            cat_item.setToolTip(f"Code: {cat_code}" if cat_code else "")
+            self._preview_table.setItem(row_idx, 1, cat_item)
+
+            date_str = format_datetime_german(ship.created_at) if ship.created_at else ""
+            date_item = QTableWidgetItem(date_str)
+            date_item.setToolTip(ship.created_at or "")
+            self._preview_table.setItem(row_idx, 2, date_item)
+
+            avail_str = format_date_german(ship.available_until) if ship.available_until else ""
+            avail_item = QTableWidgetItem(avail_str)
+            avail_item.setToolTip(ship.available_until or "")
+            self._preview_table.setItem(row_idx, 3, avail_item)
+
+            transfers_str = str(ship.transfer_count) if ship.transfer_count else ""
+            self._preview_table.setItem(row_idx, 4, QTableWidgetItem(transfers_str))
+
+            data_only = "Ja" if ship.contains_only_data else "Nein"
+            self._preview_table.setItem(row_idx, 5, QTableWidgetItem(data_only))
 
     def _clear_preview_summary(self):
         """Entfernt alle Widgets aus der Zusammenfassungs-Karte."""
@@ -2387,62 +2446,6 @@ class BiPROView(QWidget):
                 font-size: {FONT_SIZE_CAPTION}; color: {TEXT_SECONDARY};
             """)
             self._preview_summary_layout.addWidget(line)
-
-    def _build_shipment_card(self, vu_name: str, shipment) -> QFrame:
-        """Erstellt eine einzelne Vorschau-Karte fuer eine Lieferung."""
-        from i18n.de import (
-            BIPRO_PREVIEW_CARD_CATEGORY, BIPRO_PREVIEW_CARD_DATE,
-        )
-
-        card = QFrame()
-        card.setObjectName("shipmentCard")
-        card.setMinimumWidth(160)
-        card.setStyleSheet(f"""
-            QFrame#shipmentCard {{
-                background-color: {BG_SECONDARY};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: 12px;
-                padding: 10px;
-            }}
-            QFrame#shipmentCard:hover {{
-                border-color: {ACCENT_500};
-            }}
-            QFrame#shipmentCard QLabel {{
-                border: none;
-                background: transparent;
-            }}
-        """)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(10, 8, 10, 8)
-        card_layout.setSpacing(3)
-
-        cat_code = shipment.category or ""
-        cat_icon = get_category_icon(cat_code) if cat_code else ""
-        cat_name = get_category_short_name(cat_code) if cat_code else ""
-
-        vu_label = QLabel(f"{cat_icon} {vu_name}")
-        vu_label.setStyleSheet(f"""
-            font-family: {FONT_HEADLINE}; font-weight: 600;
-            font-size: {FONT_SIZE_BODY}; color: {TEXT_PRIMARY};
-        """)
-        card_layout.addWidget(vu_label)
-
-        if cat_name:
-            cat_label = QLabel(BIPRO_PREVIEW_CARD_CATEGORY.format(name=cat_name))
-            cat_label.setStyleSheet(f"""
-                font-size: {FONT_SIZE_CAPTION}; color: {TEXT_SECONDARY};
-            """)
-            card_layout.addWidget(cat_label)
-
-        date_str = format_date_german(shipment.created_at) if shipment.created_at else ""
-        if date_str:
-            date_label = QLabel(BIPRO_PREVIEW_CARD_DATE.format(date=date_str))
-            date_label.setStyleSheet(f"""
-                font-size: {FONT_SIZE_CAPTION}; color: {TEXT_PRIMARY};
-            """)
-            card_layout.addWidget(date_label)
-
-        return card
 
     # ── Acknowledge All Listed (Standard-View) ──
 
@@ -2853,21 +2856,10 @@ class BiPROView(QWidget):
         return str(config_dir / 'certificates.json')
     
     def _save_certificate_config(self, connection_id: int, cert_data: dict):
-        """Speichert Zertifikats-Konfiguration lokal (UTF-8 fuer Sonderzeichen)."""
+        """Speichert Zertifikats-Konfiguration lokal im Hintergrund."""
         import json
         config_path = self._get_certificate_config_path()
-        
-        # Bestehende Konfiguration laden
-        config = {}
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-            except (json.JSONDecodeError, IOError, OSError) as e:
-                self._log(f"Warnung: Bestehende Zertifikat-Konfiguration konnte nicht geladen werden: {e}")
-        
-        # Neue Konfiguration speichern (PFX oder JKS)
-        config[str(connection_id)] = {
+        entry = {
             'cert_format': cert_data.get('cert_format', 'pfx'),
             'pfx_path': cert_data.get('pfx_path', ''),
             'pfx_password': cert_data.get('pfx_password', ''),
@@ -2876,21 +2868,38 @@ class BiPROView(QWidget):
             'jks_alias': cert_data.get('jks_alias', ''),
             'jks_key_password': cert_data.get('jks_key_password', '')
         }
-        
-        # Explizit UTF-8 fuer Sonderzeichen im Passwort
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        
-        self._log(f"Zertifikat-Konfiguration gespeichert")
-    
+
+        class _W(QThread):
+            def __init__(self, path, cid, data, parent=None):
+                super().__init__(parent)
+                self._path, self._cid, self._data = path, str(cid), data
+            def run(self):
+                try:
+                    config = {}
+                    if os.path.exists(self._path):
+                        try:
+                            with open(self._path, 'r', encoding='utf-8') as f:
+                                config = json.load(f)
+                        except (json.JSONDecodeError, IOError, OSError):
+                            pass
+                    config[self._cid] = self._data
+                    with open(self._path, 'w', encoding='utf-8') as f:
+                        json.dump(config, f, indent=2, ensure_ascii=False)
+                except Exception as e:
+                    logger.error(f"Zertifikat-Konfiguration speichern: {e}")
+
+        self._cert_save_worker = _W(config_path, connection_id, entry, parent=self)
+        self._cert_save_worker.start()
+        self._log("Zertifikat-Konfiguration gespeichert")
+
     def _load_certificate_config(self, connection_id: int) -> dict:
-        """Laedt PFX-Konfiguration fuer eine Verbindung (UTF-8 fuer Sonderzeichen)."""
+        """Laedt PFX-Konfiguration fuer eine Verbindung (synchron, kleine Datei)."""
         import json
         config_path = self._get_certificate_config_path()
-        
+
         if not os.path.exists(config_path):
             return {}
-        
+
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
@@ -3507,44 +3516,63 @@ class BiPROView(QWidget):
     def _fetch_mails(self):
         """Mails vom IMAP-Postfach abholen und Anhaenge importieren."""
         from i18n import de as texts
-        from api.smartscan import SmartScanAPI, EmailAccountsAPI
-        
+
         if self._mail_import_worker is not None:
             self._toast_manager.show_info(texts.BIPRO_MAIL_FETCH_RUNNING)
             return
-        
-        # IMAP-Konto ermitteln (aus SmartScan-Settings oder erstes aktives IMAP-Konto)
-        account_id = None
-        try:
-            smartscan_api = SmartScanAPI(self.api_client)
-            settings = smartscan_api.get_settings()
-            if settings:
-                poll_id = settings.get('imap_poll_account_id')
-                if poll_id:
-                    account_id = int(poll_id)
-        except Exception as e:
-            logger.warning(f"SmartScan-Settings konnten nicht geladen werden: {e}")
-        
-        # Fallback: Erstes aktives IMAP-Konto suchen
+
+        self.mail_fetch_btn.setEnabled(False)
+
+        class _ResolveSignals(QObject):
+            resolved = Signal(object)
+
+        class _ResolveAccountWorker(QRunnable):
+            def __init__(self, api_client):
+                super().__init__()
+                self.signals = _ResolveSignals()
+                self._api_client = api_client
+
+            def run(self):
+                from api.smartscan import SmartScanAPI, EmailAccountsAPI
+                account_id = None
+                try:
+                    smartscan_api = SmartScanAPI(self._api_client)
+                    settings = smartscan_api.get_settings()
+                    if settings:
+                        poll_id = settings.get('imap_poll_account_id')
+                        if poll_id:
+                            account_id = int(poll_id)
+                except Exception as e:
+                    logger.warning(f"SmartScan-Settings konnten nicht geladen werden: {e}")
+
+                if not account_id:
+                    try:
+                        email_api = EmailAccountsAPI(self._api_client)
+                        accounts = email_api.get_accounts()
+                        for acc in accounts:
+                            imap_host = acc.get('imap_host', '')
+                            is_active = bool(int(acc.get('is_active', 0) or 0))
+                            if imap_host and is_active:
+                                account_id = int(acc['id'])
+                                break
+                    except Exception as e:
+                        logger.warning(f"E-Mail-Konten konnten nicht geladen werden: {e}")
+
+                self.signals.resolved.emit(account_id)
+
+        worker = _ResolveAccountWorker(self.api_client)
+        worker.signals.resolved.connect(self._on_mail_account_resolved)
+        worker.setAutoDelete(True)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_mail_account_resolved(self, account_id):
+        """Callback nach asynchroner IMAP-Account-Ermittlung."""
+        from i18n import de as texts
+
         if not account_id:
-            try:
-                email_api = EmailAccountsAPI(self.api_client)
-                accounts = email_api.get_accounts()
-                for acc in accounts:
-                    imap_host = acc.get('imap_host', '')
-                    is_active = bool(int(acc.get('is_active', 0) or 0))
-                    if imap_host and is_active:
-                        account_id = int(acc['id'])
-                        break
-            except Exception as e:
-                logger.warning(f"E-Mail-Konten konnten nicht geladen werden: {e}")
-        
-        if not account_id:
+            self.mail_fetch_btn.setEnabled(True)
             self._toast_manager.show_error(texts.BIPRO_MAIL_FETCH_NO_ACCOUNT)
             return
-        
-        # Button deaktivieren (Toast wird via phase_changed erstellt)
-        self.mail_fetch_btn.setEnabled(False)
         self._log(texts.BIPRO_MAIL_FETCH_RUNNING)
         self._mail_progress_toast = None
         
@@ -4026,66 +4054,55 @@ class BiPROView(QWidget):
             success=True
         )
         
-        # Ins Archiv hochladen
+        # Ins Archiv hochladen (async)
         vu_name = self._current_connection.vu_name if self._current_connection else None
-        # BiPRO-Kategorie fuer regelbasierte Sortierung (z.B. "300001000" = Provision -> Courtage)
         bipro_category = getattr(self, '_current_shipment_category', '')
-        upload_failed = 0
-        
-        problem_pdfs = 0
-        for doc in documents:
-            try:
-                # Bestimme Validierungsstatus
-                validation_status = doc.get('validation_status')
-                is_valid = doc.get('is_valid', True)
-                
-                # Bei PDF-Problemen: In Sonstige-Box mit Reason-Code
-                if not is_valid and validation_status:
-                    problem_pdfs += 1
-                    self._log(f"    [PDF-PROBLEM] {doc.get('filename', 'unbekannt')}: {validation_status}")
-                    
-                    self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=bipro_category,
-                        validation_status=validation_status,
-                        box_type='sonstige'
-                    )
-                else:
-                    self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=bipro_category,
-                        validation_status=validation_status if validation_status else 'OK'
-                    )
-            except Exception as e:
-                upload_failed += 1
-                self._log(f"    [!] Upload fehlgeschlagen: {doc.get('filename', 'unbekannt')}: {e}")
-        
-        # Raw XML hochladen (ohne Kategorie, da Rohdatei)
-        try:
-            self.docs_api.upload(
-                file_path=raw_xml_path,
-                source_type='bipro_auto',
-                shipment_id=shipment_id,
-                vu_name=vu_name,
-                box_type='roh'  # XML Rohdateien direkt ins Roh-Archiv
-            )
-        except Exception as e:
-            self._log(f"    [!] Raw XML Upload fehlgeschlagen: {e}")
-        
-        # Status-Meldung mit Upload-Info
-        if upload_failed > 0 or problem_pdfs > 0:
-            self._log(f"  [!] Lieferung {shipment_id}: {len(documents)} Dokument(e), {upload_failed} Upload(s) fehlgeschlagen, {problem_pdfs} PDF-Problem(e)")
-        else:
-            self._log(f"  [OK] Lieferung {shipment_id}: {len(documents)} Dokument(e)")
-        
-        # Nächste Lieferung
-        self._process_download_queue()
+        docs_api = self.docs_api
+
+        class _UploadWorker(QThread):
+            done = Signal(int, int, int)
+            log_msg = Signal(str)
+            def __init__(self, api, docs, xml_path, sid, vn, cat, parent=None):
+                super().__init__(parent)
+                self._api, self._docs, self._xml = api, docs, xml_path
+                self._sid, self._vn, self._cat = sid, vn, cat
+            def run(self):
+                failed = problems = 0
+                for doc in self._docs:
+                    try:
+                        vs = doc.get('validation_status')
+                        if not doc.get('is_valid', True) and vs:
+                            problems += 1
+                            self.log_msg.emit(f"    [PDF-PROBLEM] {doc.get('filename', 'unbekannt')}: {vs}")
+                            self._api.upload(file_path=doc['filepath'], source_type='bipro_auto',
+                                shipment_id=self._sid, vu_name=self._vn, bipro_category=self._cat,
+                                validation_status=vs, box_type='sonstige')
+                        else:
+                            self._api.upload(file_path=doc['filepath'], source_type='bipro_auto',
+                                shipment_id=self._sid, vu_name=self._vn, bipro_category=self._cat,
+                                validation_status=vs if vs else 'OK')
+                    except Exception as e:
+                        failed += 1
+                        self.log_msg.emit(f"    [!] Upload fehlgeschlagen: {doc.get('filename', 'unbekannt')}: {e}")
+                try:
+                    self._api.upload(file_path=self._xml, source_type='bipro_auto',
+                        shipment_id=self._sid, vu_name=self._vn, box_type='roh')
+                except Exception as e:
+                    self.log_msg.emit(f"    [!] Raw XML Upload fehlgeschlagen: {e}")
+                self.done.emit(len(self._docs), failed, problems)
+
+        def _on_upload_done(total, failed, problems):
+            if failed > 0 or problems > 0:
+                self._log(f"  [!] Lieferung {shipment_id}: {total} Dokument(e), {failed} Upload(s) fehlgeschlagen, {problems} PDF-Problem(e)")
+            else:
+                self._log(f"  [OK] Lieferung {shipment_id}: {total} Dokument(e)")
+            self._process_download_queue()
+
+        w = _UploadWorker(docs_api, documents, raw_xml_path, shipment_id, vu_name, bipro_category, parent=self)
+        w.log_msg.connect(self._log)
+        w.done.connect(_on_upload_done)
+        self._queue_upload_worker = w
+        w.start()
     
     def _on_queue_download_error(self, error: str):
         """Callback für Queue-Download Fehler."""
@@ -4157,100 +4174,74 @@ class BiPROView(QWidget):
         
         self._log(f"Lieferung {shipment_id}: {len(documents)} Dokument(e) heruntergeladen")
         
-        # ===== AUTOMATISCH INS DOKUMENTENARCHIV HOCHLADEN =====
-        uploaded = 0
-        failed = 0
-        
-        # VU-Name für Metadaten
+        # ===== AUTOMATISCH INS DOKUMENTENARCHIV HOCHLADEN (async) =====
         vu_name = self._current_connection.vu_name if self._current_connection else None
-        # BiPRO-Kategorie fuer regelbasierte Sortierung
         bipro_category = getattr(self, '_current_shipment_category', '')
-        
-        # 1. Alle Dokumente hochladen
-        problem_pdfs = 0
-        for doc in documents:
-            try:
-                # Bestimme Validierungsstatus
-                validation_status = doc.get('validation_status')
-                is_valid = doc.get('is_valid', True)
-                
-                # Bei PDF-Problemen: In Sonstige-Box mit Reason-Code
-                if not is_valid and validation_status:
-                    problem_pdfs += 1
-                    result = self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=bipro_category,
-                        validation_status=validation_status,
-                        box_type='sonstige'
-                    )
-                    if result:
-                        uploaded += 1
-                        self._log(f"  [PDF-PROBLEM] {doc['filename']} -> Sonstige ({validation_status})")
-                else:
-                    result = self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=bipro_category,
-                        validation_status=validation_status if validation_status else 'OK'
-                    )
-                    if result:
-                        uploaded += 1
-                        self._log(f"  [OK] {doc['filename']} -> Archiv (BiPRO: {vu_name}, Kat: {bipro_category})")
-                        # Fruehe Text-Extraktion fuer Inhaltsduplikat-Erkennung
-                        try:
-                            from services.early_text_extract import extract_and_save_text
-                            extract_and_save_text(self.docs_api, result.id, doc['filepath'], doc['filename'])
-                        except Exception:
-                            pass
-                    else:
+        docs_api = self.docs_api
+
+        class _SingleUploadWorker(QThread):
+            done = Signal(int, int)
+            log_msg = Signal(str)
+            def __init__(self, api, docs, xml_path, sid, vn, cat, parent=None):
+                super().__init__(parent)
+                self._api, self._docs, self._xml = api, docs, xml_path
+                self._sid, self._vn, self._cat = sid, vn, cat
+            def run(self):
+                uploaded = failed = 0
+                for doc in self._docs:
+                    try:
+                        vs = doc.get('validation_status')
+                        if not doc.get('is_valid', True) and vs:
+                            r = self._api.upload(file_path=doc['filepath'], source_type='bipro_auto',
+                                shipment_id=self._sid, vu_name=self._vn, bipro_category=self._cat,
+                                validation_status=vs, box_type='sonstige')
+                            if r:
+                                uploaded += 1
+                                self.log_msg.emit(f"  [PDF-PROBLEM] {doc['filename']} -> Sonstige ({vs})")
+                        else:
+                            r = self._api.upload(file_path=doc['filepath'], source_type='bipro_auto',
+                                shipment_id=self._sid, vu_name=self._vn, bipro_category=self._cat,
+                                validation_status=vs if vs else 'OK')
+                            if r:
+                                uploaded += 1
+                                self.log_msg.emit(f"  [OK] {doc['filename']} -> Archiv (BiPRO: {self._vn}, Kat: {self._cat})")
+                                try:
+                                    from services.early_text_extract import extract_and_save_text
+                                    extract_and_save_text(self._api, r.id, doc['filepath'], doc['filename'])
+                                except Exception:
+                                    pass
+                            else:
+                                failed += 1
+                                self.log_msg.emit(f"  [!] {doc['filename']} Upload fehlgeschlagen")
+                    except Exception as e:
                         failed += 1
-                        self._log(f"  [!] {doc['filename']} Upload fehlgeschlagen")
-            except Exception as e:
-                failed += 1
-                self._log(f"  [!] {doc['filename']}: {e}")
-        
-        # 2. Raw XML auch hochladen (direkt ins Roh-Archiv)
-        try:
-            result = self.docs_api.upload(
-                file_path=raw_xml_path,
-                source_type='bipro_auto',
-                shipment_id=shipment_id,
-                vu_name=vu_name,
-                box_type='roh'  # XML Rohdateien direkt ins Roh-Archiv
-            )
-            if result:
-                uploaded += 1
-                self._log(f"  [OK] Raw XML -> Roh-Archiv (BiPRO: {vu_name})")
-        except Exception as e:
-            self._log(f"  [!] Raw XML Upload: {e}")
-        
-        # Signal für Archiv-Aktualisierung
-        if uploaded > 0:
-            self.documents_uploaded.emit()
-        
-        # ===== ZUSAMMENFASSUNG =====
-        self._log(f"Archiv-Upload: {uploaded} erfolgreich, {failed} fehlgeschlagen")
-        
-        # Detaillierte Info-Box
-        doc_list = "\n".join([f"  - {d['filename']} ({d['size']:,} Bytes)" for d in documents])
-        if not doc_list:
-            doc_list = "  (Keine Dokumente in der Lieferung)"
-        
-        # Status-Meldung
-        if failed > 0:
-            self._toast_manager.show_warning(
-                f"Lieferung {shipment_id}: {uploaded} erfolgreich, {failed} fehlgeschlagen.\n"
-                f"Bitte Protokoll prüfen!"
-            )
-        else:
-            self._toast_manager.show_success(
-                f"Lieferung {shipment_id}: Alle {uploaded} Datei(en) ins Dokumentenarchiv übertragen."
-            )
+                        self.log_msg.emit(f"  [!] {doc['filename']}: {e}")
+                try:
+                    r = self._api.upload(file_path=self._xml, source_type='bipro_auto',
+                        shipment_id=self._sid, vu_name=self._vn, box_type='roh')
+                    if r:
+                        uploaded += 1
+                        self.log_msg.emit(f"  [OK] Raw XML -> Roh-Archiv (BiPRO: {self._vn})")
+                except Exception as e:
+                    self.log_msg.emit(f"  [!] Raw XML Upload: {e}")
+                self.done.emit(uploaded, failed)
+
+        def _on_single_upload_done(uploaded, failed):
+            if uploaded > 0:
+                self.documents_uploaded.emit()
+            self._log(f"Archiv-Upload: {uploaded} erfolgreich, {failed} fehlgeschlagen")
+            if failed > 0:
+                self._toast_manager.show_warning(
+                    f"Lieferung {shipment_id}: {uploaded} erfolgreich, {failed} fehlgeschlagen.\nBitte Protokoll prüfen!")
+            else:
+                self._toast_manager.show_success(
+                    f"Lieferung {shipment_id}: Alle {uploaded} Datei(en) ins Dokumentenarchiv übertragen.")
+
+        w = _SingleUploadWorker(docs_api, documents, raw_xml_path, shipment_id, vu_name, bipro_category, parent=self)
+        w.log_msg.connect(self._log)
+        w.done.connect(_on_single_upload_done)
+        self._single_upload_worker = w
+        w.start()
     
     def _on_download_error(self, error: str):
         """Callback bei Download-Fehler."""

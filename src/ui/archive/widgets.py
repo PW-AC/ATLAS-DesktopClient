@@ -12,7 +12,7 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QProgressBar, QApplication,
+    QFrame, QScrollArea, QProgressBar,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 
@@ -666,7 +666,6 @@ class ProcessingProgressOverlay(QWidget):
         self.setGeometry(self.parent().rect() if self.parent() else self.rect())
         self.raise_()
         self.setVisible(True)
-        QApplication.processEvents()
     
     def update_progress(self, current: int, total: int, message: str):
         """Aktualisiert den Fortschritt."""
@@ -681,7 +680,6 @@ class ProcessingProgressOverlay(QWidget):
             message = message[:47] + "..."
         
         self._status_label.setText(f"{message}\n({current} / {total})")
-        QApplication.processEvents()
     
     def show_completion(self, batch_result, auto_close_seconds: int = 6):
         """
@@ -762,8 +760,6 @@ class ProcessingProgressOverlay(QWidget):
         
         if auto_close_seconds > 0:
             self._auto_close_timer.start(auto_close_seconds * 1000)
-        
-        QApplication.processEvents()
     
     def _on_auto_close(self):
         """Wird nach Auto-Close Timeout aufgerufen."""

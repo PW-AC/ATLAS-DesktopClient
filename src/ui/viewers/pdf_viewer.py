@@ -775,7 +775,7 @@ class PDFViewerDialog(QDialog):
             self._zoom_factor = self.pdf_view.zoomFactor()
     
     def _open_external(self):
-        """Oeffnet das PDF mit dem System-Standard-Viewer."""
+        """Oeffnet das PDF mit dem System-Standard-Viewer (non-blocking)."""
         import subprocess
         import sys
         
@@ -783,9 +783,9 @@ class PDFViewerDialog(QDialog):
             if sys.platform == 'win32':
                 os.startfile(self.pdf_path)
             elif sys.platform == 'darwin':
-                subprocess.run(['open', self.pdf_path])
+                subprocess.Popen(['open', self.pdf_path])
             else:
-                subprocess.run(['xdg-open', self.pdf_path])
+                subprocess.Popen(['xdg-open', self.pdf_path])
         except Exception as e:
             self._status_label.setText(f"Konnte PDF nicht oeffnen: {e}")
             self._status_label.setStyleSheet(

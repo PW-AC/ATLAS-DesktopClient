@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QComboBox, QHeaderView, QDialog,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QObject, QRunnable, QThreadPool
 from PySide6.QtGui import QFont
 
 from i18n import de as texts
@@ -92,13 +92,35 @@ class SmartScanHistoryPanel(QWidget):
         layout.addWidget(self._ss_hist_table)
 
     def _load_smartscan_history(self):
-        """Laedt SmartScan-Historie."""
-        try:
-            jobs = self._smartscan_api.get_jobs(limit=100)
-            self._ss_hist_data = jobs
-            self._populate_smartscan_history()
-        except Exception as e:
-            logger.error(f"Fehler beim Laden der SmartScan-Historie: {e}")
+        """Laedt SmartScan-Historie asynchron."""
+
+        class _Signals(QObject):
+            finished = Signal(list)
+            error = Signal(str)
+
+        class _HistoryWorker(QRunnable):
+            def __init__(self, ss_api):
+                super().__init__()
+                self.signals = _Signals()
+                self._ss_api = ss_api
+
+            def run(self):
+                try:
+                    jobs = self._ss_api.get_jobs(limit=100)
+                    self.signals.finished.emit(jobs or [])
+                except Exception as e:
+                    self.signals.error.emit(str(e))
+
+        worker = _HistoryWorker(self._smartscan_api)
+        worker.signals.finished.connect(self._on_history_loaded)
+        worker.signals.error.connect(lambda e: logger.error(f"Fehler beim Laden der SmartScan-Historie: {e}"))
+        worker.setAutoDelete(True)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_history_loaded(self, jobs: list):
+        """Callback nach asynchronem Laden der SmartScan-Historie."""
+        self._ss_hist_data = jobs
+        self._populate_smartscan_history()
 
     def _populate_smartscan_history(self):
         """Fuellt die SmartScan-Historie-Tabelle."""

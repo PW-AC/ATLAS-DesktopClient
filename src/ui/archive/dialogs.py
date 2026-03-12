@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QMenu, QMessageBox,
 )
 from ui.toast import ToastManager
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QThread
 
 from api.documents import Document
 from ui.styles.tokens import (
@@ -553,20 +553,8 @@ class DuplicateCompareDialog(QDialog):
             # Status pruefen (Error = 2 in QPdfDocument.Error enum)
             if pdf_doc.status() == QPdfDocument.Status.Error:
                 logger.warning(f"QPdfDocument.load() fehlgeschlagen fuer {path}, versuche QBuffer-Fallback")
-                try:
-                    from PySide6.QtCore import QBuffer, QByteArray
-                    with open(path, 'rb') as f:
-                        data = f.read()
-                    # Neues QPdfDocument fuer Buffer-Modus
-                    pdf_doc = QPdfDocument(self)
-                    self._pdf_buffer = QBuffer(self)  # Buffer muss am Leben bleiben
-                    self._pdf_buffer.setData(QByteArray(data))
-                    self._pdf_buffer.open(QBuffer.OpenModeFlag.ReadOnly)
-                    pdf_doc.load(self._pdf_buffer)
-                except Exception as e:
-                    logger.error(f"QBuffer-Fallback fehlgeschlagen ({side}): {e}")
-                    self._on_preview_error(side, str(e))
-                    return
+                self._load_pdf_via_buffer(side, path, pdf_view, stack)
+                return
             
             pdf_view.setDocument(pdf_doc)
             
@@ -581,6 +569,54 @@ class DuplicateCompareDialog(QDialog):
             
             logger.info(f"PDF-Vorschau geladen ({side}): {path}")
     
+    def _load_pdf_via_buffer(self, side, path, pdf_view, stack):
+        """Laedt PDF ueber QBuffer im Hintergrund (Fallback fuer Sonderzeichen-Pfade)."""
+
+        class _R(QThread):
+            done = Signal(bytes)
+            failed = Signal(str)
+            def __init__(self, fpath, parent=None):
+                super().__init__(parent)
+                self._p = fpath
+            def run(self):
+                try:
+                    with open(self._p, 'rb') as f:
+                        self.done.emit(f.read())
+                except Exception as e:
+                    self.failed.emit(str(e))
+
+        def _on_read(data: bytes):
+            try:
+                from PySide6.QtCore import QBuffer, QByteArray
+                from PySide6.QtPdf import QPdfDocument
+                pdf_doc = QPdfDocument(self)
+                buf = QBuffer(self)
+                buf.setData(QByteArray(data))
+                buf.open(QBuffer.OpenModeFlag.ReadOnly)
+                pdf_doc.load(buf)
+                setattr(self, f'_pdf_buffer_{side}', buf)
+                pdf_view.setDocument(pdf_doc)
+                if stack:
+                    stack.setCurrentIndex(1)
+                if side == 'left':
+                    self._pdf_doc_left = pdf_doc
+                else:
+                    self._pdf_doc_right = pdf_doc
+                logger.info(f"PDF-Vorschau via Buffer geladen ({side}): {path}")
+            except Exception as e:
+                logger.error(f"QBuffer-Fallback fehlgeschlagen ({side}): {e}")
+                self._on_preview_error(side, str(e))
+
+        def _on_fail(msg: str):
+            logger.error(f"QBuffer-Fallback fehlgeschlagen ({side}): {msg}")
+            self._on_preview_error(side, msg)
+
+        w = _R(path, parent=self)
+        w.done.connect(_on_read)
+        w.failed.connect(_on_fail)
+        setattr(self, f'_buf_read_worker_{side}', w)
+        w.start()
+
     def _on_preview_error(self, side: str, error: str):
         """Callback bei Download-Fehler."""
         stack = self._loading_labels.get(side)
@@ -643,76 +679,70 @@ class DuplicateCompareDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
         
-        try:
-            self._docs_api.delete(doc.id)
-            self._mark_pane_modified(side, f"\u274c {DUPLICATE_COMPARE_DELETED}")
-        except Exception as e:
-            from i18n.de import DUPLICATE_COMPARE_ERROR
-            ToastManager.instance().show_error(
-                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+        from ui.async_worker import AsyncWorker
+        from i18n.de import DUPLICATE_COMPARE_ERROR as _err_tpl
+        w = AsyncWorker(lambda: self._docs_api.delete(doc.id), parent=self)
+        w.finished.connect(lambda _: self._mark_pane_modified(side, f"\u274c {DUPLICATE_COMPARE_DELETED}"))
+        w.error.connect(lambda msg: ToastManager.instance().show_error(_err_tpl.format(error=msg)))
+        setattr(self, f'_del_worker_{side}', w)
+        w.start()
     
     def _archive_document(self, side: str):
-        """Archiviert das Dokument."""
+        """Archiviert das Dokument (async)."""
         if self._is_side_disabled(side):
             return
         doc = self._get_doc(side)
-        try:
-            self._docs_api.archive_documents([doc.id])
-            from i18n.de import DUPLICATE_COMPARE_ARCHIVED
-            self._mark_pane_modified(side, f"\U0001f4e6 {DUPLICATE_COMPARE_ARCHIVED}")
-        except Exception as e:
-            from i18n.de import DUPLICATE_COMPARE_ERROR
-            ToastManager.instance().show_error(
-                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+        from ui.async_worker import AsyncWorker
+        from i18n.de import DUPLICATE_COMPARE_ARCHIVED, DUPLICATE_COMPARE_ERROR
+        w = AsyncWorker(lambda: self._docs_api.archive_documents([doc.id]), parent=self)
+        w.finished.connect(lambda _: self._mark_pane_modified(side, f"\U0001f4e6 {DUPLICATE_COMPARE_ARCHIVED}"))
+        w.error.connect(lambda msg: ToastManager.instance().show_error(DUPLICATE_COMPARE_ERROR.format(error=msg)))
+        setattr(self, f'_arc_worker_{side}', w)
+        w.start()
     
     def _unarchive_document(self, side: str):
-        """Entarchiviert das Dokument."""
+        """Entarchiviert das Dokument (async)."""
         if self._is_side_disabled(side):
             return
         doc = self._get_doc(side)
-        try:
-            self._docs_api.unarchive_documents([doc.id])
-            from i18n.de import DUPLICATE_COMPARE_UNARCHIVED
-            self._mark_pane_modified(side, f"\U0001f4e4 {DUPLICATE_COMPARE_UNARCHIVED}")
-        except Exception as e:
-            from i18n.de import DUPLICATE_COMPARE_ERROR
-            ToastManager.instance().show_error(
-                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+        from ui.async_worker import AsyncWorker
+        from i18n.de import DUPLICATE_COMPARE_UNARCHIVED, DUPLICATE_COMPARE_ERROR
+        w = AsyncWorker(lambda: self._docs_api.unarchive_documents([doc.id]), parent=self)
+        w.finished.connect(lambda _: self._mark_pane_modified(side, f"\U0001f4e4 {DUPLICATE_COMPARE_UNARCHIVED}"))
+        w.error.connect(lambda msg: ToastManager.instance().show_error(DUPLICATE_COMPARE_ERROR.format(error=msg)))
+        setattr(self, f'_unarc_worker_{side}', w)
+        w.start()
     
     def _move_document(self, side: str, target_box: str):
-        """Verschiebt das Dokument in eine andere Box."""
+        """Verschiebt das Dokument in eine andere Box (async)."""
         if self._is_side_disabled(side):
             return
         doc = self._get_doc(side)
-        try:
-            self._docs_api.move_documents([doc.id], target_box)
-            from i18n.de import DUPLICATE_COMPARE_MOVED
-            from api.documents import BOX_DISPLAY_NAMES
-            box_name = BOX_DISPLAY_NAMES.get(target_box, target_box)
-            emoji = self._BOX_EMOJIS.get(target_box, '\U0001f4c1')
-            self._mark_pane_modified(
-                side, f"{emoji} {DUPLICATE_COMPARE_MOVED.format(box=box_name)}")
-        except Exception as e:
-            from i18n.de import DUPLICATE_COMPARE_ERROR
-            ToastManager.instance().show_error(
-                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+        from ui.async_worker import AsyncWorker
+        from i18n.de import DUPLICATE_COMPARE_MOVED, DUPLICATE_COMPARE_ERROR
+        from api.documents import BOX_DISPLAY_NAMES
+        box_name = BOX_DISPLAY_NAMES.get(target_box, target_box)
+        emoji = self._BOX_EMOJIS.get(target_box, '\U0001f4c1')
+        w = AsyncWorker(lambda: self._docs_api.move_documents([doc.id], target_box), parent=self)
+        w.finished.connect(lambda _: self._mark_pane_modified(
+            side, f"{emoji} {DUPLICATE_COMPARE_MOVED.format(box=box_name)}"))
+        w.error.connect(lambda msg: ToastManager.instance().show_error(DUPLICATE_COMPARE_ERROR.format(error=msg)))
+        setattr(self, f'_move_worker_{side}', w)
+        w.start()
     
     def _color_document(self, side: str, color_key):
-        """Setzt die Farbmarkierung des Dokuments."""
+        """Setzt die Farbmarkierung des Dokuments (async)."""
         if self._is_side_disabled(side):
             return
         doc = self._get_doc(side)
-        try:
-            self._docs_api.set_documents_color([doc.id], color_key)
-            from i18n.de import DUPLICATE_COMPARE_COLORED, DUPLICATE_COMPARE_COLOR_REMOVED
-            if color_key:
-                self._mark_pane_modified(side, f"\U0001f3a8 {DUPLICATE_COMPARE_COLORED}")
-            else:
-                self._mark_pane_modified(side, DUPLICATE_COMPARE_COLOR_REMOVED)
-        except Exception as e:
-            from i18n.de import DUPLICATE_COMPARE_ERROR
-            ToastManager.instance().show_error(
-                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+        from ui.async_worker import AsyncWorker
+        from i18n.de import DUPLICATE_COMPARE_COLORED, DUPLICATE_COMPARE_COLOR_REMOVED, DUPLICATE_COMPARE_ERROR
+        label = f"\U0001f3a8 {DUPLICATE_COMPARE_COLORED}" if color_key else DUPLICATE_COMPARE_COLOR_REMOVED
+        w = AsyncWorker(lambda: self._docs_api.set_documents_color([doc.id], color_key), parent=self)
+        w.finished.connect(lambda _: self._mark_pane_modified(side, label))
+        w.error.connect(lambda msg: ToastManager.instance().show_error(DUPLICATE_COMPARE_ERROR.format(error=msg)))
+        setattr(self, f'_color_worker_{side}', w)
+        w.start()
     
     def closeEvent(self, event):
         """Beim Schliessen: Worker stoppen und ggf. Signal senden."""

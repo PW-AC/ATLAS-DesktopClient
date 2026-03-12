@@ -16,6 +16,7 @@ from logging.handlers import RotatingFileHandler
 from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, QMenu, QComboBox
 from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler, QThread, Signal, QEvent
 from PySide6.QtGui import QFont, QFontDatabase, QIcon, QColor, QPalette
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
@@ -151,6 +152,7 @@ class ForcedLogoutHandler(QObject):
             _texts.FORCED_LOGOUT_MESSAGE
         )
         
+        self._window._force_quit = True
         self._window.close()
 
 
@@ -256,6 +258,81 @@ def release_single_instance_mutex():
             logger.warning(f"Mutex-Freigabe fehlgeschlagen: {e}")
 
 
+def _ensure_autostart_shortcut():
+    """Stellt sicher, dass die Autostart-Verknuepfung im Startup-Ordner existiert.
+
+    Prueft ob die .lnk-Datei vorhanden ist und auf die aktuelle EXE zeigt.
+    Erstellt oder aktualisiert sie bei Bedarf. Laeuft nur im gebauten
+    EXE-Modus (nicht im Dev-Modus).
+    """
+    if sys.platform != 'win32' or is_dev_mode():
+        return
+
+    exe_path = sys.executable
+    if not exe_path or not os.path.isfile(exe_path):
+        return
+
+    try:
+        startup_dir = os.path.join(
+            os.environ.get('APPDATA', ''),
+            'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup'
+        )
+        if not os.path.isdir(startup_dir):
+            return
+
+        shortcut_path = os.path.join(startup_dir, 'ACENCIA ATLAS.lnk')
+
+        needs_create = True
+        if os.path.exists(shortcut_path):
+            try:
+                import win32com.client
+                shell = win32com.client.Dispatch("WScript.Shell")
+                existing = shell.CreateShortCut(shortcut_path)
+                if (os.path.normcase(existing.TargetPath) == os.path.normcase(exe_path)
+                        and '--minimized' in (existing.Arguments or '')):
+                    needs_create = False
+            except Exception:
+                pass
+
+        if needs_create:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            shortcut = shell.CreateShortCut(shortcut_path)
+            shortcut.TargetPath = exe_path
+            shortcut.Arguments = "--minimized"
+            shortcut.WorkingDirectory = os.path.dirname(exe_path)
+            shortcut.Description = "ACENCIA ATLAS (Autostart)"
+
+            icon_path = os.path.join(os.path.dirname(exe_path), "icon.ico")
+            if os.path.exists(icon_path):
+                shortcut.IconLocation = icon_path
+
+            shortcut.save()
+            logger.info(f"Autostart-Verknuepfung erstellt/aktualisiert: {shortcut_path}")
+        else:
+            logger.debug("Autostart-Verknuepfung ist aktuell")
+    except Exception as e:
+        logger.warning(f"Autostart-Verknuepfung konnte nicht geprueft werden: {e}")
+
+
+_IPC_CHANNEL = "acencia-atlas-ipc"
+
+
+def _signal_running_instance() -> bool:
+    """Sendet 'show' an die laufende Instanz via QLocalSocket.
+
+    Returns True wenn das Signal erfolgreich zugestellt wurde.
+    """
+    socket = QLocalSocket()
+    socket.connectToServer(_IPC_CHANNEL)
+    if socket.waitForConnected(1000):
+        socket.write(b"show")
+        socket.waitForBytesWritten(1000)
+        socket.disconnectFromServer()
+        return True
+    return False
+
+
 class _OpaquePopupApp(QApplication):
     """QApplication-Subklasse die opake Popups auf Windows erzwingt."""
 
@@ -286,19 +363,28 @@ def main():
     # Qt Message Handler installieren (vor QApplication, um alle Warnungen abzufangen)
     qInstallMessageHandler(_qt_message_handler)
 
+    start_minimized = '--minimized' in sys.argv
+
     app = _OpaquePopupApp(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
 
     # Single-Instance Check (nur wenn nicht im Dev-Modus – wie beim Update-Check)
     if is_dev_mode():
         logger.info("Dev-Modus erkannt (python run.py) - Single-Instance-Check uebersprungen")
     elif not _acquire_single_instance():
-        from i18n import de as _texts
-        QMessageBox.warning(
-            None,
-            _texts.SINGLE_INSTANCE_TITLE,
-            _texts.SINGLE_INSTANCE_MSG
-        )
+        logger.info("Andere Instanz erkannt - sende Show-Signal")
+        if _signal_running_instance():
+            logger.info("Show-Signal zugestellt, beende zweite Instanz")
+        else:
+            from i18n import de as _texts
+            QMessageBox.warning(
+                None,
+                _texts.SINGLE_INSTANCE_TITLE,
+                _texts.SINGLE_INSTANCE_MSG
+            )
         sys.exit(0)
+
+    _ensure_autostart_shortcut()
     
     # Anwendungsweite Einstellungen
     app.setApplicationName("ACENCIA ATLAS")
@@ -403,6 +489,28 @@ def main():
             flo_handler = ForcedLogoutHandler(win, auth_api)
             api_client.set_forced_logout_callback(flo_handler.trigger)
         
+        # IPC-Server: Erlaubt zweiten Instanzen das Fenster aufzuwecken
+        _active_window_ref = [None]
+        _ipc_server = QLocalServer(app)
+        QLocalServer.removeServer(_IPC_CHANNEL)
+        _ipc_server.listen(_IPC_CHANNEL)
+
+        def _on_ipc_connection():
+            conn = _ipc_server.nextPendingConnection()
+            if conn:
+                conn.waitForReadyRead(500)
+                if conn.readAll().data() == b"show":
+                    win = _active_window_ref[0]
+                    if win and hasattr(win, '_tray_show_window'):
+                        win._tray_show_window()
+                    elif win:
+                        win.showNormal()
+                        win.raise_()
+                        win.activateWindow()
+                conn.disconnectFromServer()
+
+        _ipc_server.newConnection.connect(_on_ipc_connection)
+
         if not has_access(_system_status.status, auth_api.current_user.is_admin, _dev):
             logger.info(f"Kein Zugang: system_status={_system_status.status}, "
                         f"is_admin={auth_api.current_user.is_admin}, dev_mode={_dev}")
@@ -411,11 +519,14 @@ def main():
                 api_client, auth_api.current_user,
                 server_message=_system_status.message or ''
             )
+            _active_window_ref[0] = maintenance_win
             
             def _on_access_granted():
                 logger.info("Zugang wiederhergestellt - AppRouter wird geoeffnet")
                 maintenance_win.close()
                 hub = AppRouter(api_client=api_client, auth_api=auth_api)
+                hub.setup_tray_icon()
+                _active_window_ref[0] = hub
                 QApplication.instance()._main_hub = hub
                 hub.show()
                 _setup_post_login(hub)
@@ -426,7 +537,13 @@ def main():
         
         # Neues Router-Hauptfenster erstellen und anzeigen
         window = AppRouter(api_client=api_client, auth_api=auth_api)
-        window.show()
+        window.setup_tray_icon()
+        _active_window_ref[0] = window
+
+        if start_minimized:
+            window.hide()
+        else:
+            window.show()
         
         _setup_post_login(window)
 
@@ -452,6 +569,7 @@ def main():
     else:
         # Login abgebrochen
         logger.info("Login abgebrochen")
+        app.quit()
         sys.exit(0)
 
 

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QRadioButton, QButtonGroup, QPushButton, QLabel, QTextEdit,
     QSpinBox, QScrollArea,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QObject, QRunnable, QThreadPool
 from PySide6.QtGui import QFont
 
 from i18n import de as texts
@@ -209,10 +209,36 @@ class SmartScanSettingsPanel(QWidget):
         outer.addWidget(scroll)
 
     def _load_smartscan_settings(self):
-        """Laedt SmartScan-Einstellungen vom Server."""
+        """Laedt SmartScan-Einstellungen asynchron vom Server."""
+
+        class _Signals(QObject):
+            finished = Signal(list, dict)
+            error = Signal(str)
+
+        class _LoadWorker(QRunnable):
+            def __init__(self, ss_api, email_api):
+                super().__init__()
+                self.signals = _Signals()
+                self._ss_api = ss_api
+                self._email_api = email_api
+
+            def run(self):
+                try:
+                    accounts = self._email_api.get_accounts()
+                    settings = self._ss_api.get_settings()
+                    self.signals.finished.emit(accounts or [], settings or {})
+                except Exception as e:
+                    self.signals.error.emit(str(e))
+
+        worker = _LoadWorker(self._smartscan_api, self._email_accounts_api)
+        worker.signals.finished.connect(self._on_settings_loaded)
+        worker.signals.error.connect(lambda e: logger.error(f"SmartScan-Settings laden fehlgeschlagen: {e}"))
+        worker.setAutoDelete(True)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_settings_loaded(self, accounts: list, settings: dict):
+        """Callback nach asynchronem Laden der SmartScan-Settings."""
         try:
-            # E-Mail-Konten fuer Dropdowns laden
-            accounts = self._email_accounts_api.get_accounts()
             self._ss_email_account.clear()
             self._ss_imap_account.clear()
             self._ss_email_account.addItem("-- Kein Konto --", None)
@@ -223,8 +249,6 @@ class SmartScanSettingsPanel(QWidget):
                 self._ss_email_account.addItem(label, acc_id_int)
                 self._ss_imap_account.addItem(label, acc_id_int)
 
-            # Einstellungen laden
-            settings = self._smartscan_api.get_settings()
             if not settings:
                 return
 

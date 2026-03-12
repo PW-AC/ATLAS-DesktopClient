@@ -479,29 +479,34 @@ class ArchiveView(QWidget):
             )
     
     def _preview_document(self, doc: Document):
-        """PDF-Vorschau anzeigen."""
-        # Temporäres Verzeichnis
+        """PDF-Vorschau anzeigen (async Download)."""
         temp_dir = tempfile.mkdtemp(prefix='bipro_preview_')
-        temp_path = os.path.join(temp_dir, doc.original_filename)
-        
-        # PDF herunterladen
+
+        from ui.async_worker import AsyncWorker
+        self._preview_worker = AsyncWorker(
+            lambda: self.docs_api.download(doc.id, temp_dir, filename_override=doc.original_filename),
+            parent=self,
+        )
+
         progress = QProgressDialog("Lade Vorschau...", "Abbrechen", 0, 0, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.show()
-        
-        try:
-            result = self.docs_api.download(doc.id, temp_dir, filename_override=doc.original_filename)
+
+        def _on_done(result):
             progress.close()
-            
             if result and os.path.exists(result):
-                # Viewer öffnen
                 viewer = PDFViewerDialog(result, f"Vorschau: {doc.original_filename}", self)
                 viewer.exec()
             else:
                 self._toast("show_error", "PDF konnte nicht geladen werden.")
-        except Exception as e:
+
+        def _on_err(msg):
             progress.close()
-            self._toast("show_error", f"Vorschau fehlgeschlagen:\n{e}")
+            self._toast("show_error", f"Vorschau fehlgeschlagen:\n{msg}")
+
+        self._preview_worker.finished.connect(_on_done)
+        self._preview_worker.error.connect(_on_err)
+        self._preview_worker.start()
     
     def _upload_document(self):
         """Dokument hochladen."""
@@ -544,51 +549,59 @@ class ArchiveView(QWidget):
         self._toast("show_error", f"Upload fehlgeschlagen:\n{error}")
     
     def _download_document(self, doc: Document):
-        """Dokument herunterladen."""
-        target_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Speicherort wählen",
-            ""
-        )
-        
+        """Dokument herunterladen (async)."""
+        target_dir = QFileDialog.getExistingDirectory(self, "Speicherort wählen", "")
         if not target_dir:
             return
-        
-        result = self.docs_api.download(doc.id, target_dir, filename_override=doc.original_filename)
-        
-        if result:
-            self._toast("show_success", f"Dokument gespeichert:\n{result}")
-        else:
-            self._toast("show_error", "Download fehlgeschlagen.")
+
+        from ui.async_worker import AsyncWorker
+        self._dl_single_worker = AsyncWorker(
+            lambda: self.docs_api.download(doc.id, target_dir, filename_override=doc.original_filename),
+            parent=self,
+        )
+        self._dl_single_worker.finished.connect(
+            lambda r: self._toast("show_success", f"Dokument gespeichert:\n{r}") if r
+            else self._toast("show_error", "Download fehlgeschlagen.")
+        )
+        self._dl_single_worker.error.connect(
+            lambda msg: self._toast("show_error", f"Download fehlgeschlagen:\n{msg}")
+        )
+        self._dl_single_worker.start()
     
     def _open_in_gdv_editor(self, doc: Document):
         """GDV-Dokument im Editor öffnen."""
         self.open_gdv_requested.emit(doc.id, doc.original_filename)
     
     def _delete_document(self, doc: Document):
-        """Dokument löschen."""
+        """Dokument loeschen (async)."""
         reply = QMessageBox.question(
             self,
             "Löschen bestätigen",
             f"Dokument '{doc.original_filename}' wirklich löschen?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            if self.docs_api.delete(doc.id):
-                # Erfolgreich gelöscht - keine Meldung, nur Refresh
-                self.refresh_documents()
-            else:
-                # Nur bei Fehler eine Meldung anzeigen
-                self._toast("show_error", "Löschen fehlgeschlagen.")
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from ui.async_worker import AsyncWorker
+        self._del_single_worker = AsyncWorker(
+            lambda: self.docs_api.delete(doc.id), parent=self,
+        )
+        self._del_single_worker.finished.connect(
+            lambda ok: self.refresh_documents() if ok
+            else self._toast("show_error", "Löschen fehlgeschlagen.")
+        )
+        self._del_single_worker.error.connect(
+            lambda msg: self._toast("show_error", f"Löschen fehlgeschlagen:\n{msg}")
+        )
+        self._del_single_worker.start()
     
     def _delete_selected(self):
-        """Mehrere ausgewählte Dokumente löschen."""
+        """Mehrere ausgewaehlte Dokumente loeschen (async)."""
         selected_docs = self._get_selected_documents()
-        
         if not selected_docs:
             return
-        
+
         reply = QMessageBox.question(
             self,
             "Löschen bestätigen",
@@ -596,41 +609,35 @@ class ArchiveView(QWidget):
             "Diese Aktion kann nicht rückgängig gemacht werden!",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
         if reply != QMessageBox.StandardButton.Yes:
             return
-        
-        # Progress-Dialog mit Fortschrittsanzeige
-        progress = QProgressDialog(
-            "Lösche Dokumente...",
-            "Abbrechen",
-            0, len(selected_docs),
-            self
-        )
+
+        doc_ids = [d.id for d in selected_docs]
+        docs_api = self.docs_api
+
+        class _BulkDeleteWorker(QThread):
+            progress_update = Signal(int, str)
+            done = Signal(int)
+            def __init__(self, api, ids, parent=None):
+                super().__init__(parent)
+                self._api, self._ids = api, ids
+            def run(self):
+                ok = 0
+                for i, did in enumerate(self._ids):
+                    self.progress_update.emit(i, f"Lösche {i+1}/{len(self._ids)}")
+                    if self._api.delete(did):
+                        ok += 1
+                self.done.emit(ok)
+
+        progress = QProgressDialog("Lösche Dokumente...", None, 0, len(doc_ids), self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setAutoClose(True)  # Automatisch schließen wenn fertig
-        progress.setMinimumDuration(0)  # Sofort anzeigen
-        
-        success_count = 0
-        for i, doc in enumerate(selected_docs):
-            # Abbruch prüfen
-            if progress.wasCanceled():
-                break
-            
-            # Fortschritt aktualisieren
-            progress.setValue(i)
-            progress.setLabelText(f"Lösche {i+1}/{len(selected_docs)}: {doc.original_filename}")
-            QApplication.processEvents()  # UI aktualisieren
-            
-            # Dokument löschen
-            if self.docs_api.delete(doc.id):
-                success_count += 1
-        
-        # Abschluss
-        progress.setValue(len(selected_docs))
-        
-        # Daten neu laden (kein Pop-up nach Abschluss!)
-        self.refresh_documents()
+        progress.setMinimumDuration(0)
+
+        w = _BulkDeleteWorker(docs_api, doc_ids, parent=self)
+        w.progress_update.connect(lambda i, t: (progress.setValue(i), progress.setLabelText(t)))
+        w.done.connect(lambda _: (progress.close(), self.refresh_documents()))
+        self._bulk_del_worker = w
+        w.start()
     
     def _get_selected_documents(self) -> List[Document]:
         """Gibt alle ausgewählten Dokumente zurück."""
@@ -650,9 +657,8 @@ class ArchiveView(QWidget):
         return selected_docs
     
     def _download_selected(self):
-        """Ausgewählte Dokumente herunterladen."""
+        """Ausgewaehlte Dokumente herunterladen (async)."""
         selected_docs = self._get_selected_documents()
-        
         if not selected_docs:
             self._toast(
                 "show_info",
@@ -660,56 +666,53 @@ class ArchiveView(QWidget):
                 "Tipp: Mit Strg+Klick oder Shift+Klick mehrere auswählen."
             )
             return
-        
-        # Zielordner wählen
+
         target_dir = QFileDialog.getExistingDirectory(
-            self,
-            f"Speicherort für {len(selected_docs)} Dokument(e) wählen",
-            ""
+            self, f"Speicherort für {len(selected_docs)} Dokument(e) wählen", ""
         )
-        
         if not target_dir:
             return
-        
-        # Downloads durchführen
-        success_count = 0
-        failed_count = 0
-        
+
+        items = [(d.id, d.original_filename) for d in selected_docs]
+        docs_api = self.docs_api
+
+        class _BulkDLWorker(QThread):
+            progress_update = Signal(int, str)
+            done = Signal(int, int)
+            def __init__(self, api, data, dest, parent=None):
+                super().__init__(parent)
+                self._api, self._data, self._dest = api, data, dest
+            def run(self):
+                ok = fail = 0
+                for i, (did, fname) in enumerate(self._data):
+                    self.progress_update.emit(i, f"Lade: {fname}")
+                    r = self._api.download(did, self._dest, filename_override=fname)
+                    if r:
+                        ok += 1
+                    else:
+                        fail += 1
+                self.done.emit(ok, fail)
+
         progress = QProgressDialog(
-            f"Lade {len(selected_docs)} Dokument(e) herunter...",
-            "Abbrechen",
-            0, len(selected_docs),
-            self
+            f"Lade {len(items)} Dokument(e) herunter...", None, 0, len(items), self
         )
         progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.show()
-        
-        for i, doc in enumerate(selected_docs):
-            if progress.wasCanceled():
-                break
-            
-            progress.setValue(i)
-            progress.setLabelText(f"Lade: {doc.original_filename}")
-            
-            result = self.docs_api.download(doc.id, target_dir, filename_override=doc.original_filename)
-            if result:
-                success_count += 1
+        progress.setMinimumDuration(0)
+
+        def _on_done(ok, fail):
+            progress.close()
+            if fail == 0:
+                self._toast("show_success",
+                    f"{ok} Dokument(e) erfolgreich heruntergeladen. Speicherort: {target_dir}")
             else:
-                failed_count += 1
-        
-        progress.close()
-        
-        # Zusammenfassung
-        if failed_count == 0:
-            self._toast(
-                "show_success",
-                f"{success_count} Dokument(e) erfolgreich heruntergeladen. Speicherort: {target_dir}"
-            )
-        else:
-            self._toast(
-                "show_warning",
-                f"Download: {success_count} erfolgreich, {failed_count} fehlgeschlagen. Speicherort: {target_dir}"
-            )
+                self._toast("show_warning",
+                    f"Download: {ok} erfolgreich, {fail} fehlgeschlagen. Speicherort: {target_dir}")
+
+        w = _BulkDLWorker(docs_api, items, target_dir, parent=self)
+        w.progress_update.connect(lambda i, t: (progress.setValue(i), progress.setLabelText(t)))
+        w.done.connect(_on_done)
+        self._bulk_dl_worker = w
+        w.start()
     
     # ========================================
     # KI-Benennung

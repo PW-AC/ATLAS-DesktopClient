@@ -387,6 +387,176 @@ class APIClient:
             logger.error(f"Netzwerkfehler: {e}")
             raise APIError(f"Netzwerkfehler: {e}")
     
+    def patch(self, endpoint: str, json_data: Dict = None) -> Dict[str, Any]:
+        """PATCH-Anfrage an die API."""
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        logger.debug(f"PATCH {url}")
+
+        try:
+            response = self._request_with_retry(
+                'PATCH', url,
+                headers=self._get_headers(),
+                json=json_data,
+                timeout=self.config.timeout,
+                verify=self.config.verify_ssl
+            )
+            return self._handle_response(response)
+        except APIError as e:
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
+                logger.info(f"Token erneuert, wiederhole PATCH {endpoint}")
+                try:
+                    response = self._request_with_retry(
+                        'PATCH', url,
+                        headers=self._get_headers(),
+                        json=json_data,
+                        timeout=self.config.timeout,
+                        verify=self.config.verify_ssl
+                    )
+                    return self._handle_response(response)
+                except APIError:
+                    raise
+            raise
+        except requests.RequestException as e:
+            logger.error(f"Netzwerkfehler: {e}")
+            raise APIError(f"Netzwerkfehler: {e}")
+
+    def upload_multipart(self, endpoint: str, fields: Dict[str, str],
+                         files: Dict[str, str],
+                         timeout: int = None) -> Dict[str, Any]:
+        """
+        Multipart-Upload mit mehreren Dateien und Formularfeldern.
+
+        Args:
+            endpoint: API-Endpunkt
+            fields: Dict von Formularfeldern {name: value}
+            files: Dict von Dateien {field_name: file_path}
+            timeout: Timeout in Sekunden (None = 2x default)
+        """
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        logger.debug(f"MULTIPART {url} ({len(files)} files)")
+
+        headers = {}
+        if self._token:
+            headers['Authorization'] = f'Bearer {self._token}'
+
+        file_tuples = {}
+        for field_name, file_path in files.items():
+            if file_path and os.path.isfile(file_path):
+                filename = os.path.basename(file_path)
+                ext = os.path.splitext(filename)[1].lower()
+                mime_map = {
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.gif': 'image/gif',
+                    '.webp': 'image/webp',
+                    '.log': 'text/plain',
+                    '.txt': 'text/plain',
+                    '.zip': 'application/zip',
+                }
+                mime_type = mime_map.get(ext, 'application/octet-stream')
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                file_tuples[field_name] = (filename, content, mime_type)
+                logger.debug(
+                    "Upload-Datei: field=%s, name=%s, size=%d, mime=%s",
+                    field_name, filename, len(content), mime_type,
+                )
+
+        req_timeout = timeout or self.config.timeout * 2
+
+        try:
+            response = self._request_with_retry(
+                'POST', url,
+                headers=headers,
+                data=fields,
+                files=file_tuples,
+                timeout=req_timeout,
+                verify=self.config.verify_ssl
+            )
+            return self._handle_response(response)
+        except APIError as e:
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
+                logger.info(f"Token erneuert, wiederhole MULTIPART {endpoint}")
+                headers = {}
+                if self._token:
+                    headers['Authorization'] = f'Bearer {self._token}'
+                try:
+                    response = self._request_with_retry(
+                        'POST', url,
+                        headers=headers,
+                        data=fields,
+                        files=file_tuples,
+                        timeout=req_timeout,
+                        verify=self.config.verify_ssl
+                    )
+                    return self._handle_response(response)
+                except APIError:
+                    raise
+            raise
+        except requests.RequestException as e:
+            logger.error(f"Upload-Fehler: {e}")
+            raise APIError(f"Upload-Fehler: {e}")
+
+    def get_binary(self, endpoint: str) -> bytes:
+        """
+        Binaeranfrage (Bild, ZIP etc.) an die API.
+
+        Returns:
+            Rohe Bytes der Response
+        """
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        logger.debug(f"GET_BINARY {url}")
+
+        headers = {}
+        if self._token:
+            headers['Authorization'] = f'Bearer {self._token}'
+
+        try:
+            response = self._request_with_retry(
+                'GET', url,
+                headers=headers,
+                timeout=self.config.timeout * 2,
+                verify=self.config.verify_ssl
+            )
+
+            if response.status_code >= 400:
+                try:
+                    data = response.json()
+                    raise APIError(
+                        data.get('error', f'HTTP {response.status_code}'),
+                        status_code=response.status_code
+                    )
+                except ValueError:
+                    raise APIError(
+                        f"Server-Fehler: {response.status_code}",
+                        status_code=response.status_code
+                    )
+
+            return response.content
+        except APIError as e:
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
+                logger.info(f"Token erneuert, wiederhole GET_BINARY {endpoint}")
+                headers = {}
+                if self._token:
+                    headers['Authorization'] = f'Bearer {self._token}'
+                try:
+                    response = self._request_with_retry(
+                        'GET', url,
+                        headers=headers,
+                        timeout=self.config.timeout * 2,
+                        verify=self.config.verify_ssl
+                    )
+                    if response.status_code >= 400:
+                        raise APIError(f"HTTP {response.status_code}", status_code=response.status_code)
+                    return response.content
+                except APIError:
+                    raise
+            raise
+        except requests.RequestException as e:
+            logger.error(f"Netzwerkfehler: {e}")
+            raise APIError(f"Netzwerkfehler: {e}")
+
     def upload_file(self, endpoint: str, file_path: str, 
                     additional_data: Dict = None) -> Dict[str, Any]:
         """Datei an die API hochladen."""

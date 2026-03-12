@@ -226,6 +226,13 @@ BIPRO_PREVIEW_CARD_DATE = "Дата: {date}"
 BIPRO_PREVIEW_CARD_SHIPMENT = "ID: {id}"
 BIPRO_PREVIEW_COUNT = "{count} поставок от {vu_count} страховщиков"
 BIPRO_PREVIEW_ERROR = "{vu_name}: ошибка загрузки"
+BIPRO_PREVIEW_COL_VU = "Страховщик"
+BIPRO_PREVIEW_COL_CATEGORY = "Категория"
+BIPRO_PREVIEW_COL_DATE = "Дата"
+BIPRO_PREVIEW_COL_AVAILABLE_UNTIL = "Доступно до"
+BIPRO_PREVIEW_COL_TRANSFERS = "Загрузки"
+BIPRO_PREVIEW_COL_DATA_ONLY = "Только данные"
+BIPRO_PREVIEW_COL_ID = "ID"
 
 # === ATLAS Index (полнотекстовый поиск) ===
 ATLAS_INDEX_TITLE = "ATLAS Index"

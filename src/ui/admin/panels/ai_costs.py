@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QComboBox, QFrame, QFileDialog,
     QHeaderView, QAbstractItemView,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor
 
 from api.client import APIClient
@@ -549,7 +549,7 @@ class AiCostsPanel(QWidget):
         )
 
     def _export_ai_requests_csv(self):
-        """Exportiert die AI-Requests als CSV."""
+        """Exportiert die AI-Requests als CSV (non-blocking)."""
         from ui.toast import ToastManager
         path, _ = QFileDialog.getSaveFileName(
             self, texts.AI_COSTS_REQUESTS_EXPORT, "ai_requests.csv", "CSV (*.csv)"
@@ -557,21 +557,39 @@ class AiCostsPanel(QWidget):
         if not path:
             return
 
-        try:
-            table = self._ai_requests_table
-            with open(path, 'w', encoding='utf-8-sig') as f:
-                headers = []
-                for col in range(table.columnCount()):
-                    headers.append(table.horizontalHeaderItem(col).text())
-                f.write(';'.join(headers) + '\n')
+        table = self._ai_requests_table
+        headers = []
+        for col in range(table.columnCount()):
+            headers.append(table.horizontalHeaderItem(col).text())
+        rows_data: list[list[str]] = []
+        for row in range(table.rowCount()):
+            cells = []
+            for col in range(table.columnCount()):
+                item = table.item(row, col)
+                cells.append(item.text() if item else '')
+            rows_data.append(cells)
 
-                for row in range(table.rowCount()):
-                    cells = []
-                    for col in range(table.columnCount()):
-                        item = table.item(row, col)
-                        cells.append(item.text() if item else '')
-                    f.write(';'.join(cells) + '\n')
+        class _W(QThread):
+            ok = Signal(str)
+            failed = Signal(str)
+            def __init__(self, dest, hdr, data, parent=None):
+                super().__init__(parent)
+                self._dest, self._hdr, self._data = dest, hdr, data
+            def run(self):
+                try:
+                    with open(self._dest, 'w', encoding='utf-8-sig') as f:
+                        f.write(';'.join(self._hdr) + '\n')
+                        for r in self._data:
+                            f.write(';'.join(r) + '\n')
+                    self.ok.emit(self._dest)
+                except Exception as e:
+                    self.failed.emit(str(e))
 
-            ToastManager.instance().show_success(f"CSV exportiert: {path}")
-        except Exception as e:
-            ToastManager.instance().show_error(f"Export fehlgeschlagen: {e}")
+        self._csv_worker = _W(path, headers, rows_data, parent=self)
+        self._csv_worker.ok.connect(
+            lambda p: ToastManager.instance().show_success(f"CSV exportiert: {p}")
+        )
+        self._csv_worker.failed.connect(
+            lambda e: ToastManager.instance().show_error(f"Export fehlgeschlagen: {e}")
+        )
+        self._csv_worker.start()

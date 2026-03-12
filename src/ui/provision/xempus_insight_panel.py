@@ -17,7 +17,7 @@ from PySide6.QtCore import (
     Qt, Signal, QSortFilterProxyModel, QTimer, QModelIndex,
     QRect, QSize, QPoint,
 )
-from PySide6.QtGui import QColor, QPainter, QPen, QBrush
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QGuiApplication
 
 from typing import List, Optional, Dict
 
@@ -34,7 +34,7 @@ from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BG_TERTIARY, BORDER_DEFAULT,
     SUCCESS, ERROR, WARNING,
-    TEXT_DISABLED, TEXT_SECONDARY,
+    TEXT_PRIMARY, TEXT_DISABLED, TEXT_SECONDARY,
     INDIGO, BLUE_BRIGHT,
     FONT_BODY, FONT_HEADLINE, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD,
@@ -802,6 +802,28 @@ class _EmployeeCard(QFrame):
         return self._employee
 
 
+class _XempusClickableValue(QLabel):
+    """QLabel das bei Klick den Wert in die Zwischenablage kopiert."""
+
+    def __init__(self, value: str, field_label: str, toast_manager=None, parent=None):
+        display = value if value and value != 'None' else '–'
+        super().__init__(display, parent)
+        self._value = value or ''
+        self._field_label = field_label
+        self._toast_manager = toast_manager
+        if self._value and self._value != '–':
+            self.setCursor(Qt.PointingHandCursor)
+            self.setToolTip(texts.XEMPUS_EMPLOYEE_VALUE_COPIED.format(label=field_label).replace("kopiert", "klicken zum Kopieren"))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self._value and self._value != '–':
+            QGuiApplication.clipboard().setText(self._value)
+            if self._toast_manager:
+                self._toast_manager.show_success(
+                    texts.XEMPUS_EMPLOYEE_VALUE_COPIED.format(label=self._field_label))
+        super().mousePressEvent(event)
+
+
 class _EmployeesTab(QWidget):
     """Mitarbeiter als Card-Grid mit Lazy-Loading und Arbeitgeber-Filter."""
 
@@ -1058,6 +1080,95 @@ class _EmployeesTab(QWidget):
     def _show_detail(self, detail: Optional[Dict], employee_id: str = None):
         if employee_id and employee_id != self._current_employee_id:
             return
+        self._clear_detail_layout()
+
+        if not detail:
+            return
+
+        employee: XempusEmployee = detail['employee']
+        consultations: list = detail.get('consultations', [])
+        toast = self._get_toast_manager()
+
+        name_lbl = QLabel(employee.full_name)
+        name_lbl.setStyleSheet(f"font-family: {FONT_HEADLINE}; font-size: 13pt; color: {PRIMARY_900}; font-weight: bold;")
+        name_lbl.setWordWrap(True)
+        self._detail_layout.addWidget(name_lbl)
+
+        if employee.berufsbezeichnung:
+            pos_lbl = QLabel(employee.berufsbezeichnung)
+            pos_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_BODY};")
+            self._detail_layout.addWidget(pos_lbl)
+
+        if employee.status_label or employee.beratungsstatus:
+            status_text = employee.status_label or employee.beratungsstatus
+            status_color = employee.status_color or ACCENT_500
+            chip = QLabel(f"  {status_text}  ")
+            chip.setStyleSheet(f"""
+                background-color: {status_color}20; color: {status_color};
+                border: 1px solid {status_color}40; border-radius: 10px;
+                padding: 3px 10px; font-size: {FONT_SIZE_CAPTION}; font-weight: 500;
+            """)
+            self._detail_layout.addWidget(chip)
+
+        self._add_separator()
+
+        self._add_detail_group(texts.XEMPUS_EMPLOYEE_DETAIL_GROUP_PERSON, [
+            (texts.XEMPUS_EMPLOYEE_DETAIL_SALUTATION, employee.anrede),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_TITLE_ACADEMIC, employee.titel),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_FIRST_NAME, employee.vorname),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_LAST_NAME, employee.name),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_BIRTHDAY, fmt_date(employee.geburtsdatum)),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_PERSONNEL_NR, employee.personalnummer),
+        ], toast)
+
+        self._add_detail_group(texts.XEMPUS_EMPLOYEE_DETAIL_GROUP_CONTACT, [
+            (texts.XEMPUS_EMPLOYEE_DETAIL_PHONE, employee.telefon),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_MOBILE, employee.mobiltelefon),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_EMAIL, employee.email),
+        ], toast)
+
+        self._add_detail_group(texts.XEMPUS_EMPLOYEE_DETAIL_GROUP_ADDRESS, [
+            (texts.XEMPUS_EMPLOYEE_DETAIL_STREET, employee.street),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_ZIP, employee.plz),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_CITY, employee.city),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_STATE, employee.bundesland),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_COUNTRY, employee.land),
+        ], toast)
+
+        self._add_detail_group(texts.XEMPUS_EMPLOYEE_DETAIL_GROUP_EMPLOYMENT, [
+            (texts.XEMPUS_EMPLOYEE_DETAIL_EMPLOYER, employee.employer_name),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_POSITION, employee.berufsstellung),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_JOB_TITLE, employee.berufsbezeichnung),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_ENTRY, fmt_date(employee.diensteintritt)),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_ACTIVE,
+             texts.XEMPUS_EMPLOYEE_DETAIL_ACTIVE_YES if employee.is_active else texts.XEMPUS_EMPLOYEE_DETAIL_ACTIVE_NO),
+        ], toast)
+
+        self._add_detail_group(texts.XEMPUS_EMPLOYEE_DETAIL_GROUP_FINANCE, [
+            (texts.XEMPUS_EMPLOYEE_DETAIL_SALARY,
+             format_eur(employee.bruttolohn) if employee.bruttolohn is not None else None),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_TAX_CLASS, employee.steuerklasse),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_INSURANCE, employee.krankenversicherung),
+        ], toast)
+
+        self._add_detail_group(texts.XEMPUS_EMPLOYEE_DETAIL_GROUP_META, [
+            (texts.XEMPUS_EMPLOYEE_DETAIL_ID, employee.id),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_EMPLOYER_ID, employee.employer_id),
+            (texts.XEMPUS_EMPLOYEE_DETAIL_SUBSIDY_ID, employee.zuschuss_id),
+        ], toast)
+
+        if consultations:
+            self._add_separator()
+            cons_header = QLabel(f"{texts.XEMPUS_EMPLOYEE_DETAIL_CONSULTATIONS} ({len(consultations)})")
+            cons_header.setStyleSheet(f"font-family: {FONT_HEADLINE}; font-size: 10pt; color: {PRIMARY_900}; font-weight: bold; padding-top: 4px;")
+            self._detail_layout.addWidget(cons_header)
+
+            for c in consultations:
+                self._add_consultation_card(c, toast)
+
+        self._detail_layout.addStretch()
+
+    def _clear_detail_layout(self):
         while self._detail_layout.count():
             item = self._detail_layout.takeAt(0)
             if item.widget():
@@ -1068,109 +1179,106 @@ class _EmployeesTab(QWidget):
                     if sub.widget():
                         sub.widget().deleteLater()
 
-        if not detail:
+    def _add_separator(self):
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background-color: {BORDER_DEFAULT};")
+        self._detail_layout.addWidget(sep)
+
+    def _add_detail_group(self, title: str, fields: list, toast=None):
+        has_values = any(v for _, v in fields)
+        if not has_values:
             return
 
-        employee: XempusEmployee = detail['employee']
-        consultations: list = detail.get('consultations', [])
+        header = QLabel(title)
+        header.setStyleSheet(f"font-family: {FONT_HEADLINE}; font-size: 10pt; color: {PRIMARY_900}; font-weight: bold; padding-top: 10px;")
+        self._detail_layout.addWidget(header)
 
-        title = QLabel(employee.full_name)
-        title.setStyleSheet(f"font-weight: 700; font-size: 12pt; color: {PRIMARY_900};")
-        title.setWordWrap(True)
-        self._detail_layout.addWidget(title)
-
-        if employee.status_label or employee.beratungsstatus:
-            status_text = employee.status_label or employee.beratungsstatus
-            status_color = employee.status_color or ACCENT_500
-            status_chip = QLabel(f"  {status_text}  ")
-            status_chip.setStyleSheet(f"""
-                background-color: {status_color}20;
-                color: {status_color};
-                border: 1px solid {status_color}40;
-                border-radius: 10px;
-                padding: 3px 10px;
-                font-size: {FONT_SIZE_CAPTION};
-                font-weight: 500;
-            """)
-            self._detail_layout.addWidget(status_chip)
-
-        fields = [
-            (texts.XEMPUS_EMPLOYEE_DETAIL_ID, employee.id),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_EMPLOYER, employee.employer_name),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_PERSONNEL_NR, employee.personalnummer),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_ADDRESS,
-             ', '.join(p for p in [employee.street, f"{employee.plz or ''} {employee.city or ''}".strip()] if p)),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_PHONE, employee.telefon),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_MOBILE, employee.mobiltelefon),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_EMAIL, employee.email),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_BIRTHDAY, fmt_date(employee.geburtsdatum)),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_ENTRY, fmt_date(employee.diensteintritt)),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_SALARY,
-             format_eur(employee.bruttolohn) if employee.bruttolohn is not None else None),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_TAX_CLASS, employee.steuerklasse),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_INSURANCE, employee.krankenversicherung),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_POSITION, employee.berufsstellung),
-            (texts.XEMPUS_EMPLOYEE_DETAIL_JOB_TITLE, employee.berufsbezeichnung),
-        ]
         for label_text, value in fields:
             if not value:
                 continue
+            self._add_detail_row(label_text, str(value), toast)
+
+    def _add_detail_row(self, label_text: str, value: str, toast=None):
+        row_widget = QWidget()
+        row_layout = QVBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 3, 0, 3)
+        row_layout.setSpacing(1)
+
+        lbl = QLabel(label_text)
+        lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION};")
+        row_layout.addWidget(lbl)
+
+        val = _XempusClickableValue(value, label_text, toast)
+        val.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: {FONT_SIZE_BODY};")
+        val.setWordWrap(True)
+        row_layout.addWidget(val)
+
+        self._detail_layout.addWidget(row_widget)
+
+    def _add_consultation_card(self, c: XempusConsultation, toast=None):
+        c_status = c.status_label or c.status or "–"
+        c_color = c.status_color or PRIMARY_500
+
+        c_frame = QFrame()
+        c_frame.setStyleSheet(f"""
+            QFrame {{
+                border-left: 3px solid {c_color};
+                background-color: {BG_TERTIARY};
+                border-radius: 4px;
+                margin: 2px 0;
+            }}
+        """)
+        c_lay = QVBoxLayout(c_frame)
+        c_lay.setContentsMargins(10, 8, 8, 8)
+        c_lay.setSpacing(4)
+
+        status_lbl = QLabel(c_status)
+        status_lbl.setStyleSheet(f"color: {c_color}; font-size: {FONT_SIZE_BODY}; font-weight: 600;")
+        c_lay.addWidget(status_lbl)
+
+        c_fields = [
+            (texts.XEMPUS_CONSULTATION_DETAIL_DATE, fmt_date(c.beratungsdatum)),
+            (texts.XEMPUS_CONSULTATION_DETAIL_BEGIN, fmt_date(c.beginn)),
+            (texts.XEMPUS_CONSULTATION_DETAIL_END, fmt_date(c.ende)),
+            (texts.XEMPUS_CONSULTATION_DETAIL_INSURER, c.versicherer),
+            (texts.XEMPUS_CONSULTATION_DETAIL_TARIFF, c.tarif),
+            (texts.XEMPUS_CONSULTATION_DETAIL_TYPE, c.typ),
+            (texts.XEMPUS_CONSULTATION_DETAIL_WAY, c.durchfuehrungsweg),
+            (texts.XEMPUS_CONSULTATION_DETAIL_ADVISOR, c.berater),
+            (texts.XEMPUS_CONSULTATION_DETAIL_ADVICE_TYPE, c.beratungstyp),
+            (texts.XEMPUS_CONSULTATION_DETAIL_POLICY_NR, c.versicherungsscheinnummer),
+            (texts.XEMPUS_CONSULTATION_DETAIL_EE_SHARE,
+             format_eur(c.arbn_anteil) if c.arbn_anteil is not None else None),
+            (texts.XEMPUS_CONSULTATION_DETAIL_ER_SHARE,
+             format_eur(c.arbg_anteil) if c.arbg_anteil is not None else None),
+            (texts.XEMPUS_CONSULTATION_DETAIL_TOTAL,
+             format_eur(c.gesamtbeitrag) if c.gesamtbeitrag is not None else None),
+        ]
+        for label_text, value in c_fields:
+            if not value:
+                continue
             row = QHBoxLayout()
-            lbl = QLabel(f"{label_text}:")
-            lbl.setFixedWidth(110)
-            lbl.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
-            val = QLabel(str(value))
-            val.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_BODY};")
+            row.setSpacing(6)
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION};")
+            lbl.setFixedWidth(120)
+            val = _XempusClickableValue(str(value), label_text, toast)
+            val.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: {FONT_SIZE_CAPTION};")
             val.setWordWrap(True)
             row.addWidget(lbl)
             row.addWidget(val, 1)
-            self._detail_layout.addLayout(row)
+            c_lay.addLayout(row)
 
-        if consultations:
-            sep = QFrame()
-            sep.setFixedHeight(1)
-            sep.setStyleSheet(f"background-color: {BORDER_DEFAULT};")
-            self._detail_layout.addWidget(sep)
+        self._detail_layout.addWidget(c_frame)
 
-            cons_title = QLabel(f"{texts.XEMPUS_EMPLOYEE_DETAIL_CONSULTATIONS} ({len(consultations)})")
-            cons_title.setStyleSheet(f"font-weight: 600; font-size: 10pt; color: {PRIMARY_900};")
-            self._detail_layout.addWidget(cons_title)
-
-            for c in consultations[:15]:
-                c_status = c.status_label or c.status or "–"
-                c_color = c.status_color or PRIMARY_500
-                c_date = fmt_date(c.beratungsdatum) or "–"
-                c_insurer = c.versicherer or ""
-                c_tarif = c.tarif or ""
-                info_parts = [p for p in [c_date, c_insurer, c_tarif] if p and p != "–"]
-                info_line = " · ".join(info_parts)
-
-                c_frame = QFrame()
-                c_frame.setStyleSheet(f"""
-                    QFrame {{
-                        border-left: 3px solid {c_color};
-                        padding: 2px 0 2px 8px;
-                        margin: 1px 0;
-                    }}
-                """)
-                c_lay = QVBoxLayout(c_frame)
-                c_lay.setContentsMargins(8, 4, 4, 4)
-                c_lay.setSpacing(1)
-                c_status_lbl = QLabel(c_status)
-                c_status_lbl.setStyleSheet(f"color: {c_color}; font-size: {FONT_SIZE_CAPTION}; font-weight: 600;")
-                c_lay.addWidget(c_status_lbl)
-                if info_line:
-                    c_info_lbl = QLabel(info_line)
-                    c_info_lbl.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
-                    c_info_lbl.setWordWrap(True)
-                    c_lay.addWidget(c_info_lbl)
-                if c.gesamtbeitrag is not None:
-                    c_amount = QLabel(format_eur(c.gesamtbeitrag))
-                    c_amount.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_CAPTION}; font-weight: 500;")
-                    c_lay.addWidget(c_amount)
-                self._detail_layout.addWidget(c_frame)
-
-        self._detail_layout.addStretch()
+    def _get_toast_manager(self):
+        widget = self
+        while widget:
+            if hasattr(widget, '_toast_manager') and widget._toast_manager:
+                return widget._toast_manager
+            widget = widget.parentWidget()
+        return None
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

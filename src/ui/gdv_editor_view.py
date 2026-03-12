@@ -499,22 +499,32 @@ class GDVEditorView(QWidget):
                 self._toast_manager.show_error(f"Speichern fehlgeschlagen: {e}")
     
     def _on_upload_to_archive(self):
-        """Aktuelle Datei ins Archiv hochladen."""
+        """Aktuelle Datei ins Archiv hochladen (async)."""
         if not self.docs_api or not self._current_filepath:
-            # Erst speichern
             if self._parsed_file and not self._current_filepath:
                 self._on_save()
                 if not self._current_filepath:
                     return
-        
+
         if self._current_filepath:
-            doc = self.docs_api.upload(self._current_filepath, 'manual_upload')
-            if doc:
-                if hasattr(self, '_toast_manager') and self._toast_manager:
-                    self._toast_manager.show_success("Datei ins Archiv hochgeladen")
-            else:
-                if hasattr(self, '_toast_manager') and self._toast_manager:
+            from ui.async_worker import AsyncWorker
+            fpath = self._current_filepath
+            api = self.docs_api
+            self._upload_worker = AsyncWorker(
+                lambda: api.upload(fpath, 'manual_upload'), parent=self,
+            )
+            self._upload_worker.finished.connect(
+                lambda doc: self._toast_manager.show_success("Datei ins Archiv hochgeladen")
+                if doc and hasattr(self, '_toast_manager') and self._toast_manager else (
                     self._toast_manager.show_error("Upload fehlgeschlagen")
+                    if hasattr(self, '_toast_manager') and self._toast_manager else None
+                )
+            )
+            self._upload_worker.error.connect(
+                lambda msg: self._toast_manager.show_error(f"Upload fehlgeschlagen: {msg}")
+                if hasattr(self, '_toast_manager') and self._toast_manager else None
+            )
+            self._upload_worker.start()
     
     def _on_view_changed(self, index):
         """Ansicht geändert."""

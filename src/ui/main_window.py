@@ -443,7 +443,7 @@ class GDVMainWindow(QMainWindow):
         else:
             title = "ACENCIA ATLAS"
         self.setWindowTitle(title)
-        self.setMinimumSize(1400, 900)
+        self.setMinimumSize(1460, 900)
         
         self._setup_ui()
         self._setup_menu()
@@ -1021,30 +1021,36 @@ class GDVMainWindow(QMainWindow):
                 )
     
     def _on_upload_to_archive(self):
-        """Lädt die aktuelle GDV-Datei ins Archiv hoch."""
+        """Laedt die aktuelle GDV-Datei ins Archiv hoch (async)."""
         if not self._api_client:
             if self._toast_manager:
                 self._toast_manager.show_warning("Keine Server-Verbindung.")
             return
-        
+
         if not self._current_filepath:
             if self._toast_manager:
                 self._toast_manager.show_warning("Bitte zuerst eine GDV-Datei öffnen oder speichern.")
             return
-        
+
         from api.documents import DocumentsAPI
+        from ui.async_worker import AsyncWorker
         docs_api = DocumentsAPI(self._api_client)
-        
-        doc = docs_api.upload(self._current_filepath, 'manual_upload')
-        
-        if doc:
-            if self._toast_manager:
-                self._toast_manager.show_success(
-                    f"Datei '{doc.original_filename}' erfolgreich ins Archiv hochgeladen."
-                )
-        else:
-            if self._toast_manager:
-                self._toast_manager.show_error("Upload fehlgeschlagen.")
+        fpath = self._current_filepath
+
+        self._upload_archive_worker = AsyncWorker(
+            lambda: docs_api.upload(fpath, 'manual_upload'), parent=self,
+        )
+        self._upload_archive_worker.finished.connect(
+            lambda doc: self._toast_manager.show_success(
+                f"Datei '{doc.original_filename}' erfolgreich ins Archiv hochgeladen."
+            ) if doc and self._toast_manager else (
+                self._toast_manager.show_error("Upload fehlgeschlagen.") if self._toast_manager else None
+            )
+        )
+        self._upload_archive_worker.error.connect(
+            lambda msg: self._toast_manager.show_error(f"Upload fehlgeschlagen: {msg}") if self._toast_manager else None
+        )
+        self._upload_archive_worker.start()
     
     def _on_logout(self):
         """Benutzer abmelden."""
