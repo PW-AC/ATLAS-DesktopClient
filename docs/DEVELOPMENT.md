@@ -170,7 +170,7 @@ Ergebnis: `Output/ACENCIA-ATLAS-Setup-<version>.exe`
 
 ### Automatischer Build + Release
 
-Im Submodule `ATLAS_private - Doku - Backend/build-tools/`:
+Im Submodule `internal/06_build-tools/`:
 
 ```bash
 # Nur Build
@@ -281,7 +281,7 @@ main (stable) ← beta ← dev ← feature-branch
 ```
 
 - **Kein Direktcommit** auf `main` oder `dev`
-- **Pipeline-Tool**: `ATLAS_private - Doku - Backend/governance/atlas.ps1`
+- **Pipeline-Tool**: `internal/02_governance/atlas.ps1`
 - **PR-Template**: `.github/pull_request_template.md`
 
 ---

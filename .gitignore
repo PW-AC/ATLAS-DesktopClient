@@ -160,5 +160,5 @@ Sicherheit/
 # =============================================================================
 
 # requirements.txt - NICHT ignorieren (wird fuer Installation benoetigt)
-# ATLAS_private - Doku - Backend/ ist ein Git-Submodule (privates Repo)
+# internal/ ist ein Git-Submodule (privates Repo, ATLAS-Internal)
 # docs/ - NICHT ignorieren (Projektdokumentation)

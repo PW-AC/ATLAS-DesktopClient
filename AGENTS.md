@@ -2,7 +2,8 @@
 # ACENCIA ATLAS -- Desktop Client + Web-Admin-Panel
 
 > **Version**: siehe `VERSION`-Datei (aktuell 2.3.1) | **Stand**: 05.03.2026
-> Detaillierte Dokumentation liegt im privaten Submodule `ATLAS_private - Doku - Backend/`.
+> Detaillierte Dokumentation liegt im privaten Submodule `internal/` (ATLAS-Internal).
+> Server-Abbild und Backend-Code liegen im eigenstaendigen Repo `ATLAS-Private`.
 
 **Agent's Responsibility:** Dieses Dokument ist die Single Source of Truth fuer Agent-Zusammenarbeit an diesem Projekt. Bei jedem neuen Feature, Bugfix oder Refactor **muss** dieses Dokument aktualisiert werden.
 
@@ -74,7 +75,8 @@ ssh root@server                 # Verbindung 2 -- GEFAHR!
 
 ### Webspace-Ordner = Live-System
 
-Der Ordner `ATLAS_private - Doku - Backend/ATLAS - Hetzner Server - ABBILD - NICHT LIVE/Abbild/var/www/atlas/` ist die lokale Kopie des Live-Servers. Aenderungen hier muessen per SSH auf den Server deployed werden, um wirksam zu werden. Der Ordner selbst ist NICHT live synchronisiert.
+Das Server-Abbild liegt im eigenstaendigen Repository `ATLAS-Private` (nicht mehr im Submodule).
+Aenderungen am Server muessen per SSH deployed werden.
 
 ### UI-Texte
 
@@ -107,9 +109,9 @@ Desktop-App (PySide6)             Web-Admin-Panel                  Hetzner Cloud
                                                                    └── Admin-Panel (/admin-panel/, ~50 Dateien)
 ```
 
-**Server-Details:** Siehe `ATLAS_private - Doku - Backend/hetzner-migration/INFRASTRUKTUR_DATEN.md`
-**Server-Abbild:** Siehe `ATLAS_private - Doku - Backend/ATLAS - Hetzner Server - ABBILD - NICHT LIVE/`
-**Admin-Panel-Plan:** Siehe `ATLAS_private - Doku - Backend/docs/04_PRODUCT/ADMIN_PANEL_ERWEITERUNG_PLAN.md`
+**Server-Details:** Siehe `internal/01_docs/hetzner-migration/INFRASTRUKTUR_DATEN.md`
+**Server-Abbild:** Siehe eigenstaendiges Repo `ATLAS-Private` (Ordner `00_VPS_ABBILD_NICHT LIVE/`)
+**Admin-Panel-Plan:** Siehe `internal/01_docs/04_PRODUCT/`
 
 ---
 
@@ -176,9 +178,9 @@ tableComp.render(data.entries || []);
 - **Branch-Strategie**: `main` (stable) / `beta` (beta) / `dev` (experimental)
 - **Kein Direktcommit** auf `main` oder `dev` -- nur ueber PRs
 - **Pipeline**: Feature-Branch -> dev -> beta -> main (unveraenderlich)
-- **Pipeline-Toolchain**: `ATLAS_private - Doku - Backend/governance/atlas.ps1`
+- **Pipeline-Toolchain**: `internal/02_governance/atlas.ps1`
 - **CI**: Smoke-Tests + CodeQL auf main/beta, Secret Scanning aktiv
-- **Governance-Details**: Siehe `.cursor/rules/git-pipeline.mdc`
+- **Governance-Details**: Siehe `internal/02_governance/README.md` und `.cursor/rules/git-pipeline.mdc`
 
 ---
 
@@ -325,42 +327,40 @@ installer.iss                       Inno Setup Installer-Skript
 
 ## Interne Dokumentation
 
-Detaillierte Architektur, API-Docs, Security, Governance und Backend-Code
-liegen im privaten Submodule:
+Detaillierte Architektur, API-Docs, Security, Governance und Build-Tools
+liegen im privaten Submodule `internal/` (ATLAS-Internal):
 
 ```
-ATLAS_private - Doku - Backend/     (Git Submodule, privat)
-  docs/                             Kern- und Entwickler-Dokumentation (3-Stufen-Hierarchie, 53 Dateien)
+internal/                           (Git Submodule, privat, ATLAS-Internal.git)
+  01_docs/                          Kern- und Entwickler-Dokumentation (3-Stufen-Hierarchie, 53 Dateien)
     00_CORE/                        Kern-Dokumentation (7 Dateien inkl. ATLAS_KOMPLETT.md)
     01_DEVELOPMENT/                 Entwickler-Dokumentation (10 Dateien)
     02_SECURITY/                    Sicherheit, Berechtigungen & Rollen (3 Dateien)
     03_REFERENCE/                   Referenz-Material (3 Dateien)
-    04_PRODUCT/                     Produkt-Planung (Roadmap, Ideas, ADMIN_PANEL_ERWEITERUNG_PLAN.md)
+    04_PRODUCT/                     Produkt-Planung (Roadmap, Ideas)
     99_ARCHIVE/                     Historische Dokumente (4 Unterordner)
-  governance/                       Pipeline-Skripte (atlas.ps1 + 14 Einzelskripte + 3 Flows)
-  build-tools/                      Build-Werkzeuge (9 Dateien)
-  scripts/                          Hilfsskripte (10 Python-Dateien)
-  testdata/                         Testdaten (inkl. Provision)
-  ChatGPT-Kontext/                  KI-Kontext-Dateien (11 Markdown-Dateien)
-  BiPro-Webspace Spiegelung Live/   PHP REST-API Backend (~76 Dateien, ~22.800 eigene Zeilen)
-    api/                            35 PHP-Endpoints (+ lib/, setup/)
-    api/lib/                        Shared Libraries (DB, JWT, Crypto, Permissions, PHPMailer)
-    api/setup/                      DB-Migrationen (42 Skripte, 005-050)
-  ATLAS - Hetzner Server - ABBILD - NICHT LIVE/
-    README.md                       Sync-Anleitung und Ordnerstruktur
-    Abbild/                         Lokale Kopie des Servers (etc/, var/www/, opt/)
-      var/www/atlas/                Gesamtes Web-Root inkl. Admin-Panel
-        admin-panel/                Web-Admin-Panel (~50 Dateien, Vanilla JS SPA)
-        api/                        PHP REST-API (~48 Dateien inkl. admin_modules.php)
-  hetzner-migration/                Server-Migration Strato -> Hetzner (abgeschlossen 03.03.2026)
-    INFRASTRUKTUR_DATEN.md          Live-Infrastruktur-Werte (IPs, Credentials, Pfade)
-  AGENTS.md                         Vollstaendige Agent-Instruktionen (Single Source of Truth)
+  02_governance/                    Pipeline-Skripte (atlas.ps1 + 14 Einzelskripte + 3 Flows)
+  06_build-tools/                   Build-Werkzeuge (10 Dateien)
+  07_scripts/                       Hilfsskripte (10 Python-Dateien)
+  08_testdata/                      Testdaten (inkl. Provision)
+  ChatGPT-Doku/                     KI-Kontext-Dateien (4 Module)
+  HR-API-Projekt/                   Altes HR-API-Projekt (Referenz)
+```
+
+Server-Abbild und Backend-Code liegen im eigenstaendigen Repo `ATLAS-Private`:
+
+```
+ATLAS-Private/                      (eigenstaendiges Repo, privat, ATLAS-Private.git)
+  00_VPS_ABBILD_NICHT LIVE/         Lokale Kopie des Servers (etc/, var/www/, opt/)
+  05_Local_dev_Backend/             Lokales Backend fuer Entwicklung
+  BIPRO- Dokumentation/             BiPRO-Referenzdokumentation
+  GDV- Dokumentation/               GDV-Referenzdokumentation
 ```
 
 ## Server-Deployment (Hetzner)
 
 ### Deployment-Ablauf
-1. Dateien lokal unter `ATLAS - Hetzner Server - ABBILD - NICHT LIVE/Abbild/var/www/atlas/` bearbeiten
+1. Dateien lokal im ATLAS-Private Repo unter `00_VPS_ABBILD_NICHT LIVE/Abbild/var/www/atlas/` bearbeiten
 2. Als Tarball buendeln und per SCP hochladen (SSH-Regeln beachten!)
 3. Per SSH entpacken: `cd /var/www/atlas && tar -xzf /tmp/deploy.tar.gz`
 4. PHP-Aenderungen wirken sofort (PHP-FPM interpretiert bei jedem Request neu)

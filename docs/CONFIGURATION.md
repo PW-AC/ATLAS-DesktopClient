@@ -207,7 +207,7 @@ Diese Werte liegen **NUR auf dem Server** (nicht im Repo):
 | **API-Provider-Keys** | DB (verschluesselt) | OpenRouter/OpenAI |
 | **HR-Provider-Credentials** | DB (verschluesselt) | Personio/HRworks |
 
-Details: `ATLAS_private - Doku - Backend/hetzner-migration/INFRASTRUKTUR_DATEN.md`
+Details: `internal/01_docs/hetzner-migration/INFRASTRUKTUR_DATEN.md`
 
 ---
 

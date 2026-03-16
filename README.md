@@ -303,21 +303,17 @@ ATLAS-DesktopClient/
 │       ├── toast.py           # Toast-Benachrichtigungen + Progress
 │       └── styles/tokens.py   # Design-Tokens (Farben, Fonts)
 │
-├── ATLAS_private - Doku - Backend/  # Git Submodule (privat)
-│   ├── BiPro-Webspace Spiegelung Live/  # Server-API (LIVE synchronisiert!)
-│   │   ├── api/               # PHP REST API (29 Dateien, ~14.600 Zeilen)
-│   │   │   ├── index.php      # Router
-│   │   │   ├── lib/           # Shared Libraries (DB, JWT, Crypto, Permissions)
-│   │   │   └── lib/PHPMailer/ # SMTP-Versand
-│   │   └── setup/             # DB-Migrationen (26 Skripte)
-│   ├── docs/                  # Technische Dokumentation
+├── internal/                    # Git Submodule (privat, ATLAS-Internal)
+│   ├── 01_docs/               # Technische Dokumentation
 │   │   ├── 00_CORE/           # Kern-Dokumentation
 │   │   ├── 01_DEVELOPMENT/    # Entwickler-Dokumentation
 │   │   ├── 02_SECURITY/       # Sicherheit
 │   │   ├── 03_REFERENCE/      # Referenz-Material
 │   │   └── 04_PRODUCT/        # Produkt-Planung
-│   ├── governance/            # Pipeline-Skripte
-│   └── testdata/              # Testdaten
+│   ├── 02_governance/         # Pipeline-Skripte
+│   ├── 06_build-tools/        # Build-Werkzeuge
+│   ├── 07_scripts/            # Test-/Utility-Skripte
+│   └── 08_testdata/           # Testdaten
 ```
 
 ---
