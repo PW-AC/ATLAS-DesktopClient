@@ -315,6 +315,7 @@ ARCHIVE_BOX_KRANKEN = "Kranken"
 ARCHIVE_BOX_SONSTIGE = "Sonstige"
 ARCHIVE_BOX_ROH = "Rohdaten"
 ARCHIVE_PROCESSING = "Verarbeite Dokumente..."
+ARCHIVE_LOAD_ERROR = "Dokumentenarchiv konnte nicht geladen werden. Bitte starte die App neu oder kontaktiere den Support."
 
 # === Umbenennen ===
 RENAME = "Umbenennen"

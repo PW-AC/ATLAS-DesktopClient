@@ -670,17 +670,20 @@ class MainHub(QMainWindow):
         self._update_nav_buttons(self.btn_archive)
         
         if self._archive_view is None:
-            # Neue Box-basierte Archiv-Ansicht verwenden
-            from ui.archive_boxes_view import ArchiveBoxesView
-            self._archive_view = ArchiveBoxesView(self.api_client, auth_api=self.auth_api)
-            self._archive_view._toast_manager = self._toast_manager
-            self._archive_view.open_gdv_requested.connect(self._on_open_gdv_from_archive)
-            # Permission Guards setzen
-            self._apply_archive_permissions()
-            
-            # Placeholder ersetzen
-            self.content_stack.removeWidget(self._placeholder_archive)
-            self.content_stack.insertWidget(2, self._archive_view)
+            try:
+                from ui.archive_boxes_view import ArchiveBoxesView
+                self._archive_view = ArchiveBoxesView(self.api_client, auth_api=self.auth_api)
+                self._archive_view._toast_manager = self._toast_manager
+                self._archive_view.open_gdv_requested.connect(self._on_open_gdv_from_archive)
+                self._apply_archive_permissions()
+                
+                self.content_stack.removeWidget(self._placeholder_archive)
+                self.content_stack.insertWidget(2, self._archive_view)
+            except Exception as e:
+                logger.exception(f"Dokumentenarchiv konnte nicht geladen werden: {e}")
+                if self._toast_manager:
+                    self._toast_manager.show_error(texts.ARCHIVE_LOAD_ERROR)
+                return
         
         self.content_stack.setCurrentIndex(2)
 
